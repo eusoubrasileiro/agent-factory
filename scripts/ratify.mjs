@@ -95,6 +95,25 @@ function syncBoard(root, slug, repoRoot) {
 }
 
 /**
+ * Best-effort recompute of the mission's stats.json at ratify time
+ * (factory-metrics W3). Never throws, never prints, never touches the caller's
+ * exit code. The `agent/<slug>` branch may already be merged+deleted here, so
+ * mission-stats falls back to the merge commit to recover LOC.
+ */
+function collectStats(root, slug, repoRoot) {
+  try {
+    const statsPath = fileURLToPath(new URL("./mission-stats.mjs", import.meta.url));
+    if (!existsSync(statsPath)) return;
+    const extra = repoRoot ? ["--repo", repoRoot] : [];
+    spawnSync(process.execPath, [statsPath, "collect", slug, "--dir", root, ...extra], {
+      stdio: "ignore",
+    });
+  } catch {
+    // soft-fail: stats collection must never affect ratification
+  }
+}
+
+/**
  * Fire-and-forget trigger of the autopublish funnel (factory-live-board A2).
  * Detached + unref so it never blocks the caller and never affects its exit
  * code. Mirrors syncBoard's soft-fail philosophy. Loop-safe by construction:
@@ -149,6 +168,7 @@ function ratify(root, slug, force, repoRoot) {
 
   writeFileSync(rPath, `ratified ${today()}\n`);
   syncBoard(root, slug, repoRoot);
+  collectStats(root, slug, repoRoot);
   autoCommit(root, slug, `chore(factory): ratify ${slug}`);
   triggerAutopublish();
   process.stdout.write(`${slug}: ratified ${today()}\n`);
