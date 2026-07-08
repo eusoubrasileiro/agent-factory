@@ -1,0 +1,35 @@
+# Factory Scrumban Board — static-site container
+#
+# Serves the rendered HTML from deploy/factory-board/public/ over nginx:alpine,
+# fronted by the shared Traefik proxy with HTTPS (ACME via Cloudflare DNS-only)
+# and HTTP Basic Auth (three users: andre, tenant-a, operator).
+#
+# Recurring publish does NOT restart this container: the bind mount at
+# /usr/share/nginx/html picks up new files written by `pnpm board:publish`
+# (rsync over ssh to /opt/app/factory/public/scrumban/, which is symlinked
+# or bind-mounted to ./public on the VPS — see DEPLOY-VPS.md).
+#
+# NEVER commit a real htpasswd hash. FACTORY_BASICAUTH is interpolated from
+# /opt/app/factory/.env (gitignored). Traefik requires each `$` in the
+# htpasswd output to be doubled (`$$`) because Compose performs its own
+# variable interpolation first.
+services:
+  factory-board:
+    image: nginx:alpine
+    restart: unless-stopped
+    volumes:
+      - ./public:/usr/share/nginx/html:ro
+    networks:
+      - network_public
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.factory.rule=Host(`factory.example.com`)
+      - traefik.http.routers.factory.entrypoints=websecure
+      - traefik.http.routers.factory.tls.certresolver=myresolver
+      - traefik.http.routers.factory.middlewares=factory-auth
+      - traefik.http.middlewares.factory-auth.basicauth.users=${FACTORY_BASICAUTH}
+      - traefik.http.services.factory.loadbalancer.server.port=80
+      - traefik.docker.network=network_public
+networks:
+  network_public:
+    external: true

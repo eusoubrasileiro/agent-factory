@@ -1,0 +1,8 @@
+[
+  {
+    "id": "wahub",
+    "name": "WaHub CRM",
+    "path": "../../products/wahub",
+    "prd": "docs/prd/crm-build-backlog.md"
+  }
+]
