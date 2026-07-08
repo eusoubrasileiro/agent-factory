@@ -1,0 +1,464 @@
+#!/usr/bin/env node
+/**
+ * Tests for the factory board history module (feature 04).
+ *
+ *   node --test "scripts/factory/history.test.mjs"
+ *
+ * Layers:
+ *   1. snapshotRows — pure model → rows with the exact plan.md shape.
+ *   2. appendSnapshots — JSONL append (mkdir -p parent, no rewrite).
+ *   3. readHistory — tolerant parse (missing → [], corrupt line skipped).
+ *   4. aggregate — per-project + global stats from fixture rows, incl. metrics.
+ *
+ * House style mirrors board-sync.test.mjs / board-report.test.mjs: mkdtempSync
+ * fixtures, rmSync finally.
+ */
+
+import assert from "node:assert/strict";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+import { aggregate, appendSnapshots, readHistory, snapshotRows } from "./history.mjs";
+
+// ─── Fixture helpers ──────────────────────────────────────────────────────────
+
+function makeTmpDir(prefix) {
+  return mkdtempSync(path.join(tmpdir(), prefix));
+}
+
+/** A traceability-model `missions` entry (matches board-report's shape). */
+function mission(slug, overrides = {}) {
+  return {
+    slug,
+    status: "Planning",
+    gateReason: null,
+    requirements: [],
+    features: 0,
+    handoffs: 0,
+    lastVerdict: null,
+    ...overrides,
+  };
+}
+
+/** One history row with the plan.md shape. */
+function row(slug, overrides = {}) {
+  return {
+    ts: "2026-07-01T00:00:00.000Z",
+    project: "wahub",
+    slug,
+    state: "Planning",
+    features: "0/0",
+    rounds: 0,
+    verdict: null,
+    reqIds: [],
+    ...overrides,
+  };
+}
+
+// ─── snapshotRows ─────────────────────────────────────────────────────────────
+
+test("snapshotRows: one row per mission with the exact plan.md shape", () => {
+  const model = {
+    missions: [
+      mission("alpha", {
+        status: "Done",
+        requirements: ["A1"],
+        features: 3,
+        handoffs: 3,
+        lastVerdict: { verdict: "PASS", round: 2 },
+      }),
+      mission("beta", {
+        status: "Building",
+        requirements: [],
+        features: 2,
+        handoffs: 1,
+        lastVerdict: null,
+      }),
+    ],
+  };
+  const rows = snapshotRows(model, "wahub", "2026-07-08T10:00:00Z");
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows[0], {
+    ts: "2026-07-08T10:00:00Z",
+    project: "wahub",
+    slug: "alpha",
+    state: "Done",
+    features: "3/3",
+    rounds: 2,
+    verdict: "PASS",
+    reqIds: ["A1"],
+  });
+  assert.deepEqual(rows[1], {
+    ts: "2026-07-08T10:00:00Z",
+    project: "wahub",
+    slug: "beta",
+    state: "Building",
+    features: "1/2",
+    rounds: 0,
+    verdict: null,
+    reqIds: [],
+  });
+});
+
+test("snapshotRows: rounds 0 when no lastVerdict; verdict null preserved", () => {
+  const model = { missions: [mission("solo")] };
+  const [r] = snapshotRows(model, "wahub", "2026-07-08T10:00:00Z");
+  assert.equal(r.rounds, 0);
+  assert.equal(r.verdict, null);
+});
+
+test("snapshotRows: features string is handoffs/specs (m/n per plan.md)", () => {
+  const model = {
+    missions: [mission("m", { features: 5, handoffs: 2 })],
+  };
+  const [r] = snapshotRows(model, "proj", "2026-07-08T10:00:00Z");
+  assert.equal(r.features, "2/5");
+});
+
+test("snapshotRows: empty model → empty array (never throw)", () => {
+  assert.deepEqual(snapshotRows({}, "x", "t"), []);
+  assert.deepEqual(snapshotRows({ missions: [] }, "x", "t"), []);
+  assert.deepEqual(snapshotRows(null, "x", "t"), []);
+});
+
+// ─── appendSnapshots ──────────────────────────────────────────────────────────
+
+test("appendSnapshots: appends rows (does not rewrite existing)", () => {
+  const dir = makeTmpDir("hist-append-");
+  try {
+    const hp = path.join(dir, "history.jsonl");
+    writeFileSync(hp, JSON.stringify({ existing: true }) + "\n");
+    appendSnapshots(hp, [
+      {
+        ts: "t",
+        project: "wahub",
+        slug: "a",
+        state: "Done",
+        features: "1/1",
+        rounds: 0,
+        verdict: null,
+        reqIds: [],
+      },
+    ]);
+    const lines = readFileSync(hp, "utf8").trim().split("\n");
+    assert.equal(lines.length, 2);
+    assert.ok(JSON.parse(lines[0]).existing, "original row preserved");
+    assert.equal(JSON.parse(lines[1]).slug, "a");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("appendSnapshots: mkdir -p parent when missing", () => {
+  const dir = makeTmpDir("hist-mkdir-");
+  try {
+    const hp = path.join(dir, "sub", "deep", "history.jsonl");
+    appendSnapshots(hp, [row("a")]);
+    assert.ok(existsSync(hp), "file created with mkdir -p");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("appendSnapshots: empty/null rows → no-op (no file created)", () => {
+  const dir = makeTmpDir("hist-empty-");
+  try {
+    const hp = path.join(dir, "history.jsonl");
+    appendSnapshots(hp, []);
+    assert.ok(!existsSync(hp), "empty rows = no file");
+    appendSnapshots(hp, null);
+    assert.ok(!existsSync(hp), "null rows = no file");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ─── readHistory ──────────────────────────────────────────────────────────────
+
+test("readHistory: missing file → [] (never throw)", () => {
+  assert.deepEqual(readHistory(path.join(tmpdir(), "does-not-exist.jsonl")), []);
+});
+
+test("readHistory: skips corrupt/partial lines, returns valid rows", () => {
+  const dir = makeTmpDir("hist-corrupt-");
+  try {
+    const hp = path.join(dir, "history.jsonl");
+    writeFileSync(
+      hp,
+      [
+        JSON.stringify(row("alpha", { state: "Planning" })),
+        "{this is not valid json",
+        "",
+        '   {"partial"',
+        JSON.stringify(row("beta", { state: "Done" })),
+      ].join("\n") + "\n",
+    );
+    const rows = readHistory(hp);
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].slug, "alpha");
+    assert.equal(rows[1].slug, "beta");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("readHistory: empty file → []", () => {
+  const dir = makeTmpDir("hist-emptyfile-");
+  try {
+    const hp = path.join(dir, "history.jsonl");
+    writeFileSync(hp, "\n\n  \n");
+    assert.deepEqual(readHistory(hp), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("readHistory: handles duplicate/near-duplicate rows gracefully (returns all)", () => {
+  const dir = makeTmpDir("hist-dupes-");
+  try {
+    const hp = path.join(dir, "history.jsonl");
+    writeFileSync(
+      hp,
+      [
+        JSON.stringify(row("m", { ts: "2026-07-01T00:00:00Z", state: "Planning" })),
+        JSON.stringify(row("m", { ts: "2026-07-01T00:00:01Z", state: "Planning" })),
+        JSON.stringify(row("m", { ts: "2026-07-02T00:00:00Z", state: "Done" })),
+      ].join("\n") + "\n",
+    );
+    const rows = readHistory(hp);
+    assert.equal(rows.length, 3, "all rows returned; aggregate handles dedup");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ─── aggregate ────────────────────────────────────────────────────────────────
+
+test("aggregate: fixture 3+ snapshots across 2 missions, one reaching Done", () => {
+  const now = "2026-07-08T12:00:00Z";
+  const rows = [
+    row("alpha", { ts: "2026-07-01T10:00:00Z", state: "Planning", features: "0/3", rounds: 0 }),
+    row("beta", { ts: "2026-07-03T10:00:00Z", state: "Building", features: "1/2", rounds: 0 }),
+    row("alpha", {
+      ts: "2026-07-05T10:00:00Z",
+      state: "Done",
+      features: "3/3",
+      rounds: 1,
+      verdict: "PASS",
+    }),
+    row("beta", {
+      ts: "2026-07-06T10:00:00Z",
+      state: "Building",
+      features: "2/2",
+      rounds: 2,
+      verdict: "FAIL",
+    }),
+  ];
+  const stats = aggregate(rows, { now });
+
+  assert.equal(stats.missõesConcluídas, 1, "alpha reached Done");
+  // lead time: alpha first (07-01) → first Done (07-05) = 4 days
+  assert.equal(stats.leadTimeMediano, 4, "lead time median = 4 days");
+  // weeks between first (07-01) and last (07-06) = 5 days / 7 = ~0.714 → min 1
+  // missõesPorSemana = 1 / 1 = 1
+  assert.equal(stats.missõesPorSemana, 1);
+  // rondasMédia: alpha latest rounds=1, beta latest rounds=2 → (1+2)/2 = 1.5
+  assert.equal(stats.rondasMédia, 1.5);
+  // no missionsDir → tokens/atenção null
+  assert.equal(stats.tokensTotal, null);
+  assert.equal(stats.atençãoPorFeature, null);
+});
+
+test("aggregate: lead time median across multiple Done slugs", () => {
+  const rows = [
+    row("a", { ts: "2026-07-01T00:00:00Z", state: "Planning" }),
+    row("a", { ts: "2026-07-05T00:00:00Z", state: "Done" }),
+    row("b", { ts: "2026-07-01T00:00:00Z", state: "Planning" }),
+    row("b", { ts: "2026-07-03T00:00:00Z", state: "Done" }),
+    row("c", { ts: "2026-07-01T00:00:00Z", state: "Planning" }),
+    row("c", { ts: "2026-07-09T00:00:00Z", state: "Done" }),
+  ];
+  // lead times: a=4, b=2, c=8 → sorted [2,4,8] → median=4
+  const stats = aggregate(rows, { now: "2026-07-10T00:00:00Z" });
+  assert.equal(stats.leadTimeMediano, 4);
+  assert.equal(stats.missõesConcluídas, 3);
+});
+
+test("aggregate: no Done missions → leadTimeMediano null, missõesConcluídas 0", () => {
+  const rows = [
+    row("a", { ts: "2026-07-01T00:00:00Z", state: "Building" }),
+    row("b", { ts: "2026-07-03T00:00:00Z", state: "Validating" }),
+  ];
+  const stats = aggregate(rows, { now: "2026-07-08T00:00:00Z" });
+  assert.equal(stats.missõesConcluídas, 0);
+  assert.equal(stats.leadTimeMediano, null);
+  assert.equal(stats.missõesPorSemana, null);
+  assert.equal(stats.rondasMédia, 0);
+});
+
+test("aggregate: empty rows → zeros and nulls (contract A6)", () => {
+  const stats = aggregate([], { now: "2026-07-08T00:00:00Z" });
+  assert.equal(stats.missõesConcluídas, 0);
+  assert.equal(stats.leadTimeMediano, null);
+  assert.equal(stats.missõesPorSemana, null);
+  assert.equal(stats.rondasMédia, 0);
+  assert.equal(stats.tokensTotal, null);
+  assert.equal(stats.atençãoPorFeature, null);
+  assert.deepEqual(stats.perMission, []);
+});
+
+test("aggregate: missõesPorSemana = doneSlugs / max(1, weeks(first→last))", () => {
+  // 2 Done over 14 days = 2 weeks → 2/2 = 1 per week
+  const rows = [
+    row("a", { ts: "2026-07-01T00:00:00Z", state: "Planning" }),
+    row("a", { ts: "2026-07-03T00:00:00Z", state: "Done" }),
+    row("b", { ts: "2026-07-15T00:00:00Z", state: "Planning" }),
+    row("b", { ts: "2026-07-15T00:00:00Z", state: "Done" }),
+  ];
+  const stats = aggregate(rows, { now: "2026-07-20T00:00:00Z" });
+  // first=07-01T00:00, last=07-15T00:00 → exactly 14 days = 2 weeks → 2/2 = 1
+  assert.equal(stats.missõesPorSemana, 1);
+});
+
+test("aggregate: with missionsDir reads tokens + atenção from metrics.jsonl", () => {
+  const dir = makeTmpDir("hist-metrics-");
+  try {
+    // metrics.jsonl for alpha
+    mkdirSync(path.join(dir, "alpha"), { recursive: true });
+    writeFileSync(
+      path.join(dir, "alpha", "metrics.jsonl"),
+      [
+        JSON.stringify({ seat: "worker", type: "touchpoint", tokens: 1000 }),
+        JSON.stringify({ seat: "orchestrator", type: "intervention", tokens: 500 }),
+        JSON.stringify({ seat: "human", type: "escalation" }),
+        JSON.stringify({ seat: "worker", type: "phase_start", tokens: 200 }),
+      ].join("\n") + "\n",
+    );
+
+    const rows = [
+      row("alpha", { ts: "2026-07-01T00:00:00Z", state: "Planning", features: "0/3" }),
+      row("alpha", {
+        ts: "2026-07-05T00:00:00Z",
+        state: "Done",
+        features: "3/3",
+        rounds: 1,
+        verdict: "PASS",
+      }),
+    ];
+    const stats = aggregate(rows, { now: "2026-07-08T00:00:00Z", missionsDir: dir });
+
+    // tokens: 1000 + 500 + 200 = 1700 (escalation has no tokens)
+    assert.equal(stats.tokensTotal, 1700);
+    // attention events: touchpoint + intervention + escalation = 3
+    // handoffs from latest snapshot features "3/3" → 3
+    // atençãoPorFeature = 3/3 = 1
+    assert.equal(stats.atençãoPorFeature, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("aggregate: missing metrics.jsonl → tokens/atenção null ('sem dados')", () => {
+  const dir = makeTmpDir("hist-nometrics-");
+  try {
+    const rows = [
+      row("alpha", { ts: "2026-07-01T00:00:00Z", state: "Done", features: "1/1", rounds: 0 }),
+    ];
+    const stats = aggregate(rows, { now: "2026-07-08T00:00:00Z", missionsDir: dir });
+    assert.equal(stats.tokensTotal, null);
+    assert.equal(stats.atençãoPorFeature, null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("aggregate: perMission table has slug, estado, lead time, rondas, verdict, data", () => {
+  const rows = [
+    row("alpha", {
+      ts: "2026-07-01T00:00:00Z",
+      state: "Planning",
+      features: "0/3",
+      rounds: 0,
+      verdict: null,
+    }),
+    row("beta", {
+      ts: "2026-07-02T00:00:00Z",
+      state: "Building",
+      features: "1/2",
+      rounds: 1,
+      verdict: "FAIL",
+    }),
+    row("alpha", {
+      ts: "2026-07-05T00:00:00Z",
+      state: "Done",
+      features: "3/3",
+      rounds: 2,
+      verdict: "PASS",
+    }),
+  ];
+  const stats = aggregate(rows, { now: "2026-07-08T00:00:00Z" });
+
+  assert.equal(stats.perMission.length, 2);
+  const alpha = stats.perMission.find((m) => m.slug === "alpha");
+  const beta = stats.perMission.find((m) => m.slug === "beta");
+  assert.ok(alpha);
+  assert.ok(beta);
+
+  assert.equal(alpha.estadoAtual, "Done");
+  assert.equal(alpha.leadTime, 4); // 07-01 → 07-05 = 4 days
+  assert.equal(alpha.rondas, 2); // latest snapshot rounds
+  assert.equal(alpha.últimoVerdict, "PASS");
+  assert.equal(alpha.data, "2026-07-05T00:00:00Z");
+
+  assert.equal(beta.estadoAtual, "Building");
+  assert.equal(beta.leadTime, null); // not Done → no lead time
+  assert.equal(beta.rondas, 1);
+  assert.equal(beta.últimoVerdict, "FAIL");
+});
+
+test("aggregate: byProject breakdown separates per-project stats", () => {
+  const rows = [
+    row("a", {
+      project: "wahub",
+      ts: "2026-07-01T00:00:00Z",
+      state: "Done",
+      features: "1/1",
+      rounds: 1,
+    }),
+    row("b", {
+      project: "other",
+      ts: "2026-07-01T00:00:00Z",
+      state: "Done",
+      features: "1/1",
+      rounds: 2,
+    }),
+  ];
+  const stats = aggregate(rows, { now: "2026-07-08T00:00:00Z" });
+  assert.ok(stats.byProject.wahub);
+  assert.ok(stats.byProject.other);
+  assert.equal(stats.byProject.wahub.missõesConcluídas, 1);
+  assert.equal(stats.byProject.other.missõesConcluídas, 1);
+  // global = both
+  assert.equal(stats.missõesConcluídas, 2);
+});
+
+test("aggregate: duplicate rows do not inflate missõesConcluídas (slug-deduped)", () => {
+  const rows = [
+    row("m", { ts: "2026-07-01T00:00:00Z", state: "Done" }),
+    row("m", { ts: "2026-07-01T00:00:01Z", state: "Done" }),
+    row("m", { ts: "2026-07-02T00:00:00Z", state: "Done" }),
+  ];
+  const stats = aggregate(rows, { now: "2026-07-08T00:00:00Z" });
+  assert.equal(stats.missõesConcluídas, 1, "one unique slug → one concluded");
+});
+
+// ─── Guard: exports exist ─────────────────────────────────────────────────────
+
+test("exports: snapshotRows, appendSnapshots, readHistory, aggregate are functions", () => {
+  assert.equal(typeof snapshotRows, "function");
+  assert.equal(typeof appendSnapshots, "function");
+  assert.equal(typeof readHistory, "function");
+  assert.equal(typeof aggregate, "function");
+});

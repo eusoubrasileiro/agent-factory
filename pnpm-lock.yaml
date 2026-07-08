@@ -1,0 +1,78 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    devDependencies:
+      backlog.md:
+        specifier: ^1.47.1
+        version: 1.47.1
+
+packages:
+
+  backlog.md-darwin-arm64@1.47.1:
+    resolution: {integrity: sha512-AgSCQq3UYfjME/tQmbjVMloNddxlgGcvPcha02g8+Zbnjw03fNo/bTYszssYE2R5se7+9SYZxC0kPtOtjjeBQw==}
+    cpu: [arm64]
+    os: [darwin]
+
+  backlog.md-darwin-x64@1.47.1:
+    resolution: {integrity: sha512-Dx+g2O/sYmsbaBjbQeF3RiGREENaoraCsKGO6IpgT19mgI2b5G5hw0Lj3vgU+pjzflVu+ulIdNjPU0dvBYnqpg==}
+    cpu: [x64]
+    os: [darwin]
+
+  backlog.md-linux-arm64@1.47.1:
+    resolution: {integrity: sha512-cDo4eZwqPJTyZ1+nHztSAKX9KhEpEsMTKO1v9ewhavWRTZVnt3rdhJUxFvgcfXYEMpLRftTfGEwzkJxNjHbgyA==}
+    cpu: [arm64]
+    os: [linux]
+
+  backlog.md-linux-x64@1.47.1:
+    resolution: {integrity: sha512-a86oAYDl6o3Hk4cCSJ0j7l5zZJIoxsoyn0VyZhjEJr735km0WvaQaGUmGvwpuVejVcyt+0E+eAK9k7Nk6DX4ow==}
+    cpu: [x64]
+    os: [linux]
+
+  backlog.md-windows-arm64@1.47.1:
+    resolution: {integrity: sha512-/1JsT646jzclxrztPApnmQj2N3AMDND2F/2looVW2iHBSJQ7NFWcTjZUXYAz3I+gJuTIfuY393HGmQpwRaDZLQ==}
+    cpu: [arm64]
+    os: [win32]
+
+  backlog.md-windows-x64@1.47.1:
+    resolution: {integrity: sha512-Wp5Q086VUyKBFjb8Gfae9b66WV+uSt4fuGGHcQugyFhlIweAjXuPwO+HswoP57vGlxkmOE/mexvKEhiyL8AFJA==}
+    cpu: [x64]
+    os: [win32]
+
+  backlog.md@1.47.1:
+    resolution: {integrity: sha512-vBueCu9znfNLsWq0x46RoUcOLuA4ddsbYpOsytLp/YDwn9CD2JLbah1OaThdgdwf1k4NM8CpaZOhcy1VRMUkcA==}
+    hasBin: true
+
+snapshots:
+
+  backlog.md-darwin-arm64@1.47.1:
+    optional: true
+
+  backlog.md-darwin-x64@1.47.1:
+    optional: true
+
+  backlog.md-linux-arm64@1.47.1:
+    optional: true
+
+  backlog.md-linux-x64@1.47.1:
+    optional: true
+
+  backlog.md-windows-arm64@1.47.1:
+    optional: true
+
+  backlog.md-windows-x64@1.47.1:
+    optional: true
+
+  backlog.md@1.47.1:
+    optionalDependencies:
+      backlog.md-darwin-arm64: 1.47.1
+      backlog.md-darwin-x64: 1.47.1
+      backlog.md-linux-arm64: 1.47.1
+      backlog.md-linux-x64: 1.47.1
+      backlog.md-windows-arm64: 1.47.1
+      backlog.md-windows-x64: 1.47.1
