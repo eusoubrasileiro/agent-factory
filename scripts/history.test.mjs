@@ -123,6 +123,57 @@ test("snapshotRows: empty model → empty array (never throw)", () => {
   assert.deepEqual(snapshotRows(null, "x", "t"), []);
 });
 
+// ─── snapshotRows: stats.json enrichment (factory-metrics W3, F4) ──────────────
+
+test("snapshotRows: without missionsDir, rows carry NO stats fields (back-compat)", () => {
+  const model = { missions: [mission("alpha", { status: "Done" })] };
+  const [r] = snapshotRows(model, "wahub", "2026-07-08T10:00:00Z");
+  assert.equal("loc" in r, false);
+  assert.equal("tokens" in r, false);
+  assert.equal("models" in r, false);
+  assert.equal("durationH" in r, false);
+});
+
+test("snapshotRows: with missionsDir, reads stats.json → loc/tokens/models/durationH", () => {
+  const dir = makeTmpDir("hist-stats-");
+  try {
+    const slugDir = path.join(dir, "alpha");
+    mkdirSync(slugDir, { recursive: true });
+    writeFileSync(
+      path.join(slugDir, "stats.json"),
+      JSON.stringify({
+        loc: { added: 2862, deleted: 18, files: 45 },
+        tokens: { worker: { total: 1336911 }, validator: { total: 1022785 }, total: 2359696 },
+        models: { worker: "glm-5.2", validator: "glm-5.2" },
+        durations: { building: 3600000, validating: 1800000 },
+      }),
+    );
+    const model = { missions: [mission("alpha", { status: "Done" })] };
+    const [r] = snapshotRows(model, "wahub", "2026-07-08T10:00:00Z", dir);
+    assert.deepEqual(r.loc, { added: 2862, deleted: 18, files: 45 });
+    assert.equal(r.tokens, 2359696);
+    assert.deepEqual(r.models, { worker: "glm-5.2", validator: "glm-5.2" });
+    assert.equal(r.durationH, 1.5); // (3.6e6 + 1.8e6) ms = 1.5 h
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("snapshotRows: with missionsDir but no stats.json → null stats fields", () => {
+  const dir = makeTmpDir("hist-nostats-");
+  try {
+    mkdirSync(path.join(dir, "beta"), { recursive: true });
+    const model = { missions: [mission("beta")] };
+    const [r] = snapshotRows(model, "wahub", "2026-07-08T10:00:00Z", dir);
+    assert.equal(r.loc, null);
+    assert.equal(r.tokens, null);
+    assert.equal(r.models, null);
+    assert.equal(r.durationH, null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // ─── appendSnapshots ──────────────────────────────────────────────────────────
 
 test("appendSnapshots: appends rows (does not rewrite existing)", () => {

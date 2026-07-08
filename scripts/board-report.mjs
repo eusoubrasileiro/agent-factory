@@ -189,6 +189,28 @@ function readLastVerdict(missionDirPath) {
   return { verdict: last.verdict, round: last.round };
 }
 
+/**
+ * Read a mission's `stats.json` (mission-stats.mjs output). Missing/corrupt →
+ * null. The volatile `generatedAt` is stripped so the embedded model + content
+ * hash stay stable across recollections of identical state (no republish loop —
+ * same doctrine as the Histórico strip; see board-autopublish.mjs).
+ * @param {string} missionDirPath
+ * @returns {object|null}
+ */
+function readStats(missionDirPath) {
+  const text = readMaybe(path.join(missionDirPath, "stats.json"));
+  if (text === null) return null;
+  try {
+    const obj = JSON.parse(text);
+    if (!obj || typeof obj !== "object") return null;
+    const { generatedAt, ...rest } = obj;
+    void generatedAt;
+    return rest;
+  } catch {
+    return null;
+  }
+}
+
 /** Counts of `features/NN.md` specs and `features/NN.handoff.md` handoffs. */
 function countFeatures(missionDirPath) {
   const featuresDir = path.join(missionDirPath, "features");
@@ -261,6 +283,7 @@ export function buildTraceabilityModel({ missionsDir, prdPath, gitInfo }) {
       handoffs,
       lastVerdict,
       branch: branchBySlug.get(slug) ?? null,
+      stats: readStats(dir),
     };
   });
 
@@ -470,6 +493,10 @@ a.mission-link:hover { text-decoration: underline; }
 .card-branch { color: var(--muted); font-size: 0.78rem; }
 .card-chips { display: inline-flex; gap: 0.25rem; flex-wrap: wrap; }
 .chip { display: inline-block; padding: 0.05rem 0.4rem; border-radius: 4px; background: var(--bg); border: 1px solid var(--border); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; color: var(--muted); }
+.card-stats { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.4rem; }
+.stat-cell { display: inline-flex; align-items: center; gap: 0.2rem; padding: 0.05rem 0.4rem; border-radius: 4px; background: var(--bg); border: 1px solid var(--border); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.7rem; color: var(--muted); }
+.loc-add { color: #166534; font-weight: 600; }
+.loc-del { color: #991b1b; font-weight: 600; }
 .drilldown { margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px dashed var(--border); font-size: 0.85rem; color: var(--muted); }
 .drilldown p { margin: 0.25rem 0; }
 .verdict-PASS { color: #166534; font-weight: 600; }
@@ -571,6 +598,7 @@ function renderMissionCard(m) {
   const verdictLine = m.lastVerdict?.verdict
     ? `<p>Último veredicto: <span class="verdict-${esc(m.lastVerdict.verdict)}">${esc(m.lastVerdict.verdict)}</span> (rodada ${esc(m.lastVerdict.round)})</p>`
     : "";
+  const statsLine = renderMissionStatsLine(m.stats);
   return `      <details class="mission-card" id="mission-${esc(m.slug)}">
         <summary>
           <div class="card-row">
@@ -580,12 +608,45 @@ function renderMissionCard(m) {
             ${branchHtml}
             ${chipsHtml}
           </div>
+          ${statsLine}
         </summary>
         <div class="drilldown">
           ${featuresLine}
           ${verdictLine}
         </div>
       </details>`;
+}
+
+/**
+ * A one-line stat strip for a mission card: LOC ±, modelo, tokens, tempo,
+ * rondas — the per-mission numbers Andre asked for. Empty string when the
+ * mission has no stats.json yet (never crash). All values deterministic
+ * (stable content — republishing on a real change is correct, not a loop).
+ * @param {object|null|undefined} stats — a mission's stripped stats.json
+ * @returns {string}
+ */
+function renderMissionStatsLine(stats) {
+  if (!stats || typeof stats !== "object") return "";
+  const cells = [];
+  if (stats.loc && typeof stats.loc === "object") {
+    cells.push(
+      `<span class="stat-cell" title="linhas adicionadas / removidas">` +
+        `<span class="loc-add">+${esc(stats.loc.added ?? 0)}</span>` +
+        `<span class="loc-del">-${esc(stats.loc.deleted ?? 0)}</span> LOC</span>`,
+    );
+  }
+  const model = stats.models?.worker;
+  if (model) cells.push(`<span class="stat-cell" title="modelo do worker">${esc(model)}</span>`);
+  if (typeof stats.tokens?.total === "number") {
+    cells.push(`<span class="stat-cell" title="tokens">${esc(fmtTokens(stats.tokens.total))} tok</span>`);
+  }
+  const h = statsDurationH(stats.durations);
+  if (h !== null) cells.push(`<span class="stat-cell" title="tempo de parede">${esc(fmtStat(h, " h"))}</span>`);
+  if (typeof stats.rounds === "number") {
+    cells.push(`<span class="stat-cell" title="rondas de validação">${esc(stats.rounds)} rondas</span>`);
+  }
+  if (cells.length === 0) return "";
+  return `<div class="card-stats">${cells.join("")}</div>`;
 }
 
 function renderMissionsTab(missions, orphans) {
@@ -634,6 +695,82 @@ ${orphansHtml}
 function fmtStat(value, suffix = "") {
   if (value === null || value === undefined || Number.isNaN(value)) return "sem dados";
   return `${Number(value.toFixed(1))}${suffix}`;
+}
+
+/** Compact token count: 2359696 → "2.36M", 12345 → "12.3k", <1000 → as-is. */
+function fmtTokens(n) {
+  if (typeof n !== "number" || Number.isNaN(n)) return "—";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+/** Total wall-clock hours from a stats `durations` object, or null. */
+function statsDurationH(durations) {
+  if (!durations || typeof durations !== "object") return null;
+  const parts = [durations.building, durations.validating].filter((v) => typeof v === "number");
+  if (parts.length === 0) return null;
+  return parts.reduce((a, b) => a + b, 0) / (60 * 60 * 1000);
+}
+
+/**
+ * Group missions by their WORKER model into a per-agent performance table
+ * (factory-metrics W3, F4). Pure. Missions without a `stats.models.worker` are
+ * skipped (the view answers "which model is worth its cost", so a mission with
+ * no recorded model has nothing to say). Returns rows sorted by model.
+ *
+ * Per model:
+ *   - missoes: number of missions run on it
+ *   - passPrimeiraRate: fraction that PASSed validation on round 1 (0..1)
+ *   - rondasMedia: mean validate rounds
+ *   - tokensPorFeature: Σ tokens.total / Σ features (null when no features)
+ *   - escalations: Σ escalations
+ *   - tokensTotal: Σ tokens.total
+ *
+ * @param {Array<object>} missions — board model missions (with optional `stats`)
+ * @returns {Array<{ model: string, missoes: number, passPrimeiraRate: number|null, rondasMedia: number|null, tokensPorFeature: number|null, escalations: number, tokensTotal: number }>}
+ */
+export function aggregateAgents(missions) {
+  const safe = Array.isArray(missions) ? missions : [];
+  const byModel = new Map();
+  for (const m of safe) {
+    const model = m?.stats?.models?.worker;
+    if (typeof model !== "string" || model.length === 0) continue;
+    if (!byModel.has(model)) byModel.set(model, []);
+    byModel.get(model).push(m);
+  }
+
+  const rows = [];
+  for (const [model, ms] of byModel) {
+    let passFirst = 0;
+    let roundsSum = 0;
+    let roundsCount = 0;
+    let tokensSum = 0;
+    let featuresSum = 0;
+    let escalations = 0;
+    for (const m of ms) {
+      const rounds = typeof m.stats?.rounds === "number" ? m.stats.rounds : null;
+      const passed = m.lastVerdict?.verdict === "PASS";
+      if (passed && rounds === 1) passFirst++;
+      if (rounds !== null) {
+        roundsSum += rounds;
+        roundsCount++;
+      }
+      if (typeof m.stats?.tokens?.total === "number") tokensSum += m.stats.tokens.total;
+      if (typeof m.features === "number") featuresSum += m.features;
+      if (typeof m.stats?.escalations === "number") escalations += m.stats.escalations;
+    }
+    rows.push({
+      model,
+      missoes: ms.length,
+      passPrimeiraRate: ms.length > 0 ? passFirst / ms.length : null,
+      rondasMedia: roundsCount > 0 ? roundsSum / roundsCount : null,
+      tokensPorFeature: featuresSum > 0 ? tokensSum / featuresSum : null,
+      escalations,
+      tokensTotal: tokensSum,
+    });
+  }
+  return rows.sort((a, b) => a.model.localeCompare(b.model));
 }
 
 /**
@@ -726,6 +863,44 @@ ${tableBody}
 }
 
 /**
+ * Render the "Agentes" tab (factory-metrics W3, F4): per-model performance
+ * grouped from the missions' stats.json — missões, taxa de PASS de primeira,
+ * rondas médias, tokens/feature, escalações. "sem dados" when no mission has a
+ * recorded worker model. Portuguese labels (user-facing). Never crashes.
+ * @param {Array<object>} missions — board model missions (with optional stats)
+ * @returns {string}
+ */
+function renderAgentsTab(missions) {
+  const agents = aggregateAgents(missions);
+  if (agents.length === 0) {
+    return `  <section id="tab-agentes" class="tab-panel" role="tabpanel" hidden>
+    <p class="muted">sem dados de agentes ainda</p>
+  </section>`;
+  }
+  const fmtPct = (r) => (r === null || r === undefined ? "—" : `${Math.round(r * 100)}%`);
+  const rows = agents
+    .map((a) => {
+      return `        <tr>
+          <td class="id">${esc(a.model)}</td>
+          <td>${esc(a.missoes)}</td>
+          <td>${esc(fmtPct(a.passPrimeiraRate))}</td>
+          <td>${esc(fmtStat(a.rondasMedia))}</td>
+          <td>${esc(a.tokensPorFeature === null ? "—" : fmtTokens(Math.round(a.tokensPorFeature)))}</td>
+          <td>${esc(a.escalations)}</td>
+        </tr>`;
+    })
+    .join("\n");
+  return `  <section id="tab-agentes" class="tab-panel" role="tabpanel" hidden>
+      <table>
+        <thead><tr><th>Modelo</th><th>Missões</th><th>PASS de 1ª</th><th>Rondas médias</th><th>Tokens/feature</th><th>Escalações</th></tr></thead>
+        <tbody>
+${rows}
+        </tbody>
+      </table>
+  </section>`;
+}
+
+/**
  * Render the traceability model as a self-contained HTML document.
  *
  * ONE document: all CSS inline in a single `<style>`, all JS in a single inline
@@ -771,12 +946,14 @@ ${renderStyles()}
     <nav class="tabs" role="tablist">
       <button type="button" role="tab" data-tab="requisitos" aria-selected="true">Requisitos</button>
       <button type="button" role="tab" data-tab="missoes" aria-selected="false">Missões</button>
+      <button type="button" role="tab" data-tab="agentes" aria-selected="false">Agentes</button>
       <button type="button" role="tab" data-tab="historico" aria-selected="false">Histórico</button>
     </nav>
   </header>
   <main>
 ${renderRequirementsTab(reqs)}
 ${renderMissionsTab(missions, orphans)}
+${renderAgentsTab(missions)}
 ${renderHistoryTab(history)}
   </main>
   <footer class="site">
