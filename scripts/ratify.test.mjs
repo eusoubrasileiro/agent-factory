@@ -30,7 +30,10 @@ function makeRoot() {
 }
 
 function runCli(root, args) {
-  return spawnSync(process.execPath, [CLI, ...args, "--dir", root], { encoding: "utf8" });
+  // --repo root isolates syncBoard from the real product backlog (test-isolation).
+  return spawnSync(process.execPath, [CLI, ...args, "--dir", root, "--repo", root], {
+    encoding: "utf8",
+  });
 }
 
 const jsonl = (...objs) => objs.map((o) => JSON.stringify(o)).join("\n") + "\n";

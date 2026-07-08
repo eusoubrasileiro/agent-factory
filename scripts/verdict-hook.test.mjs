@@ -231,7 +231,7 @@ test("record: idempotent — running the hook twice for the same mission causes 
     // to prove a second projection of the same state makes no new cards.
     const r2 = spawnSync(
       process.execPath,
-      [path.join(HERE, "board-sync.mjs"), SLUG, "--dir", missionsRoot(repo)],
+      [path.join(HERE, "board-sync.mjs"), SLUG, "--dir", missionsRoot(repo), "--repo", repo],
       {
         encoding: "utf8",
       },

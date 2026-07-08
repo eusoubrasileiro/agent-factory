@@ -81,11 +81,14 @@ function lastVerdict(root, slug) {
  * `board-sync.mjs` (or a repo with no `backlog/`) must leave ratification
  * completely unaffected.
  */
-function syncBoard(root, slug) {
+function syncBoard(root, slug, repoRoot) {
   try {
     const boardSyncPath = fileURLToPath(new URL("./board-sync.mjs", import.meta.url));
     if (!existsSync(boardSyncPath)) return;
-    spawnSync(process.execPath, [boardSyncPath, slug, "--dir", root], { stdio: "ignore" });
+    // Pass the resolved product repo so board-sync targets the right backlog
+    // instead of re-deriving (post-extraction the roots are separate trees).
+    const extra = repoRoot ? ["--repo", repoRoot] : [];
+    spawnSync(process.execPath, [boardSyncPath, slug, "--dir", root, ...extra], { stdio: "ignore" });
   } catch {
     // soft-fail: board sync must never affect ratification
   }
@@ -121,7 +124,7 @@ function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function ratify(root, slug, force) {
+function ratify(root, slug, force, repoRoot) {
   if (!missionExists(root, slug)) {
     process.stderr.write(`unknown mission slug: ${slug}\n`);
     return 1;
@@ -145,7 +148,7 @@ function ratify(root, slug, force) {
   }
 
   writeFileSync(rPath, `ratified ${today()}\n`);
-  syncBoard(root, slug);
+  syncBoard(root, slug, repoRoot);
   autoCommit(root, slug, `chore(factory): ratify ${slug}`);
   triggerAutopublish();
   process.stdout.write(`${slug}: ratified ${today()}\n`);
@@ -168,29 +171,32 @@ function parseArgs(argv) {
   const positional = [];
   let dir;
   let project;
+  let repo;
   let force = false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--dir") {
       dir = args[++i];
     } else if (args[i] === "--project") {
       project = args[++i];
+    } else if (args[i] === "--repo") {
+      repo = args[++i];
     } else if (args[i] === "--force") {
       force = true;
     } else {
       positional.push(args[i]);
     }
   }
-  return { slug: positional[0], dir, project, force };
+  return { slug: positional[0], dir, project, repo, force };
 }
 
 async function main() {
-  const { slug, dir, project, force } = parseArgs(process.argv);
+  const { slug, dir, project, repo, force } = parseArgs(process.argv);
   if (!slug) {
     usage();
     return 2;
   }
-  const root = resolveProject({ project, dir }).missionsRoot;
-  return ratify(root, slug, force);
+  const resolved = resolveProject({ project, dir, repo });
+  return ratify(resolved.missionsRoot, slug, force, resolved.repoRoot);
 }
 
 const isMain = import.meta.url === pathToFileURL(process.argv[1]).href;
