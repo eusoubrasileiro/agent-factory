@@ -27,7 +27,9 @@ function makeRoot() {
 }
 
 function runCli(root, args, input) {
-  return spawnSync(process.execPath, [CLI, ...args, "--dir", root], {
+  // --repo root isolates syncBoard: the tmp root has no backlog/, so board-sync
+  // no-ops instead of defaulting to the real product repo (test-isolation).
+  return spawnSync(process.execPath, [CLI, ...args, "--dir", root, "--repo", root], {
     input: input ?? "",
     encoding: "utf8",
   });
