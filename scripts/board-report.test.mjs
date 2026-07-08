@@ -22,6 +22,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  aggregateAgents,
   buildTraceabilityModel,
   collectGitInfo,
   parseRequirementsLine,
@@ -1506,4 +1507,151 @@ test("CLI: default history path is <factoryRoot>/history.jsonl (renders 'sem dad
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// ─── Per-mission stats columns + Agentes view (factory-metrics W3, F4) ─────────
+
+/** A mission entry carrying a stats.json payload (board-report model shape). */
+function missionWithStats(slug, stats, overrides = {}) {
+  return {
+    slug,
+    status: "Done",
+    gateReason: null,
+    requirements: [],
+    features: 3,
+    handoffs: 3,
+    lastVerdict: { verdict: "PASS", round: 1 },
+    branch: null,
+    stats,
+    ...overrides,
+  };
+}
+
+test("buildTraceabilityModel: attaches stats.json to a mission (generatedAt stripped)", () => {
+  const root = makeTmpRoot("board-report-stats-");
+  try {
+    mkMission(root, "alpha", {
+      "brief.md": "**Requirements:** none\n",
+      "stats.json": JSON.stringify({
+        generatedAt: "2026-07-08T00:00:00.000Z",
+        loc: { added: 100, deleted: 5, files: 4 },
+        tokens: { worker: { total: 500 }, validator: { total: 200 }, total: 700 },
+        models: { worker: "glm-5.2", validator: "glm-5.2" },
+        durations: { building: 3600000, validating: null },
+        rounds: 1,
+        escalations: 0,
+      }),
+    });
+    const prd = writePrd(root, []);
+    const model = buildTraceabilityModel({ missionsDir: root, prdPath: prd, gitInfo: { branches: [] } });
+    const m = model.missions.find((x) => x.slug === "alpha");
+    assert.ok(m.stats, "stats attached");
+    assert.equal(m.stats.generatedAt, undefined, "volatile generatedAt stripped");
+    assert.deepEqual(m.stats.loc, { added: 100, deleted: 5, files: 4 });
+    assert.equal(m.stats.tokens.total, 700);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("buildTraceabilityModel: mission without stats.json → stats null", () => {
+  const root = makeTmpRoot("board-report-nostats-");
+  try {
+    mkMission(root, "beta", { "brief.md": "**Requirements:** none\n" });
+    const prd = writePrd(root, []);
+    const model = buildTraceabilityModel({ missionsDir: root, prdPath: prd, gitInfo: { branches: [] } });
+    assert.equal(model.missions.find((x) => x.slug === "beta").stats, null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("aggregateAgents: groups by worker model with pass-first, rondas, tokens/feature, escalations", () => {
+  const missions = [
+    missionWithStats("a", {
+      models: { worker: "glm-5.2" },
+      tokens: { total: 600 },
+      rounds: 1,
+      escalations: 0,
+    }, { features: 3, lastVerdict: { verdict: "PASS", round: 1 } }),
+    missionWithStats("b", {
+      models: { worker: "glm-5.2" },
+      tokens: { total: 900 },
+      rounds: 3,
+      escalations: 1,
+    }, { features: 3, lastVerdict: { verdict: "PASS", round: 3 } }),
+    missionWithStats("c", {
+      models: { worker: "claude" },
+      tokens: { total: 400 },
+      rounds: 1,
+      escalations: 0,
+    }, { features: 2, lastVerdict: { verdict: "PASS", round: 1 } }),
+  ];
+  const agents = aggregateAgents(missions);
+  const glm = agents.find((x) => x.model === "glm-5.2");
+  const claude = agents.find((x) => x.model === "claude");
+  assert.equal(glm.missoes, 2);
+  assert.equal(glm.passPrimeiraRate, 0.5); // a passed round 1, b took 3 rounds
+  assert.equal(glm.rondasMedia, 2); // (1 + 3) / 2
+  assert.equal(glm.tokensPorFeature, 250); // (600 + 900) / (3 + 3)
+  assert.equal(glm.escalations, 1);
+  assert.equal(claude.missoes, 1);
+  assert.equal(claude.passPrimeiraRate, 1);
+});
+
+test("aggregateAgents: missions without a worker model are skipped; empty → []", () => {
+  assert.deepEqual(aggregateAgents([]), []);
+  assert.deepEqual(aggregateAgents([{ slug: "x", stats: null }]), []);
+  assert.deepEqual(aggregateAgents([{ slug: "y", stats: { models: {} } }]), []);
+});
+
+test("Agentes: tab button present + renders per-model rows", () => {
+  const model = {
+    generatedAt: "2026-07-08T00:00:00.000Z",
+    requirements: [],
+    orphanBranches: [],
+    missions: [
+      missionWithStats("a", {
+        models: { worker: "zai-coding-plan/glm-5.2" },
+        tokens: { total: 600 },
+        rounds: 1,
+        escalations: 0,
+      }),
+    ],
+  };
+  const html = renderDashboardHtml(model);
+  assert.match(html, /data-tab="agentes"/);
+  assert.match(html, />Agentes</);
+  assert.match(html, /id="tab-agentes"/);
+  assert.match(html, /zai-coding-plan\/glm-5\.2/);
+});
+
+test("Agentes: no stats anywhere → tab renders 'sem dados' and never crashes", () => {
+  const html = renderDashboardHtml(EMPTY_MODEL);
+  assert.match(html, /id="tab-agentes"/);
+  const start = html.indexOf('id="tab-agentes"');
+  const panel = html.slice(start, start + 400);
+  assert.match(panel, /sem dados/);
+});
+
+test("Missões: a mission card with stats shows LOC, modelo, tokens, tempo, rondas", () => {
+  const model = {
+    generatedAt: "2026-07-08T00:00:00.000Z",
+    requirements: [],
+    orphanBranches: [],
+    missions: [
+      missionWithStats("alpha", {
+        loc: { added: 2862, deleted: 18, files: 45 },
+        models: { worker: "glm-5.2", validator: "glm-5.2" },
+        tokens: { total: 2359696 },
+        durations: { building: 3600000, validating: 1800000 },
+        rounds: 1,
+        escalations: 0,
+      }),
+    ],
+  };
+  const html = renderDashboardHtml(model);
+  assert.match(html, /\+2862/); // LOC added
+  assert.match(html, /2359696|2\.36M|2,359,696/); // tokens (some rendering)
+  assert.match(html, /glm-5\.2/); // modelo
 });

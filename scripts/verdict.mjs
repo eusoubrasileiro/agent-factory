@@ -147,6 +147,25 @@ function syncBoard(root, slug, repoRoot) {
 }
 
 /**
+ * Best-effort recompute of the mission's stats.json after a verdict is
+ * recorded (factory-metrics W3). Never throws, never prints, never touches the
+ * caller's exit code — mirrors syncBoard's soft-fail philosophy. The branch is
+ * still live at verdict time, so LOC/tests are collected from it directly.
+ */
+function collectStats(root, slug, repoRoot) {
+  try {
+    const statsPath = fileURLToPath(new URL("./mission-stats.mjs", import.meta.url));
+    if (!existsSync(statsPath)) return;
+    const extra = repoRoot ? ["--repo", repoRoot] : [];
+    spawnSync(process.execPath, [statsPath, "collect", slug, "--dir", root, ...extra], {
+      stdio: "ignore",
+    });
+  } catch {
+    // soft-fail: stats collection must never affect verdict recording
+  }
+}
+
+/**
  * Fire-and-forget trigger of the autopublish funnel (factory-live-board A2).
  * Detached + unref so it never blocks the caller and never affects its exit
  * code. Mirrors syncBoard's soft-fail philosophy — a missing or broken
@@ -223,6 +242,7 @@ async function cmdRecord(root, slug, repoRoot) {
   obj.ts = new Date().toISOString();
   appendFileSync(logPath(root, slug), `${JSON.stringify(obj)}\n`);
   syncBoard(root, slug, repoRoot);
+  collectStats(root, slug, repoRoot);
   autoCommit(root, slug, `chore(factory): verdict ${slug} round ${obj.round} ${obj.verdict}`);
   triggerAutopublish();
   process.stdout.write(

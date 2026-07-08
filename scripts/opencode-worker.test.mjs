@@ -10,6 +10,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildPhaseEndEvent,
+  buildPhaseStartEvent,
   buildSpawnEnv,
   isWorktreeDir,
   parseOpencodeStream,
@@ -33,6 +35,86 @@ test("parseOpencodeStream extracts final text, tokens, cost, session", () => {
   assert.equal(r.cost, 0);
   assert.equal(r.sessionID, "ses_ABC");
   assert.equal(r.sawFinish, true);
+});
+
+// ─── F2: token split (in / out / reasoning) from the opencode stream ────────────
+
+test("parseOpencodeStream extracts the input/output/reasoning token split", () => {
+  const r = parseOpencodeStream(CAPTURED_STREAM);
+  assert.equal(r.tokensIn, 12343);
+  assert.equal(r.tokensOut, 4);
+  assert.equal(r.tokensReasoning, 0);
+});
+
+test("parseOpencodeStream sums the token split across multiple steps", () => {
+  const stream = [
+    '{"type":"step_finish","sessionID":"s","part":{"type":"step-finish","tokens":{"total":100,"input":80,"output":15,"reasoning":5},"cost":0}}',
+    '{"type":"step_finish","sessionID":"s","part":{"type":"step-finish","tokens":{"total":50,"input":40,"output":8,"reasoning":2},"cost":0}}',
+  ].join("\n");
+  const r = parseOpencodeStream(stream);
+  assert.equal(r.tokensIn, 120);
+  assert.equal(r.tokensOut, 23);
+  assert.equal(r.tokensReasoning, 7);
+});
+
+test("parseOpencodeStream reports tokensReasoning=null when the provider omits the split", () => {
+  const stream = [
+    '{"type":"step_finish","sessionID":"s","part":{"type":"step-finish","tokens":{"total":10},"cost":0}}',
+  ].join("\n");
+  const r = parseOpencodeStream(stream);
+  assert.equal(r.tokens, 10);
+  assert.equal(r.tokensIn, 0);
+  assert.equal(r.tokensOut, 0);
+  assert.equal(r.tokensReasoning, null);
+});
+
+// ─── F2: metric event builders (phase_start at spawn, model first-class) ────────
+
+test("buildPhaseStartEvent emits a phase_start with model first-class + legacy detail", () => {
+  const ev = buildPhaseStartEvent("worker", "zai-coding-plan/glm-5.2");
+  assert.equal(ev.seat, "worker");
+  assert.equal(ev.type, "phase_start");
+  assert.equal(ev.model, "zai-coding-plan/glm-5.2");
+  assert.equal(ev.detail, "external:zai-coding-plan/glm-5.2");
+});
+
+test("buildPhaseStartEvent maps any non-validator seat to worker", () => {
+  assert.equal(buildPhaseStartEvent("validator", "m").seat, "validator");
+  assert.equal(buildPhaseStartEvent(undefined, "m").seat, "worker");
+});
+
+test("buildPhaseEndEvent carries model, durationMs and the token split", () => {
+  const ev = buildPhaseEndEvent("worker", "zai-coding-plan/glm-5.2", {
+    tokens: 14651,
+    tokensIn: 12343,
+    tokensOut: 4,
+    tokensReasoning: 0,
+    cost: 0,
+    durationMs: 820000,
+  });
+  assert.equal(ev.seat, "worker");
+  assert.equal(ev.type, "phase_end");
+  assert.equal(ev.model, "zai-coding-plan/glm-5.2");
+  assert.equal(ev.detail, "external:zai-coding-plan/glm-5.2");
+  assert.equal(ev.tokens, 14651);
+  assert.equal(ev.tokensIn, 12343);
+  assert.equal(ev.tokensOut, 4);
+  assert.equal(ev.tokensReasoning, 0);
+  assert.equal(ev.durationMs, 820000);
+  assert.equal(ev.costUsd, 0);
+});
+
+test("buildPhaseEndEvent keeps tokensReasoning=null (unknown) when provider omitted it", () => {
+  const ev = buildPhaseEndEvent("validator", "m", {
+    tokens: 5,
+    tokensIn: 0,
+    tokensOut: 0,
+    tokensReasoning: null,
+    cost: 0,
+    durationMs: 1000,
+  });
+  assert.equal(ev.tokensReasoning, null);
+  assert.equal(ev.seat, "validator");
 });
 
 test("parseOpencodeStream concatenates multiple text parts in order", () => {

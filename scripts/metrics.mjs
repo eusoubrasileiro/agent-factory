@@ -72,6 +72,27 @@ export function validateEvent(obj) {
   if (obj.costUsd !== undefined && typeof obj.costUsd !== "number") {
     return { ok: false, reason: "costUsd must be a number when present" };
   }
+  // ── Full-pipeline observability fields (factory-metrics W3, all OPTIONAL and
+  //    backward-compatible — legacy tokens/costUsd still accepted above).
+  if (obj.model !== undefined && typeof obj.model !== "string") {
+    return { ok: false, reason: "model must be a string when present" };
+  }
+  if (obj.tokensIn !== undefined && typeof obj.tokensIn !== "number") {
+    return { ok: false, reason: "tokensIn must be a number when present" };
+  }
+  if (obj.tokensOut !== undefined && typeof obj.tokensOut !== "number") {
+    return { ok: false, reason: "tokensOut must be a number when present" };
+  }
+  // tokensReasoning is best-effort: some providers (e.g. z.ai) do not split it,
+  // so `null` (explicit "unknown") is accepted alongside a number or absence.
+  if (obj.tokensReasoning !== undefined && obj.tokensReasoning !== null) {
+    if (typeof obj.tokensReasoning !== "number") {
+      return { ok: false, reason: "tokensReasoning must be a number or null when present" };
+    }
+  }
+  if (obj.durationMs !== undefined && typeof obj.durationMs !== "number") {
+    return { ok: false, reason: "durationMs must be a number when present" };
+  }
   return { ok: true };
 }
 
