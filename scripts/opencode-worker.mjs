@@ -26,7 +26,7 @@
  *   node scripts/factory/opencode-worker.mjs \
  *     --dir <worktree> --model <provider/model> \
  *     (--prompt "<text>" | --prompt-file <path>) \
- *     [--slug <slug>] [--metric-seat worker|validator] \
+ *     [--slug <slug>] [--metric-seat worker|validator] [--project <id>] \
  *     [--session <id>] [--continue] [--timeout <ms>] \
  *     [--json-out <path>] [--no-auto] [--allow-any-dir]
  *
@@ -63,12 +63,21 @@ export function isWorktreeDir(dir) {
  * Parse an opencode `--format json` event stream (newline-delimited JSON, one
  * event per line). Tolerates interleaved non-JSON lines (e.g. a stray watcher
  * warning on a merged stream) by skipping anything that does not parse.
+ * The token split (`input`/`output`/`reasoning`) is best-effort: opencode's
+ * `part.tokens` object carries it for most providers, but z.ai may omit the
+ * `reasoning` sub-field. `tokensReasoning` is therefore `null` (explicit
+ * "unknown") unless at least one step reported it — never a misleading 0.
+ *
  * @param {string} streamText
- * @returns {{ finalText: string, tokens: number, cost: number, sessionID: string|null, sawFinish: boolean }}
+ * @returns {{ finalText: string, tokens: number, tokensIn: number, tokensOut: number, tokensReasoning: number|null, cost: number, sessionID: string|null, sawFinish: boolean }}
  */
 export function parseOpencodeStream(streamText) {
   let finalText = "";
   let tokens = 0;
+  let tokensIn = 0;
+  let tokensOut = 0;
+  let reasoningSum = 0;
+  let sawReasoning = false;
   let cost = 0;
   let sessionID = null;
   let sawFinish = false;
@@ -88,14 +97,30 @@ export function parseOpencodeStream(streamText) {
       finalText += part.text;
     } else if (ev.type === "step_finish" && part) {
       sawFinish = true;
-      if (part.tokens && typeof part.tokens.total === "number") {
-        tokens += part.tokens.total;
+      const t = part.tokens;
+      if (t && typeof t === "object") {
+        if (typeof t.total === "number") tokens += t.total;
+        if (typeof t.input === "number") tokensIn += t.input;
+        if (typeof t.output === "number") tokensOut += t.output;
+        if (typeof t.reasoning === "number") {
+          reasoningSum += t.reasoning;
+          sawReasoning = true;
+        }
       }
       if (typeof part.cost === "number") cost += part.cost;
     }
   }
 
-  return { finalText: finalText.trim(), tokens, cost, sessionID, sawFinish };
+  return {
+    finalText: finalText.trim(),
+    tokens,
+    tokensIn,
+    tokensOut,
+    tokensReasoning: sawReasoning ? reasoningSum : null,
+    cost,
+    sessionID,
+    sawFinish,
+  };
 }
 
 // ─── Spawn env allowlist ─────────────────────────────────────────────────────
@@ -153,6 +178,9 @@ function parseArgs(argv) {
       case "--metric-seat":
         opts.metricSeat = args[++i];
         break;
+      case "--project":
+        opts.project = args[++i];
+        break;
       case "--session":
         opts.session = args[++i];
         break;
@@ -184,26 +212,68 @@ function usage() {
     "Usage:\n" +
       "  node scripts/factory/opencode-worker.mjs --dir <worktree> --model <provider/model> \\\n" +
       '    (--prompt "<text>" | --prompt-file <path>) [--slug <slug>] \\\n' +
-      "    [--metric-seat worker|validator] [--session <id>] [--continue] \\\n" +
+      "    [--metric-seat worker|validator] [--project <id>] [--session <id>] [--continue] \\\n" +
       "    [--timeout <ms>] [--json-out <path>] [--no-auto] [--allow-any-dir]\n",
   );
 }
 
-// ─── Metrics (reuse metrics.mjs schema — no expansion) ───────────────────────
+// ─── Metrics (metrics.mjs schema, W3 full-pipeline observability) ─────────────
 
-function recordMetric(slug, seat, model, tokens, cost) {
-  // External work is logged as a worker/validator phase_end so v2 §3.4
-  // telemetry captures it; metrics.mjs has no dedicated external seat, so we
-  // ride the existing schema and name the model in `detail`.
-  const event = {
-    seat: seat === "validator" ? "validator" : "worker",
+/** Map any seat label to the two metrics seats the schema accepts. */
+function metricSeat(seat) {
+  return seat === "validator" ? "validator" : "worker";
+}
+
+/**
+ * Build a `phase_start` event. Emitted at spawn so a mission's metrics.jsonl
+ * carries a start marker (today only phase_end existed — the 142-byte files
+ * prove it), which mission-stats pairs with phase_end to derive wall time.
+ * @param {string} seat @param {string} model
+ * @returns {{seat: string, type: "phase_start", detail: string, model: string}}
+ */
+export function buildPhaseStartEvent(seat, model) {
+  return {
+    seat: metricSeat(seat),
+    type: "phase_start",
+    detail: `external:${model}`,
+    model,
+  };
+}
+
+/**
+ * Build a `phase_end` event with `model` first-class (the legacy `detail`
+ * remains for back-compat), the token split when the stream provided it, and
+ * the driver-measured wall time as `durationMs`.
+ * @param {string} seat @param {string} model
+ * @param {{tokens?: number, tokensIn?: number, tokensOut?: number, tokensReasoning?: number|null, cost?: number, durationMs?: number}} m
+ */
+export function buildPhaseEndEvent(seat, model, m = {}) {
+  return {
+    seat: metricSeat(seat),
     type: "phase_end",
     detail: `external:${model}`,
-    tokens,
-    costUsd: cost,
+    model,
+    tokens: m.tokens ?? 0,
+    tokensIn: m.tokensIn ?? 0,
+    tokensOut: m.tokensOut ?? 0,
+    // Preserve an explicit null (provider omitted the split) — never coerce to 0.
+    tokensReasoning: m.tokensReasoning === undefined ? null : m.tokensReasoning,
+    durationMs: m.durationMs ?? 0,
+    costUsd: m.cost ?? 0,
   };
+}
+
+/**
+ * Append one event to a slug's metrics.jsonl via metrics.mjs. Best-effort —
+ * telemetry must never fail the run. `project` (when known) is forwarded so the
+ * recorder targets the right `missions/<project>/` root now that the engine is
+ * extracted from the product repo.
+ */
+function recordMetric(slug, event, project) {
+  const args = [path.join(__dirname, "metrics.mjs"), "record", slug];
+  if (project) args.push("--project", project);
   try {
-    spawnSync(process.execPath, [path.join(__dirname, "metrics.mjs"), "record", slug], {
+    spawnSync(process.execPath, args, {
       input: JSON.stringify(event),
       stdio: ["pipe", "ignore", "ignore"],
     });
@@ -280,6 +350,12 @@ async function main() {
     }
   }
 
+  // Emit phase_start at spawn so metrics.jsonl carries a start marker that
+  // mission-stats can pair with phase_end for wall-clock duration.
+  if (opts.slug) {
+    recordMetric(opts.slug, buildPhaseStartEvent(opts.metricSeat, opts.model), opts.project);
+  }
+
   const t0 = Date.now();
   const { exitCode, stdout, stderr, timedOut } = await runOpencode(opts);
   const wallMs = Date.now() - t0;
@@ -298,7 +374,18 @@ async function main() {
   }
 
   if (opts.slug) {
-    recordMetric(opts.slug, opts.metricSeat, opts.model, parsed.tokens, parsed.cost);
+    recordMetric(
+      opts.slug,
+      buildPhaseEndEvent(opts.metricSeat, opts.model, {
+        tokens: parsed.tokens,
+        tokensIn: parsed.tokensIn,
+        tokensOut: parsed.tokensOut,
+        tokensReasoning: parsed.tokensReasoning,
+        cost: parsed.cost,
+        durationMs: wallMs,
+      }),
+      opts.project,
+    );
   }
 
   if (opts.jsonOut) {

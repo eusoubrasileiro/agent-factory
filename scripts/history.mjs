@@ -40,27 +40,76 @@ const WEEK_MS = 7 * DAY_MS;
 // ─── snapshotRows ─────────────────────────────────────────────────────────────
 
 /**
+ * Read + parse a mission's `stats.json` (mission-stats.mjs output). Missing or
+ * corrupt → null. Never throws.
+ * @param {string} missionsDir @param {string} slug
+ * @returns {object|null}
+ */
+function readStats(missionsDir, slug) {
+  const p = path.join(missionsDir, slug, "stats.json");
+  if (!existsSync(p)) return null;
+  try {
+    const obj = JSON.parse(readFileSync(p, "utf8"));
+    return obj && typeof obj === "object" ? obj : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Total wall-clock hours from a stats `durations` object (building+validating,
+ * ms → h). Null when neither seat has a duration. Pure.
+ * @param {{building?: number|null, validating?: number|null}|null|undefined} durations
+ * @returns {number|null}
+ */
+function durationHours(durations) {
+  if (!durations || typeof durations !== "object") return null;
+  const parts = [durations.building, durations.validating].filter((v) => typeof v === "number");
+  if (parts.length === 0) return null;
+  return parts.reduce((a, b) => a + b, 0) / (60 * 60 * 1000);
+}
+
+/**
  * Derive one snapshot row per mission in the model. Row shape is FIXED by
  * plan.md: `{ ts, project, slug, state, features:"m/n", rounds, verdict,
  * reqIds }`.
  *
+ * When `missionsDir` is provided (factory-metrics W3, F4) each row is ENRICHED
+ * with `loc`, `tokens` (total), `models`, and `durationH`, read from the
+ * mission's `stats.json` (null when absent). These are lagging indicators — the
+ * autopublish hash guard already strips the whole history payload, so appending
+ * them never triggers a republish loop. When `missionsDir` is omitted the row
+ * keeps its original shape exactly (back-compat).
+ *
  * @param {{ missions?: Array }} model — traceability model (board-report shape)
  * @param {string} project — project id from the manifest
  * @param {string} ts — ISO timestamp for this snapshot batch
- * @returns {Array<{ ts: string, project: string, slug: string, state: string, features: string, rounds: number, verdict: string|null, reqIds: string[] }>}
+ * @param {string} [missionsDir] — when set, read each mission's stats.json
+ * @returns {Array<object>}
  */
-export function snapshotRows(model, project, ts) {
+export function snapshotRows(model, project, ts, missionsDir) {
   const missions = model && Array.isArray(model.missions) ? model.missions : [];
-  return missions.map((m) => ({
-    ts,
-    project,
-    slug: m.slug,
-    state: m.status,
-    features: `${m.handoffs ?? 0}/${m.features ?? 0}`,
-    rounds: m.lastVerdict && Number.isInteger(m.lastVerdict.round) ? m.lastVerdict.round : 0,
-    verdict: m.lastVerdict?.verdict ?? null,
-    reqIds: Array.isArray(m.requirements) ? m.requirements : [],
-  }));
+  return missions.map((m) => {
+    const base = {
+      ts,
+      project,
+      slug: m.slug,
+      state: m.status,
+      features: `${m.handoffs ?? 0}/${m.features ?? 0}`,
+      rounds: m.lastVerdict && Number.isInteger(m.lastVerdict.round) ? m.lastVerdict.round : 0,
+      verdict: m.lastVerdict?.verdict ?? null,
+      reqIds: Array.isArray(m.requirements) ? m.requirements : [],
+    };
+    if (!missionsDir) return base;
+    const stats = readStats(missionsDir, m.slug);
+    return {
+      ...base,
+      loc: stats?.loc ?? null,
+      tokens: stats?.tokens?.total ?? null,
+      models: stats?.models ?? null,
+      durationH: stats ? durationHours(stats.durations) : null,
+    };
+  });
 }
 
 // ─── appendSnapshots ──────────────────────────────────────────────────────────
