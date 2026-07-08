@@ -254,7 +254,10 @@ function appendHistorySnapshots({ rendered, repoRoot, ts }) {
     if (!existsSync(r.outPath)) continue;
     const html = readFileSync(r.outPath, "utf8");
     const model = extractModelFromHtml(html);
-    rows.push(...snapshotRows(model, r.entry.id, ts));
+    // missions/<project>/ lives under the factory root (repoRoot here) — pass it
+    // so each snapshot row is enriched with stats.json (loc/tokens/models/durationH).
+    const missionsDir = path.join(repoRoot, "missions", r.entry.id);
+    rows.push(...snapshotRows(model, r.entry.id, ts, missionsDir));
   }
   if (rows.length > 0) {
     appendSnapshots(historyPath, rows);

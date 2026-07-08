@@ -9,7 +9,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -175,6 +175,14 @@ test("seatModel returns null when no seat record carries a model", () => {
   assert.equal(seatModel([], "validator"), null);
 });
 
+test("seatModel ignores a free-text (non external:) detail note", () => {
+  const records = [
+    { seat: "worker", type: "phase_start", detail: "coordinator-authored build (Critical File)" },
+    { seat: "worker", type: "phase_end", detail: "F1/F2/F3 done; acceptance green" },
+  ];
+  assert.equal(seatModel(records, "worker"), null);
+});
+
 // ─── diffBaselineKeys ─────────────────────────────────────────────────────────
 
 test("diffBaselineKeys returns the changed/added/removed top-level keys", () => {
@@ -206,4 +214,26 @@ test("collect never throws and writes zeros/nulls when inputs are missing", () =
   assert.equal(res.stats.models.worker, null);
   assert.equal(res.stats.pr, null);
   assert.equal(res.stats.mergeBase, null);
+  assert.equal(res.stats.escalations, 0);
+});
+
+test("collect counts escalations + attention and reads the token split from metrics.jsonl", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "mstats-esc-"));
+  const missions = path.join(root, "missions", "wahub");
+  const slugDir = path.join(missions, "escalated");
+  mkdirSync(slugDir, { recursive: true });
+  writeFileSync(
+    path.join(slugDir, "metrics.jsonl"),
+    [
+      JSON.stringify({ seat: "worker", type: "phase_end", tokens: 100, model: "glm-5.2" }),
+      JSON.stringify({ seat: "orchestrator", type: "escalation" }),
+      JSON.stringify({ seat: "human", type: "touchpoint" }),
+      JSON.stringify({ seat: "orchestrator", type: "escalation" }),
+    ].join("\n") + "\n",
+  );
+  const res = collect({ slug: "escalated", missionsRoot: missions, repoRoot: root });
+  assert.equal(res.stats.escalations, 2);
+  assert.equal(res.stats.attention, 3); // 2 escalations + 1 touchpoint
+  assert.equal(res.stats.tokens.worker.total, 100);
+  assert.equal(res.stats.models.worker, "glm-5.2");
 });

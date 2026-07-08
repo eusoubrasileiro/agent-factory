@@ -200,6 +200,11 @@ export function seatDuration(records, seat) {
 /**
  * The model a seat ran on: first-class `model` field wins, else the legacy
  * `detail: "external:<model>"` string. Null when no seat record carries one.
+ *
+ * `detail` is overloaded — coordinator-authored phases put a free-text note
+ * there (e.g. "factory-secret-min build (coordinator-authored…)"), so ONLY an
+ * `external:`-prefixed detail is treated as a model id. A free-text note yields
+ * null, keeping non-model runs out of the Agentes aggregation.
  * @param {Array<object>} records @param {string} seat
  * @returns {string|null}
  */
@@ -209,8 +214,8 @@ export function seatModel(records, seat) {
   );
   for (let i = rs.length - 1; i >= 0; i--) {
     if (typeof rs[i].model === "string" && rs[i].model.length > 0) return rs[i].model;
-    if (typeof rs[i].detail === "string") {
-      const m = rs[i].detail.replace(/^external:/, "").trim();
+    if (typeof rs[i].detail === "string" && rs[i].detail.startsWith("external:")) {
+      const m = rs[i].detail.slice("external:".length).trim();
       if (m.length > 0) return m;
     }
   }
@@ -373,6 +378,7 @@ export function collect({ slug, missionsRoot, repoRoot, branch, trunk, project }
     models: { worker: null, validator: null },
     rounds: 0,
     attention: 0,
+    escalations: 0,
     pr: null,
   };
 
@@ -409,6 +415,7 @@ export function collect({ slug, missionsRoot, repoRoot, branch, trunk, project }
     stats.attention = records.filter(
       (r) => typeof r.type === "string" && ATTENTION_TYPES.has(r.type),
     ).length;
+    stats.escalations = records.filter((r) => r.type === "escalation").length;
 
     stats.rounds = countRounds(missionsRoot, slug);
     stats.pr = readPrMarker(missionsRoot, slug);
