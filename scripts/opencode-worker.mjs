@@ -39,7 +39,9 @@
 import { spawn, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+
+import { isMainModule } from "./lib/is-main.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 min — a full TDD feature can take a while
@@ -406,7 +408,7 @@ async function main() {
   return ok ? 0 : 1;
 }
 
-const isMain = import.meta.url === pathToFileURL(process.argv[1]).href;
+const isMain = isMainModule(import.meta.url);
 if (isMain) {
   main()
     .then((code) => process.exit(code))

@@ -43,11 +43,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { renderRootIndex, renderScrumbanRedirect } from "./board-index.mjs";
 import { deriveMissionState } from "./board-sync.mjs";
 import { appendSnapshots, snapshotRows } from "./history.mjs";
+import { isMainModule } from "./lib/is-main.mjs";
 import { resolveProject } from "./lib/project.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -466,7 +467,7 @@ function run({ repoRoot, dryRun }) {
   return 0;
 }
 
-const isMain = import.meta.url === pathToFileURL(process.argv[1]).href;
+const isMain = isMainModule(import.meta.url);
 if (isMain) {
   process.exit(main(process.argv));
 }

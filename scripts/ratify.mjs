@@ -22,9 +22,10 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { autoCommit } from "./git-autocommit.mjs";
+import { isMainModule } from "./lib/is-main.mjs";
 import { resolveProject } from "./lib/project.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -243,7 +244,7 @@ async function main() {
   return ratify(resolved.missionsRoot, slug, force, resolved.repoRoot);
 }
 
-const isMain = import.meta.url === pathToFileURL(process.argv[1]).href;
+const isMain = isMainModule(import.meta.url);
 if (isMain) {
   main()
     .then((code) => process.exit(code))
