@@ -223,9 +223,22 @@ async function readStdin() {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+/**
+ * Why a mission dir is missing is almost never "you typed the slug wrong" — it is
+ * "you forgot --project", because with more than one profile on disk there is no
+ * sole entry to default to and the resolver synthesizes `default`. Say so.
+ */
+function missingMissionMessage(root, slug) {
+  const base = `unknown mission slug: ${slug}\n  looked in: ${root}\n`;
+  if (root.split(path.sep).at(-1) === "default") {
+    return `${base}  no project selected — pass --project <id> (or set FACTORY_PROJECT).\n`;
+  }
+  return base;
+}
+
 async function cmdRecord(root, slug, repoRoot) {
   if (!missionExists(root, slug)) {
-    process.stderr.write(`unknown mission slug: ${slug}\n`);
+    process.stderr.write(missingMissionMessage(root, slug));
     return 1;
   }
 
@@ -281,7 +294,7 @@ async function cmdRecord(root, slug, repoRoot) {
 
 function cmdStatus(root, slug) {
   if (!missionExists(root, slug)) {
-    process.stderr.write(`unknown mission slug: ${slug}\n`);
+    process.stderr.write(missingMissionMessage(root, slug));
     return 1;
   }
 

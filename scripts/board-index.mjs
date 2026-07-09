@@ -7,8 +7,8 @@
  *   - `renderRootIndex(projects, stats)` — one card per projects.json entry:
  *     nome, missões em voo (count), última atualização, link `/<id>/`.
  *   - `renderScrumbanRedirect(target)` — `/scrumban/` meta-refresh redirect to a
- *     caller-chosen target (historical-compat: the old single-board URL now
- *     points at the first project's dashboard).
+ *     caller-chosen target (historical-compat for the old single-board URL;
+ *     `board-autopublish` sends it to the root index, which names no product).
  *
  * House style = `scripts/factory/board-sync.mjs`: pure exported core + thin IO
  * shell. This module does NO disk and NO network — the autopublish funnel
@@ -139,9 +139,11 @@ const REDIRECT_STYLES =
  * document. The redirect is instant (content="0") and carries a canonical link
  * for SEO/crawler hygiene.
  *
- * The target is a caller decision, never an engine fact: `board-autopublish`
- * passes the first project in the manifest, preserving the historical
- * single-board URL for whichever product the board was first built for.
+ * The target is a caller decision, never an engine fact. `board-autopublish`
+ * passes `/` — the root index, which lists every project and names none. It
+ * deliberately does NOT pass the first manifest entry: with one project that
+ * looks like "the product this board was built for", but with two it is just
+ * whichever id sorts first.
  *
  * @param {string} [target="/"] — absolute path or URL to redirect to.
  * @returns {string} — a complete HTML document.
