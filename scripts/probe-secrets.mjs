@@ -17,7 +17,10 @@
  * real `.env` on purpose.
  *
  * Usage:
- *   node scripts/factory/probe-secrets.mjs <worktree-dir> [--parent <dir>] [--min-len <n>]
+ *   node scripts/probe-secrets.mjs <worktree-dir> [--parent <dir>] [--project <id>] [--min-len <n>]
+ *
+ * `--project <id>` names the profile whose `seat.env` holds the known-dummy values
+ * subtracted from the parent secret set. Omitted → the sole profile, when there is one.
  *
  * Exit codes:
  *   0 no real parent-secret value found in the worktree's env files (clean)
@@ -28,9 +31,10 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { resolveProject } from "./lib/project.mjs";
+
 const DEFAULT_MIN_LEN = 12;
 
 // ─── Pure core (unit-tested) ─────────────────────────────────────────────────
@@ -150,36 +154,61 @@ function readEnvFiles(dir) {
   return out;
 }
 
-/** Load the known-dummy values the external-seat template legitimately carries. */
-function loadDummyValues() {
-  const template = path.join(__dirname, "templates", "external-seat.env");
-  if (!existsSync(template)) return [];
-  return parseEnv(readFileSync(template, "utf8")).map((e) => e.value);
+/**
+ * Load the known-dummy values the external seat legitimately carries, from the
+ * active project's profile (`projects/<id>/seat.env`).
+ *
+ * These are subtracted from the parent's secret set so a value the seat and the
+ * parent share ON PURPOSE (a `http://localhost:3000` BASE_URL, a 32-char dummy
+ * JWT_SECRET) is never reported as a leak.
+ *
+ * History, so nobody re-introduces it: this used to read
+ * `path.join(__dirname, "templates", "external-seat.env")` — but `__dirname` is
+ * `scripts/`, so it pointed at `scripts/templates/external-seat.env`, a path that
+ * has never existed at any commit. The `existsSync` guard turned that into a
+ * silent `[]`, so the subtraction was dead from the day it was written and no
+ * test noticed. It survives only because no dummy value currently collides with a
+ * real parent value. The moment one does, a clean external dispatch would be
+ * blocked by a false "LEAK". Hence: resolve through the profile, and test it.
+ *
+ * A profile with no `seat.env` (an engine-only project) legitimately yields `[]`.
+ *
+ * @param {string} [project] — profile id; omitted → the sole profile, when there is one
+ * @param {string} [factoryRoot]
+ * @returns {string[]}
+ */
+export function loadDummyValues(project, factoryRoot) {
+  const { profile } = resolveProject({ project }, factoryRoot);
+  const seatEnv = profile?.seatEnvPath;
+  if (!seatEnv || !existsSync(seatEnv)) return [];
+  return parseEnv(readFileSync(seatEnv, "utf8")).map((e) => e.value);
 }
 
 function parseArgs(argv) {
   const args = argv.slice(2);
   const positional = [];
   let parent;
+  let project;
   let minLen = DEFAULT_MIN_LEN;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--parent") parent = args[++i];
+    else if (args[i] === "--project") project = args[++i];
     else if (args[i] === "--min-len") minLen = Number(args[++i]);
     else positional.push(args[i]);
   }
-  return { worktree: positional[0], parent, minLen };
+  return { worktree: positional[0], parent, project, minLen };
 }
 
 function usage() {
   process.stderr.write(
     "Usage:\n" +
-      "  node scripts/factory/probe-secrets.mjs <worktree-dir> [--parent <dir>] [--min-len <n>]\n" +
+      "  node scripts/probe-secrets.mjs <worktree-dir> [--parent <dir>] [--project <id>] [--min-len <n>]\n" +
       "  exit 0 clean · 1 leak found · 2 usage error\n",
   );
 }
 
 function main() {
-  const { worktree, parent, minLen } = parseArgs(process.argv);
+  const { worktree, parent, project, minLen } = parseArgs(process.argv);
   if (!worktree || Number.isNaN(minLen)) {
     usage();
     return 2;
@@ -199,7 +228,7 @@ function main() {
   }
 
   const secrets = extractSecrets(readFileSync(parentEnv, "utf8"), minLen);
-  const dummyValues = loadDummyValues();
+  const dummyValues = loadDummyValues(project);
   const worktreeFiles = readEnvFiles(worktreeDir);
   const hits = findLeaks(worktreeFiles, secrets, dummyValues, minLen);
 
