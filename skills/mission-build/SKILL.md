@@ -52,11 +52,17 @@ a worker MAY instead run on an **external agent** (opencode → e.g. GLM 5.2 on 
 subscription plan). Same spec, same clean-context rules; only the executor changes:
 ```bash
 pnpm factory:opencode --dir <worktree> --model zai-coding-plan/glm-5.2 \
-  --slug <slug> --metric-seat worker --timeout 2700000 \
+  --slug <slug> --project <project> --metric-seat worker --timeout 2700000 \
   --prompt "Read missions/<project>/<slug>/features/NN.md and execute it exactly, TDD, then run the pre-commit gate and commit."
 ```
 Always pass `--timeout` explicitly — the driver's default kill is abrupt and has
 already cost one worker its mid-handoff state.
+
+Always pass `--project` too. It routes the worker's telemetry to
+`missions/<project>/<slug>/metrics.jsonl`. Omit it and the recorder falls back to
+the sole profile — or, once a second profile exists, to a synthesized `default` —
+and the KPI numbers for the run land in another project's tree. `metrics.mjs` now
+warns on stderr when it has to invent a mission dir; do not ignore that warning.
 
 The external agent is **still governed by the harness**: it is confined to the
 dispatched worktree, dispatched with `--seat external` so it never sees a real

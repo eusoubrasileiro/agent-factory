@@ -10,7 +10,12 @@
  */
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { validateEvent } from "./metrics.mjs";
 
 // ─── Baseline / legacy schema (must stay accepted) ─────────────────────────────
@@ -127,4 +132,46 @@ test("validateEvent accepts a fully-populated modern phase_end event", () => {
     }),
     { ok: true },
   );
+});
+
+// ─── CLI: misrouted telemetry must be visible ────────────────────────────────
+//
+// `record` mkdirs the mission dir. That is right for a new mission and wrong for
+// a wrong/omitted --project, where the KPI instrument silently writes into
+// another project's tree. Soft-fail (exit 0, keep going) but never silent.
+
+function runMetrics(args, cwd) {
+  const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "metrics.mjs");
+  return spawnSync(process.execPath, [script, ...args], {
+    encoding: "utf8",
+    input: '{"seat":"worker","type":"phase_start","detail":"x"}',
+    env: { ...process.env, FACTORY_ROOT: cwd },
+  });
+}
+
+test("CLI record: warns on stderr when it has to invent the mission dir", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "metrics-misroute-"));
+  try {
+    mkdirSync(path.join(root, "missions"), { recursive: true });
+    const r = runMetrics(["record", "some-slug", "--dir", path.join(root, "missions")], root);
+    assert.equal(r.status, 0, "telemetry must never block a mission");
+    assert.match(r.stderr, /creating a new mission dir/);
+    assert.match(r.stderr, /--project|FACTORY_PROJECT/, "the warning must name the likely cause");
+    assert.match(r.stdout, /recorded phase_start/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("CLI record: stays quiet when the mission dir already exists", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "metrics-ok-"));
+  try {
+    const missions = path.join(root, "missions");
+    mkdirSync(path.join(missions, "known-slug"), { recursive: true });
+    const r = runMetrics(["record", "known-slug", "--dir", missions], root);
+    assert.equal(r.status, 0);
+    assert.doesNotMatch(r.stderr, /creating a new mission dir/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
