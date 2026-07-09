@@ -20,6 +20,7 @@ import {
   denyRules,
   loadTemplate,
   renderCageSettings,
+  machineSandboxEnabled,
   writeCageSettings,
 } from "./cage-settings.mjs";
 
@@ -134,14 +135,45 @@ test("auditCageSettings: a sandbox that is not fail-closed is a problem", () => 
   assert.ok(problems.some((p) => /failIfUnavailable/.test(p)));
 });
 
-test("auditCageSettings: sandbox disabled, or unsandboxed commands allowed, are problems", () => {
-  const off = auditCageSettings({ sandbox: { ...SANE_SANDBOX, enabled: false }, permissions: {} });
-  assert.ok(off.some((p) => /sandbox\.enabled/.test(p)));
-  const loose = auditCageSettings({
-    sandbox: { ...SANE_SANDBOX, allowUnsandboxedCommands: true },
-    permissions: {},
+// Tier A/B (D-18). Sandbox OFF is the shipping posture on machines where Claude
+// Code's sandbox cannot initialise, so a disabled sandbox must AUDIT CLEAN.
+// Sandbox ON without failIfUnavailable stays a refusal: it degrades silently to
+// NO sandbox and hands us a false belief in containment (D-12 / M5).
+test("auditCageSettings: a DISABLED sandbox is acceptable (Tier A)", () => {
+  const problems = auditCageSettings({
+    sandbox: { enabled: false },
+    permissions: { deny: [] },
   });
-  assert.ok(loose.some((p) => /allowUnsandboxedCommands/.test(p)));
+  assert.deepEqual(problems, [], "Tier A must audit clean");
+});
+
+test("auditCageSettings: an ABSENT sandbox block is acceptable (Tier A)", () => {
+  assert.deepEqual(auditCageSettings({ permissions: { deny: [] } }), []);
+});
+
+test("auditCageSettings: sandbox ENABLED without failIfUnavailable is still a refusal", () => {
+  const problems = auditCageSettings({
+    sandbox: { enabled: true, failIfUnavailable: false, allowUnsandboxedCommands: false },
+    permissions: { deny: [] },
+  });
+  assert.ok(problems.some((p) => /failIfUnavailable/.test(p)), "silent degradation must be refused");
+});
+
+test("auditCageSettings: sandbox ENABLED with allowUnsandboxedCommands is a refusal", () => {
+  const problems = auditCageSettings({
+    sandbox: { enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: true },
+    permissions: { deny: [] },
+  });
+  assert.ok(problems.some((p) => /allowUnsandboxedCommands/.test(p)));
+});
+
+// A disabled sandbox must not be second-guessed on its sibling keys: they are moot.
+test("auditCageSettings: a disabled sandbox is not judged on failIfUnavailable", () => {
+  const problems = auditCageSettings({
+    sandbox: { enabled: false, failIfUnavailable: false, allowUnsandboxedCommands: true },
+    permissions: { deny: [] },
+  });
+  assert.deepEqual(problems, [], "when the sandbox is off, its other knobs are irrelevant");
 });
 
 test("auditCageSettings: Bash rules are not path-anchored and never flagged", () => {
@@ -283,5 +315,62 @@ test("writeCageSettings: a project's critical files land in the emitted settings
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ─── machine gate (D-18): sandbox.enabled is a MACHINE fact, not a repo fact ───
+
+test("machineSandboxEnabled: an absent machine config means OFF (fail safe, not fail loud)", () => {
+  assert.equal(machineSandboxEnabled("/nonexistent/machine.json"), false);
+});
+
+test("machineSandboxEnabled: a corrupt machine config means OFF, never throws", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "cage-machine-bad-"));
+  try {
+    const f = path.join(dir, "machine.json");
+    writeFileSync(f, "{ this is not json");
+    assert.doesNotThrow(() => machineSandboxEnabled(f));
+    assert.equal(machineSandboxEnabled(f), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('machineSandboxEnabled: {"sandbox": true} turns it on', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "cage-machine-on-"));
+  try {
+    const f = path.join(dir, "machine.json");
+    writeFileSync(f, JSON.stringify({ sandbox: true }));
+    assert.equal(machineSandboxEnabled(f), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("renderCageSettings: sandbox.enabled follows the machine, not the template", () => {
+  const template = loadTemplate();
+  assert.equal(template.sandbox.enabled, true, "template still declares the intent");
+
+  const off = renderCageSettings(template, "/tmp/wt", { sandboxEnabled: false });
+  assert.equal(off.sandbox.enabled, false, "machine says off -> off");
+  assert.deepEqual(auditCageSettings(off), [], "Tier A renders audit-clean");
+
+  const on = renderCageSettings(template, "/tmp/wt", { sandboxEnabled: true });
+  assert.equal(on.sandbox.enabled, true);
+  assert.equal(on.sandbox.failIfUnavailable, true, "Tier B stays fail-closed");
+  assert.deepEqual(auditCageSettings(on), []);
+});
+
+test("writeCageSettings: writes a Tier A cage on a machine with the sandbox off", () => {
+  const wt = mkdtempSync(path.join(tmpdir(), "cage-tierA-"));
+  try {
+    const out = writeCageSettings(wt, { sandboxEnabled: false });
+    const parsed = JSON.parse(readFileSync(out, "utf8"));
+    assert.equal(parsed.sandbox.enabled, false);
+    assert.deepEqual(auditCageSettings(parsed), []);
+    // The deny rules — the part that actually bites on this machine — survive.
+    assert.ok(parsed.permissions.deny.length >= 11);
+  } finally {
+    rmSync(wt, { recursive: true, force: true });
   }
 });
