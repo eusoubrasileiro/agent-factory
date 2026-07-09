@@ -1,0 +1,10 @@
+{
+  "id": "factory",
+  "name": "Factory engine (dogfood)",
+  "path": ".",
+  "prd": null,
+  "trunk": "main",
+  "branchPrefix": "agent/",
+  "gate": ["pnpm test"],
+  "dispatch": "git worktree add .worktrees/{slug} -b agent/{slug}"
+}
