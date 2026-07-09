@@ -1566,6 +1566,63 @@ test("buildTraceabilityModel: mission without stats.json → stats null", () => 
   }
 });
 
+test("buildTraceabilityModel: attaches the PR marker to a mission (factory-pr-record)", () => {
+  const root = makeTmpRoot("board-report-pr-");
+  try {
+    mkMission(root, "alpha", {
+      "brief.md": "**Requirements:** none\n",
+      PR: JSON.stringify({ number: 42, url: "https://github.com/o/r/pull/42" }),
+    });
+    const prd = writePrd(root, []);
+    const model = buildTraceabilityModel({ missionsDir: root, prdPath: prd, gitInfo: { branches: [] } });
+    const m = model.missions.find((x) => x.slug === "alpha");
+    assert.ok(m.pr, "PR marker attached");
+    assert.equal(m.pr.number, 42);
+    assert.match(m.pr.url, /pull\/42/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("buildTraceabilityModel: mission with no PR marker → pr null; corrupt marker → pr null", () => {
+  const root = makeTmpRoot("board-report-nopr-");
+  try {
+    mkMission(root, "beta", { "brief.md": "**Requirements:** none\n" });
+    mkMission(root, "gamma", { "brief.md": "**Requirements:** none\n", PR: "{not json" });
+    const prd = writePrd(root, []);
+    const model = buildTraceabilityModel({ missionsDir: root, prdPath: prd, gitInfo: { branches: [] } });
+    assert.equal(model.missions.find((x) => x.slug === "beta").pr, null);
+    assert.equal(model.missions.find((x) => x.slug === "gamma").pr, null, "corrupt marker is inert");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("renderDashboardHtml: a mission card links to its PR when a marker exists", () => {
+  const root = makeTmpRoot("board-report-prcard-");
+  try {
+    mkMission(root, "alpha", {
+      "brief.md": "**Requirements:** none\n",
+      PR: JSON.stringify({ number: 42, url: "https://github.com/o/r/pull/42" }),
+    });
+    mkMission(root, "beta", { "brief.md": "**Requirements:** none\n" });
+    const prd = writePrd(root, []);
+    const model = buildTraceabilityModel({ missionsDir: root, prdPath: prd, gitInfo: { branches: [] } });
+    const html = renderDashboardHtml(model);
+    assert.match(html, /https:\/\/github\.com\/o\/r\/pull\/42/, "PR url rendered");
+    assert.match(html, /PR\s*#42/, "PR number rendered");
+    // beta has no marker → exactly one PR link in the whole document. Match the
+    // full class attribute: `card-pr` is a prefix of `card-progress`.
+    assert.equal(
+      (html.match(/class="card-pr"/g) ?? []).length,
+      1,
+      "only the mission with a marker gets a link",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("aggregateAgents: groups by worker model with pass-first, rondas, tokens/feature, escalations", () => {
   const missions = [
     missionWithStats("a", {
