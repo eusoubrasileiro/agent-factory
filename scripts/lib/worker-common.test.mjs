@@ -14,9 +14,12 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
-import { killGracefully } from "./worker-common.mjs";
+import { assertKnownProject, killGracefully } from "./worker-common.mjs";
 
 // `spawn()` is asynchronous: the child is still booting for a few ms after the
 // call returns. Signal it in that window and the handler it has not yet installed
@@ -154,5 +157,89 @@ test("killGracefully: the signal is overridable (SIGINT honoured like SIGTERM)",
     await whenExited(child);
   } finally {
     hardKill(child);
+  }
+});
+
+// ─── assertKnownProject: --project is required AND a known profile ────────────
+//
+// The cage's Critical-File deny rules and the run's telemetry routing both come
+// from the project profile. `resolveProject` is deliberately total (a missing or
+// misspelled id degrades to a default profile with ZERO Critical Files), so the
+// strictness has to live in the driver. This is that guard. A temp factoryRoot
+// with two profiles keeps the test off the real `projects/` on disk.
+
+/** Build a throwaway factoryRoot holding `projects/<id>/project.json` for each id. */
+function makeFactoryRoot(ids) {
+  const root = mkdtempSync(path.join(tmpdir(), "known-project-"));
+  for (const id of ids) {
+    const dir = path.join(root, "projects", id);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "project.json"), JSON.stringify({ id, gate: ["true"] }));
+  }
+  return root;
+}
+
+test("assertKnownProject: an absent project throws, naming --project and every known id", () => {
+  const root = makeFactoryRoot(["alpha", "beta"]);
+  try {
+    for (const absent of [undefined, "", null]) {
+      assert.throws(
+        () => assertKnownProject(absent, root),
+        (err) => {
+          assert.match(err.message, /--project/);
+          assert.match(err.message, /alpha/);
+          assert.match(err.message, /beta/);
+          return true;
+        },
+      );
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("assertKnownProject: an unknown id throws and lists the known ids", () => {
+  const root = makeFactoryRoot(["alpha", "beta"]);
+  try {
+    assert.throws(
+      () => assertKnownProject("gamma", root),
+      (err) => {
+        assert.match(err.message, /gamma/);
+        assert.match(err.message, /alpha/);
+        assert.match(err.message, /beta/);
+        return true;
+      },
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("assertKnownProject: a valid id returns it and does not throw", () => {
+  const root = makeFactoryRoot(["alpha", "beta"]);
+  try {
+    assert.equal(assertKnownProject("alpha", root), "alpha");
+    assert.equal(assertKnownProject("beta", root), "beta");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("assertKnownProject: the thrown message never carries anything from process.env", () => {
+  const root = makeFactoryRoot(["alpha", "beta"]);
+  const sentinel = "SENTINEL_ENV_VALUE_should_not_appear";
+  process.env.WORKER_COMMON_TEST_SENTINEL = sentinel;
+  process.env.FACTORY_PROJECT = sentinel;
+  try {
+    for (const call of [() => assertKnownProject(undefined, root), () => assertKnownProject("gamma", root)]) {
+      assert.throws(call, (err) => {
+        assert.ok(!err.message.includes(sentinel), "the guard must not leak an env value");
+        return true;
+      });
+    }
+  } finally {
+    delete process.env.WORKER_COMMON_TEST_SENTINEL;
+    delete process.env.FACTORY_PROJECT;
+    rmSync(root, { recursive: true, force: true });
   }
 });

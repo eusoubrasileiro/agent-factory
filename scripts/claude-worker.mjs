@@ -27,10 +27,16 @@
  *
  * Usage:
  *   node scripts/claude-worker.mjs \
- *     --dir <worktree> --model <model> (--prompt "<text>" | --prompt-file <path>) \
- *     [--slug <slug>] [--project <id>] [--metric-seat worker|validator] \
+ *     --dir <worktree> --model <model> --project <id> \
+ *     (--prompt "<text>" | --prompt-file <path>) \
+ *     [--slug <slug>] [--metric-seat worker|validator] \
  *     [--session <id>] [--continue] [--timeout <ms>] [--json-out <path>] \
  *     [--allow-any-dir] [--allow-uncaged] [--allow-anthropic] [--creds <path>]
+ *
+ * `--project` is REQUIRED and must name a known profile (`projects/<id>/`): the
+ * cage's Critical-File deny rules and this run's telemetry routing both come from
+ * it. An absent or unknown id is refused (exit 2), not defaulted — a forgotten flag
+ * would otherwise render a cage with zero Critical-File protections and say nothing.
  *
  * `--allow-anthropic` opts INTO Anthropic-hosted models (e.g. `--model sonnet`), which
  * spend Anthropic tokens or the operator's plan quota rather than the flat z.ai plan.
@@ -40,7 +46,8 @@
  * Exit codes:
  *   0 the seat finished (claude exited 0)
  *   1 claude errored / timed out / produced no result event
- *   2 usage error, worktree-confinement violation, missing credentials, or no cage
+ *   2 usage error, absent/unknown --project, worktree-confinement violation,
+ *     missing credentials, or no cage
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -50,7 +57,8 @@ import path from "node:path";
 
 import { cageSettingsPath, writeCageSettings } from "./cage-settings.mjs";
 import { isMainModule } from "./lib/is-main.mjs";
-import { DEFAULT_GRACE_MS, killGracefully } from "./lib/worker-common.mjs";
+import { resolveProject } from "./lib/project.mjs";
+import { assertKnownProject, DEFAULT_GRACE_MS, killGracefully } from "./lib/worker-common.mjs";
 import { buildPhaseEndEvent, buildPhaseStartEvent, buildSpawnEnv, isWorktreeDir } from "./opencode-worker.mjs";
 
 const __dirname = path.dirname(new URL(".", import.meta.url).pathname);
@@ -293,8 +301,8 @@ function runClaude(opts, env, settingsPath) {
 function usage() {
   process.stderr.write(
     "Usage:\n" +
-      "  node scripts/claude-worker.mjs --dir <worktree> --model <model>\n" +
-      "    (--prompt <text> | --prompt-file <path>) [--slug <slug>] [--project <id>]\n" +
+      "  node scripts/claude-worker.mjs --dir <worktree> --model <model> --project <id>\n" +
+      "    (--prompt <text> | --prompt-file <path>) [--slug <slug>]\n" +
       "    [--metric-seat worker|validator] [--session <id>] [--continue]\n" +
       "    [--timeout <ms>] [--json-out <path>] [--allow-any-dir] [--allow-uncaged]\n" +
       "    [--allow-anthropic] [--creds <path>]\n",
@@ -333,6 +341,16 @@ async function main() {
     usage();
     return 2;
   }
+
+  // A cage with zero Critical-File rules is the exact failure this driver exists to
+  // prevent, and a forgotten/misspelled --project renders one silently. Refuse.
+  try {
+    assertKnownProject(opts.project);
+  } catch (err) {
+    process.stderr.write(`claude-worker: ${err.message}\n`);
+    return 2;
+  }
+
   if (opts.promptFile) opts.prompt = readFileSync(opts.promptFile, "utf8");
 
   const dirAbs = path.resolve(opts.dir);
@@ -367,6 +385,15 @@ async function main() {
       return 2;
     }
     settingsPath = cageSettingsPath(dirAbs);
+  }
+
+  // Defense in depth: the cage rendered, but if the profile declares no Critical
+  // Files it protects nothing. Valid for a brand-new project, but the operator
+  // must see it — a warning, not a refusal.
+  if (resolveProject({ project: opts.project }).profile.criticalFiles.length === 0) {
+    process.stderr.write(
+      `claude-worker: WARNING — cage for project "${opts.project}" has zero Critical-File rules\n`,
+    );
   }
 
   const env = buildClaudeEnv(process.env, creds);
