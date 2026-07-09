@@ -202,10 +202,22 @@ for (const id of PROFILE_IDS) {
   // 7 — the profile's `path` resolves to an existing product checkout. Skipped
   // on a machine that has the factory but not every product, so the suite stays
   // green in engine-only checkouts.
+  //
+  // It ALSO skips inside an engine worktree, for a different reason: `path` is
+  // relative to the factory root, and in `.worktrees/<slug>/` that root is the
+  // worktree, so `../../products/<id>` under-resolves. The skip reason must not
+  // claim the checkout is missing when it is merely mis-anchored — a reason that
+  // lies costs the next reader an afternoon.
   test(`profile ${id}: path resolves to an existing checkout`, (t) => {
     const { repoRoot } = resolveProject({ project: id }, FACTORY_ROOT);
     if (!existsSync(repoRoot)) {
-      t.skip(`product checkout not present on this machine: ${repoRoot}`);
+      const inWorktree = FACTORY_ROOT.split(path.sep).includes(".worktrees");
+      t.skip(
+        inWorktree
+          ? `repoRoot ${repoRoot} does not exist — expected inside an engine worktree, where a ` +
+            `relative profile path under-resolves. Run from the main factory checkout to assert this.`
+          : `product checkout not present on this machine: ${repoRoot}`,
+      );
       return;
     }
     assert.ok(existsSync(repoRoot), `repoRoot does not exist: ${repoRoot}`);

@@ -1,4 +1,4 @@
-# WaHub Factory — Runbook
+# AmiticIA Factory — Runbook
 
 Your control panel. The factory turns **a feature intent** into **a validated,
 local-green branch you ratify**. Built to run 20–30 features without re-explaining
@@ -7,12 +7,27 @@ the machine each time.
 > **Two-repo model (post-extraction, 2026-07-08).** The engine + all mission
 > data live in the **factory repo** `~/Projects/amiticia/repositories/tools/factory`.
 > Run every engine command from there (`node scripts/verdict.mjs …`), passing
-> `--project <id>` (default: the sole `deploy/projects.json` entry, `wahub`).
+> `--project <id>` (default: the sole profile, when there is only one).
 > Dossiers live in `missions/<project>/<slug>/`; `history.jsonl`, `.publish.log`
 > and `dist/` are at the factory root. The **product code** a worker edits (and
 > the `agent/*` branches, `backlog/`, PRD) live in the product repo, resolved
-> from `projects.json` `path` (`../../products/wahub`). Dossier auto-commits land
-> in the factory repo — the product's git log gains ZERO factory commits.
+> from the profile's `path`. Dossier auto-commits land in the factory repo — the
+> product's git log gains ZERO factory commits.
+
+> **The engine is generic (v2.2, 2026-07-09).** Every per-project fact lives in
+> `projects/<id>/` — `project.json` (`gate[]`, `trunk`, `dispatch`),
+> `critical-files.json`, `seat.env`, `validation.md`. The engine carries none of
+> them, and `scripts/project-profile.test.mjs` fails the build if it ever does.
+> To onboard a project, add the directory and run `pnpm test` — do not edit
+> `scripts/`. Full contract + runbook:
+> [`standards/agent-patterns/software-factory-v2.md` §8](../../standards/agent-patterns/software-factory-v2.md).
+
+> **Caveat — a profile's `path` is relative to the factory root.** Inside an
+> engine worktree (`.worktrees/<slug>/`) that root is the worktree, so
+> `../../products/<id>` under-resolves and `repoRoot` points at a path that does
+> not exist. Engine missions (`--project factory`, `path: "."`) are unaffected.
+> Set `FACTORY_ROOT` explicitly if you must resolve a product from inside an
+> engine worktree.
 
 ## The loop (per feature/mission)
 
@@ -58,8 +73,36 @@ the validated diff. The machine owns the middle.
 | Validate | `/mission-validate <slug>` | fresh validator proves the contract against LOCAL; returns PASS/FAIL |
 | Ship (your call) | ratify, then `pnpm ship` / push | only after PASS and your ratification |
 
+## Onboarding a project (~1 hour, no engine edits)
+
+```bash
+# 1. The profile directory. Four files; nothing else, nowhere else.
+mkdir -p projects/<id>
+
+# 2. project.json — id/name/path/prd/trunk/branchPrefix/gate[]/dispatch.
+#    gate[] is EXACTLY the repo's pre-commit commands, in order.
+#    Any non-zero exit is a mission FAIL.
+# 3. critical-files.json — globs an untrusted seat may not edit.
+#    Start from the repo's own "Critical Files" list in its CLAUDE.md.
+# 4. seat.env — dummy values with the SHAPE of the real .env, so the gate
+#    runs green with zero real secrets. Omit for engine-only projects.
+# 5. validation.md — behavioral probes. No chat/UI surface? Say "None." and
+#    say why the deterministic gate suffices.
+
+# 6. Prove it — the conformance suite iterates EVERY profile on disk.
+pnpm test
+
+# 7. Confirm the cage picks up this project's Critical Files.
+node scripts/cage-settings.mjs print /tmp/wt --project <id>
+```
+
+If step 6 is red, the profile is wrong — **not** the engine. If you find yourself
+wanting to edit `scripts/` to onboard, you have found a profile field that does not
+exist yet; add the field, don't hardcode the fact.
+
 ## Where things live
-- `missions/wahub/<slug>/` — `brief.md`, `plan.md`, `contract.md`,
+- `projects/<id>/` — the **project profile** (the only place a product fact may live).
+- `missions/<project>/<slug>/` — `brief.md`, `plan.md`, `contract.md`,
   `features/NN.md`, `features/NN.handoff.md`. The whole mission is on disk —
   **safe to pick up cold** in a later window.
 - Worker code — isolated in `.claude/worktrees/<slug>/` on branch `agent/<slug>`.
