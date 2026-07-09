@@ -3,7 +3,7 @@
 /**
  * External-agent seat driver (opencode → GLM/other providers).
  *
- * wahub instance of the reusable factory template
+ * Instance of the reusable factory template
  * `standards/agent-patterns/factory-templates/opencode-worker.mjs` (see the
  * companion `external-agent-seat.md` there). Keep the two in sync.
  *

@@ -478,7 +478,7 @@ test("root index: missões em voo count reflects fixture mission states", () => 
   }
 });
 
-test("scrumban redirect: dry-run writes dist/factory-board/scrumban/index.html → /wahub/", () => {
+test("scrumban redirect: dry-run writes dist/factory-board/scrumban/index.html → the first project", () => {
   const root = makeFixtureRoot("autopublish-redirect-");
   try {
     runCli(root, ["--dry-run"]);
@@ -486,8 +486,38 @@ test("scrumban redirect: dry-run writes dist/factory-board/scrumban/index.html �
     assert.ok(existsSync(redirect), "scrumban redirect written");
     const html = readFileSync(redirect, "utf8");
     assert.match(html, /<!doctype html>/i);
+    // The fixture manifest's sole entry is `wahub` — historical-compat output is
+    // unchanged, but it is now DERIVED from the manifest (see the next test).
     assert.match(html, /<meta\s+http-equiv="refresh"\s+content="0;\s*url=\/wahub\/"/i);
     assert.match(html, /movido para/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("scrumban redirect: target follows the manifest, it is not a hardcoded product", () => {
+  const root = makeFixtureRoot("autopublish-redirect-generic-");
+  try {
+    // Re-point the manifest at a different product; the redirect must follow it.
+    writeFileSync(
+      path.join(root, "deploy", "projects.json"),
+      JSON.stringify([
+        {
+          id: "agendazap",
+          name: "AgendaZap",
+          repo: ".",
+          prd: "docs/prd/nexus-build-backlog.md",
+        },
+      ]),
+    );
+    mkdirSync(path.join(root, "missions", "agendazap"), { recursive: true });
+    runCli(root, ["--dry-run"]);
+    const html = readFileSync(
+      path.join(root, "dist", "factory-board", "scrumban", "index.html"),
+      "utf8",
+    );
+    assert.match(html, /<meta\s+http-equiv="refresh"\s+content="0;\s*url=\/agendazap\/"/i);
+    assert.doesNotMatch(html, /\/wahub\//, "no product literal leaks from the engine");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

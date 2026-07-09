@@ -111,7 +111,7 @@ function git(repoRoot, args) {
  *
  * The options object makes the join portable to other factories that use a
  * different branch prefix (e.g. `x/`) or a different trunk (e.g. `develop`).
- * Defaults (`agent/` + `main`) are unchanged — zero behavior change for wahub.
+ * Defaults (`agent/` + `main`) come from the project profile.
  *
  * @param {string} repoRoot
  * @param {{branchPrefix?: string, trunk?: string}} [opts]

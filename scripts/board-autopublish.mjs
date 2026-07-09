@@ -325,7 +325,10 @@ function writeRootIndex({ projects: rendered, distDir }) {
   const rootPath = path.join(distDir, "index.html");
   writeFileSync(rootPath, rootHtml);
 
-  const redirectHtml = renderScrumbanRedirect();
+  // Historical-compat: the old single-board URL points at the FIRST project in
+  // the manifest (the product the board was originally built for). No project →
+  // send them to the root index rather than a 404.
+  const redirectHtml = renderScrumbanRedirect(cards[0] ? `/${cards[0].id}/` : "/");
   const redirectDir = path.join(distDir, "scrumban");
   mkdirSync(redirectDir, { recursive: true });
   const redirectPath = path.join(redirectDir, "index.html");
@@ -404,7 +407,7 @@ function run({ repoRoot, dryRun }) {
     return 0;
   }
 
-  // Render every project (generic loop even though only wahub exists now).
+  // Render every project in the manifest.
   const rendered = manifest.map((entry) => renderProject({ entry, factoryRoot: repoRoot }));
 
   // Feature 03: root project index (`/`) + `/scrumban/` redirect. The rendered

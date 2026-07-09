@@ -2,7 +2,7 @@
 /**
  * Factory PR projector (factory-pr-record W4).
  *
- * Every mission gets a PR on the PRODUCT repo (wahub) carrying the full
+ * Every mission gets a PR on the PRODUCT repo carrying the full
  * validate→fix timeline. DISK STAYS CANONICAL — GitHub is a projection, same
  * doctrine as the board: the PR mirrors state that already lives on disk, and a
  * broken/absent projection NEVER blocks the mission loop.
@@ -15,7 +15,7 @@
  * branch to the product remote, publishing every commit reachable from it — so
  * the projection never arms itself implicitly. `pnpm test` pins `FACTORY_PR=0`.
  *
- * PRs target the wahub product repo (`repoRoot` from resolveProject), NOT the
+ * PRs target the PRODUCT repo (`repoRoot` from resolveProject), NOT the
  * factory repo. Dossiers stay in the factory repo — the PR body just links to
  * the dossier dir there.
  *
@@ -29,7 +29,7 @@
  *                      merge + push flips the PR to Merged automatically.
  *
  * Usage:
- *   node scripts/pr-record.mjs open <slug> [--project wahub] [--dir <root>] [--repo <repoRoot>]
+ *   node scripts/pr-record.mjs open <slug> [--project <id>] [--dir <root>] [--repo <repoRoot>]
  *   node scripts/pr-record.mjs comment <slug> [...]
  *   node scripts/pr-record.mjs finalize <slug> [...]
  *

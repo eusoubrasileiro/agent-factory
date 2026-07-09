@@ -2,17 +2,17 @@
 /**
  * project.mjs — the factory's single source of path resolution + profile.
  *
- * The factory engine was extracted from wahub into its own repo
- * (`AmiticIA-AutoSys/factory`). Two roots now exist where wahub used to have
- * one, and every entry-point script must be able to tell them apart:
+ * The factory engine lives in its own repo (`AmiticIA-AutoSys/factory`), separate
+ * from the products it serves. Two roots therefore exist, and every entry-point
+ * script must be able to tell them apart:
  *
  *   - factoryRoot: this repo — holds `missions/<project>/<slug>/` dossiers,
  *     `history.jsonl`, `.publish.log`, `deploy/projects.json`, the per-project
  *     `projects/<id>/` profiles, and the rendered `dist/factory-board/`.
  *     Dossier auto-commits land HERE.
- *   - repoRoot: the PRODUCT repo (e.g. wahub, at `../../products/wahub`) — holds
- *     the code the workers edit, the `agent/*` branches board-report scans, the
- *     `backlog/` kanban, and the PRD. Git operations about product code run with
+ *   - repoRoot: the PRODUCT repo (from the profile's `path`) — holds the code the
+ *     workers edit, the `agent/*` branches board-report scans, the `backlog/`
+ *     kanban, and the PRD. Git operations about product code run with
  *     `cwd = repoRoot`.
  *
  * A **project profile** lives at `projects/<id>/`. Its `project.json` carries
@@ -22,8 +22,8 @@
  * on id collision the `projects/<id>/project.json` entry wins.
  *
  * Each entry (merged manifest shape):
- *   { "id": "wahub", "name": "...", "path": "../../products/wahub",
- *     "prd": "docs/prd/nexus-build-backlog.md", "trunk": "main",
+ *   { "id": "<id>", "name": "...", "path": "../../products/<id>",
+ *     "prd": "docs/prd/<file>.md", "trunk": "main",
  *     "branchPrefix": "agent/", "gate": [...], "dispatch": "..." }
  * `path` is relative to factoryRoot. (`repo` is accepted as a legacy alias.)
  *
@@ -165,7 +165,7 @@ function buildProfile(entry, factoryRoot) {
  * Selection order for the entry: explicit `project` id → `$FACTORY_PROJECT` →
  * the sole entry in the manifest. If none matches, a best-effort synthetic entry
  * (`id: <requested>|"default"`, `path: "."`) is returned so the caller never
- * crashes — the requested id is preserved (no "wahub" literal fallback).
+ * crashes — the requested id is preserved (no product-literal fallback).
  *
  * `dir` overrides the missions root and `repo` overrides the product repo root
  * (both used by tests and the legacy `--dir`/`--repo` flags); when present they
