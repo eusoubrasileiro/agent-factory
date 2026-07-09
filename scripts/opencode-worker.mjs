@@ -43,6 +43,7 @@ import { fileURLToPath } from "node:url";
 
 import { isMainModule } from "./lib/is-main.mjs";
 import { DEFAULT_GRACE_MS, killGracefully } from "./lib/worker-common.mjs";
+import { opencodeCagePath, writeOpencodeCage } from "./cage-opencode.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 min — a full TDD feature can take a while
@@ -202,6 +203,9 @@ function parseArgs(argv) {
       case "--allow-any-dir":
         opts.allowAnyDir = true;
         break;
+      case "--allow-uncaged":
+        opts.allowUncaged = true;
+        break;
       default:
         process.stderr.write(`unknown flag: ${a}\n`);
         opts._bad = true;
@@ -289,6 +293,26 @@ function recordMetric(slug, event, project) {
 
 function runOpencode(opts) {
   return new Promise((resolve) => {
+    // Render the cage FRESH at every spawn, outside the worktree, so an agent that
+    // somehow weakened a previous one cannot carry that forward — and so it cannot
+    // edit the file that governs it. Soft-fail: a cage we cannot write is reported
+    // loudly and the run proceeds uncaged rather than silently pretending. Never
+    // let a broken cage masquerade as a cage.
+    let cagePath = null;
+    try {
+      cagePath = writeOpencodeCage(opencodeCagePath(opts.dir), { project: opts.project });
+    } catch (err) {
+      process.stderr.write(`opencode-worker: CAGE NOT INSTALLED — ${err?.message ?? err}\n`);
+      if (!opts.allowUncaged) {
+        return resolve({
+          exitCode: 2,
+          stdout: "",
+          stderr: "refusing to spawn an uncaged worker; pass --allow-uncaged to override",
+          timedOut: false,
+        });
+      }
+    }
+
     const cliArgs = ["run", "-m", opts.model, "--dir", opts.dir, "--format", "json"];
     if (opts.auto) cliArgs.push("--auto");
     if (opts.continue) cliArgs.push("--continue");
@@ -299,7 +323,9 @@ function runOpencode(opts) {
       stdio: ["ignore", "pipe", "pipe"],
       // Never inherit the coordinator's full env — an external model process must
       // not receive real secrets. Only an allowlist passes through (F2 / W1).
-      env: buildSpawnEnv(process.env),
+      // OPENCODE_CONFIG is SET here rather than allowlisted: the allowlist filters
+      // the coordinator's env, and the cage path is ours to dictate, not to inherit.
+      env: { ...buildSpawnEnv(process.env), ...(cagePath ? { OPENCODE_CONFIG: cagePath } : {}) },
     });
     let stdout = "";
     let stderr = "";
