@@ -73,6 +73,31 @@ the validated diff. The machine owns the middle.
 | Validate | `/mission-validate <slug>` | fresh validator proves the contract against LOCAL; returns PASS/FAIL |
 | Ship (your call) | ratify, then `pnpm ship` / push | only after PASS and your ratification |
 
+## The cage (external worker seats)
+
+The external seat runs under a cage rendered from the project's
+`critical-files.json` into **opencode's own** `permission` schema — because opencode,
+not Claude Code, is the driver we run. It is written fresh at every spawn, **outside**
+the worktree, and handed over via `OPENCODE_CONFIG`. The driver **refuses to spawn
+without it** (exit 2); `--allow-uncaged` is the deliberate escape hatch.
+
+```bash
+node scripts/cage-opencode.mjs print --project <id>       # what the seat will get
+node scripts/probe-cage.mjs <worktree> --project <id>     # static: what the cage SAYS (free)
+node scripts/probe-cage.mjs <worktree> --project <id> \
+     --live -m zai-coding-plan/glm-5.2                    # live: what the cage DOES (costs tokens)
+```
+
+**Read this before trusting it.** The static probe proves our renderer. It does not
+prove opencode honours the deny — that needs `--live`, which asserts on file hashes
+and never on `permission_denials` (which returns empty even when a deny fires).
+**The live probe has not been run yet** (decisions.md D-17). Until it has, treat the
+cage as installed-but-unproven.
+
+What the cage does and does not do: an `edit` deny stops the agent's edit/write
+tools. It does not stop `python3 -c "open('.env').read()"`. Secrets are contained by
+the dummy `.env` in the worktree, not by a deny rule.
+
 ## Onboarding a project (~1 hour, no engine edits)
 
 ```bash
