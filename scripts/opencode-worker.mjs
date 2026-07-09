@@ -42,6 +42,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { isMainModule } from "./lib/is-main.mjs";
+import { DEFAULT_GRACE_MS, killGracefully } from "./lib/worker-common.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 min — a full TDD feature can take a while
@@ -304,9 +305,13 @@ function runOpencode(opts) {
     let stderr = "";
     let timedOut = false;
 
+    // Ask, wait, then insist. A bare SIGKILL here cost a worker its mid-handoff
+    // state once already (mission factory-profiles): SIGKILL cannot be caught, so
+    // whatever the child was writing is lost. SIGTERM lets opencode flush its
+    // session; 30 s later, if it is still hanging, it dies anyway.
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGKILL");
+      killGracefully(child, { graceMs: DEFAULT_GRACE_MS });
     }, opts.timeout ?? DEFAULT_TIMEOUT_MS);
 
     child.stdout.on("data", (d) => {
