@@ -15,3 +15,6 @@ deploy/factory-board/.env
 
 # Node
 node_modules/
+
+# Engine self-hosting: git worktrees for factory missions.
+.worktrees/
