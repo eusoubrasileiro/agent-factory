@@ -30,7 +30,12 @@
  *     --dir <worktree> --model <model> (--prompt "<text>" | --prompt-file <path>) \
  *     [--slug <slug>] [--project <id>] [--metric-seat worker|validator] \
  *     [--session <id>] [--continue] [--timeout <ms>] [--json-out <path>] \
- *     [--allow-any-dir] [--allow-uncaged] [--creds <path>]
+ *     [--allow-any-dir] [--allow-uncaged] [--allow-anthropic] [--creds <path>]
+ *
+ * `--allow-anthropic` opts INTO Anthropic-hosted models (e.g. `--model sonnet`), which
+ * spend Anthropic tokens or the operator's plan quota rather than the flat z.ai plan.
+ * The seat stays caged either way. Without the flag, an anthropic.com endpoint (or a
+ * missing base URL, which falls back to one) is refused.
  *
  * Exit codes:
  *   0 the seat finished (claude exited 0)
@@ -136,6 +141,39 @@ export function assertExternalEndpoint(creds) {
   }
   if (!creds.ANTHROPIC_AUTH_TOKEN && !creds.ANTHROPIC_API_KEY) {
     throw new Error("refusing to spawn: no seat token (ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY).");
+  }
+}
+
+/**
+ * The endpoint guard, with a deliberate escape hatch.
+ *
+ * `assertExternalEndpoint` exists to stop the seat ACCIDENTALLY running on Anthropic
+ * and billing real money for work that is supposed to be flat-rate. It was never
+ * meant to forbid the deliberate choice.
+ *
+ * Running Sonnet (or any Anthropic-hosted model) as a caged worker is legitimate: the
+ * cage is Claude Code's own permission system and works identically whatever model is
+ * behind it. It simply costs Anthropic tokens, or the operator's plan quota, instead
+ * of the flat z.ai plan. So it must be TYPED (`--allow-anthropic`), never defaulted into.
+ *
+ * With `--allow-anthropic` and no credentials at all, `claude -p` falls back to the
+ * operator's own logged-in session — which is exactly what a Sonnet worker wants.
+ *
+ * @param {Record<string,string>} creds
+ * @param {{allowAnthropic?: boolean}} [opts]
+ */
+export function assertSeatEndpoint(creds, opts = {}) {
+  if (!opts.allowAnthropic) return assertExternalEndpoint(creds);
+
+  // Opted in. The only remaining requirement is that a base URL, IF given, is a URL:
+  // a typo there would send the seat somewhere nobody intended.
+  const base = creds?.ANTHROPIC_BASE_URL;
+  if (base) {
+    try {
+      new URL(base);
+    } catch {
+      throw new Error(`refusing to spawn: ANTHROPIC_BASE_URL is not a URL: ${base}`);
+    }
   }
 }
 
@@ -258,13 +296,14 @@ function usage() {
       "  node scripts/claude-worker.mjs --dir <worktree> --model <model>\n" +
       "    (--prompt <text> | --prompt-file <path>) [--slug <slug>] [--project <id>]\n" +
       "    [--metric-seat worker|validator] [--session <id>] [--continue]\n" +
-      "    [--timeout <ms>] [--json-out <path>] [--allow-any-dir] [--allow-uncaged] [--creds <path>]\n",
+      "    [--timeout <ms>] [--json-out <path>] [--allow-any-dir] [--allow-uncaged]\n" +
+      "    [--allow-anthropic] [--creds <path>]\n",
   );
 }
 
 function parseArgs(argv) {
   const args = argv.slice(2);
-  const opts = { allowAnyDir: false, allowUncaged: false, continue: false, metricSeat: "worker" };
+  const opts = { allowAnyDir: false, allowUncaged: false, allowAnthropic: false, continue: false, metricSeat: "worker" };
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
       case "--dir": opts.dir = args[++i]; break;
@@ -281,6 +320,7 @@ function parseArgs(argv) {
       case "--creds": opts.creds = args[++i]; break;
       case "--allow-any-dir": opts.allowAnyDir = true; break;
       case "--allow-uncaged": opts.allowUncaged = true; break;
+      case "--allow-anthropic": opts.allowAnthropic = true; break;
       default: opts._bad = true;
     }
   }
@@ -310,7 +350,7 @@ async function main() {
   // Guard 1: never bill Anthropic for a seat that must run on the flat z.ai plan.
   const creds = loadSeatCredentials(opts.creds ?? DEFAULT_CREDS_PATH);
   try {
-    assertExternalEndpoint(creds);
+    assertSeatEndpoint(creds, { allowAnthropic: opts.allowAnthropic });
   } catch (err) {
     process.stderr.write(`claude-worker: ${err.message}\n`);
     return 2;
