@@ -141,7 +141,19 @@ async function cmdRecord(root, slug) {
   if (obj.ts === undefined) obj.ts = new Date().toISOString();
 
   const dir = missionDir(root, slug);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  if (!existsSync(dir)) {
+    // Soft-fail is right here — telemetry must never block a mission — but SILENT
+    // is not. Creating the dir means either a brand-new mission, or a `--project`
+    // that is wrong/omitted, in which case the KPI instrument quietly writes into
+    // some other project's tree and the numbers vanish. (Exactly what happened to
+    // the factory-profiles worker runs: dispatched without `--project`, three GLM
+    // features' telemetry landed under the sole-entry default.) Warn, then proceed.
+    process.stderr.write(
+      `metrics: creating a new mission dir ${dir}\n` +
+        `  if this is not a new mission, check --project / FACTORY_PROJECT.\n`,
+    );
+    mkdirSync(dir, { recursive: true });
+  }
 
   appendFileSync(logPath(root, slug), `${JSON.stringify(obj)}\n`);
   process.stdout.write(`recorded ${obj.type} (${obj.seat}) for ${slug}\n`);
