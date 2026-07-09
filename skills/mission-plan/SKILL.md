@@ -1,9 +1,14 @@
 ---
 name: mission-plan
-description: ORCHESTRATOR seat of the WaHub factory. Turn a feature intent into a mission — brief + plan + validation contract + scoped feature specs — then get Andre's one approval before any code. Use when Andre says "plan a mission", "new feature", "/mission-plan <intent>", or hands you a feature idea to build. Reads the PRD; workers/validators never do.
+description: ORCHESTRATOR seat of the AmiticIA factory. Turn a feature intent into a mission — brief + plan + validation contract + scoped feature specs — then get Andre's one approval before any code. Use when Andre says "plan a mission", "new feature", "/mission-plan <intent>", or hands you a feature idea to build. Reads the PRD; workers/validators never do.
 ---
 
-> **Engine runs from the factory repo** (`tools/factory`): run `node scripts/*.mjs` there with `--project wahub`; dossiers are `missions/wahub/<slug>/`. The worker edits product code in the wahub worktree; dossier commits land in the factory repo, never wahub.
+> **Engine runs from the factory repo** (`tools/factory`): run `node scripts/*.mjs` there with `--project <project>`; dossiers are `missions/<project>/<slug>/`. The worker edits product code in the product worktree; dossier commits land in the factory repo, never in the product repo.
+>
+> **Per-project facts live in the profile.** The PRD path, trunk branch, gate
+> commands and dispatch command are `projects/<project>/project.json`; the
+> behavioral proof mechanisms are `projects/<project>/validation.md`. Read them
+> before you write a contract — the proof mechanism you pick must exist there.
 
 <what-to-do>
 
@@ -17,9 +22,10 @@ NOT — you distil it down for them. Follow these steps in order.
   it (step 3), he ratifies it. He directs and ratifies; he never authors.
 
 ## 2. Read down from the product truth (orchestrator-only)
-- Read `docs/prd/nexus-crm.md`, `CLAUDE.md`, `CONTEXT.md`, and the **relevant**
-  code (routes/services/schema the feature touches). Use `Explore`/grep — do not
-  dump the whole repo into context.
+- Read the project's PRD (`projects/<project>/project.json → prd`, resolved against
+  the product repo), its `CLAUDE.md`, and the **relevant** code (routes/services/
+  schema the feature touches). Use `Explore`/grep — do not dump the whole repo
+  into context.
 - This is the ONLY seat allowed to read the PRD. Everything you learn that a
   worker needs, you will paste into that worker's feature spec as a context seed.
 - Read BEFORE the grill (step 3): the code is what tells you *where* the intent
@@ -44,17 +50,16 @@ product truth, you now know the decisions this feature forces. Extract them:
   (architecture, libraries, test structure) — you own those; decide them silently.
   Cover his blind spot: surface business/risk trade-offs as a short yes/no, never
   as authorship. Stop as soon as the answers are unambiguous — don't pad the grill.
-- **Then write** `missions/wahub/<slug>/brief.md` from `templates/brief.md`
+- **Then write** `missions/<project>/<slug>/brief.md` from `templates/brief.md`
   FROM his answers (WHAT + WHY only, ≤ 1 page). Show it back; his "sim" ratifies it.
   This ratified brief — not anything he hand-wrote — is the owner-seat artifact.
 
 ## 4. Derive the validation contract FIRST (before the plan's HOW)
 - Create `contract.md` from the template. Write the **assertions from the brief's
-  intent** — observable, testable behavior. Pick the proof mechanism per assertion:
-  - backend/data → `pnpm test:e2e:supabase` (local, real auth+RLS+realtime) or `pnpm test:e2e`
-  - chat / WABA → **`whatsapp` MCP** probe (send real message → assert effect)
-  - frontend / UI → **`playwright` probe** (drive the live Lovable app) + keep its build green
-  - always → the house-standard gate (`quality-gate`, tests, tsc, lint)
+  intent** — observable, testable behavior. Pick the proof mechanism per assertion
+  from `projects/<project>/validation.md` — that file, not this skill, names which
+  E2E command, MCP probe or UI driver proves each kind of claim for this project.
+  Every assertion also carries the house-standard gate (`project.json → gate[]`).
 - The worker will NOT see these run. You own "done", not the worker.
 - Once `brief.md` + `contract.md` both exist, `pnpm board:sync <slug>` reflects
   the card as `Needs Human (gate:approve-plan)` — the board, not you, tells Andre
@@ -74,7 +79,7 @@ product truth, you now know the decisions this feature forces. Extract them:
   Any strategic question still open goes one at a time, with your recommendation.
 - On his approval, the mission is cleared for `/mission-build`. If a real,
   hard-to-reverse trade-off was decided, append one line to `factory/decisions.md`.
-- On approval, write the one-line marker `missions/wahub/<slug>/APPROVED`
+- On approval, write the one-line marker `missions/<project>/<slug>/APPROVED`
   (content: `approved <YYYY-MM-DD>`) and run `pnpm board:sync <slug>` — the card
   moves to `Building`'s precondition state.
 

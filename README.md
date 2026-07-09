@@ -7,25 +7,45 @@ validate → ratify) plus the live board that publishes to `factory.example.com`
 > 2026-07-08 (plan: *Factory v2.1 — Factory Extraction*, Workstream 0/2). Fresh
 > repo, no history surgery. wahub keeps its product-owned quality contract
 > (`quality-gate.mjs`, `quality-baseline.json`, `.husky` hooks, the PRD); the
-> engine + all mission data live here and are reusable by other products via one
-> `deploy/projects.json` entry.
+> engine + all mission data live here.
+
+## The one architectural rule
+
+**The engine knows the SHAPE of a project; only the profile knows the FACTS.**
+
+Every per-project fact — gate commands, Critical Files, dummy-env shape, behavioral
+validation — is **data** under `projects/<id>/`, never code under `scripts/`. A
+conformance suite (`scripts/project-profile.test.mjs`) enforces this: it iterates every
+profile on disk, and a meta test greps the engine sources for any product id and fails
+with `file:line` on a hit. Onboarding a project is therefore adding a directory, not
+editing the engine.
+
+Canonical statement + onboarding runbook:
+[`standards/agent-patterns/software-factory-v2.md` §8](../../standards/agent-patterns/software-factory-v2.md)
+(§9 covers the cage posture). Read §8 before adding a project or touching `scripts/`.
 
 ## Layout
 
 ```
 scripts/            # engine: board-*, verdict, ratify, metrics, git-autocommit,
-                    #   history, opencode-worker, probe-secrets (+ *.test.mjs)
-scripts/lib/        # project.mjs — the single path resolver (factoryRoot vs repoRoot)
-skills/             # mission-plan | mission-build | mission-validate (Claude skills)
-templates/          # dossier templates + external-seat.env
+                    #   history, opencode-worker, probe-secrets, cage-settings
+                    #   (+ *.test.mjs, + project-profile.test.mjs = the conformance suite)
+scripts/lib/        # project.mjs — the path resolver (factoryRoot vs repoRoot) + profile loader
+projects/<id>/      # THE PROJECT PROFILE — project.json, critical-files.json,
+                    #   seat.env, validation.md (+ optional product-specific *.test.mjs)
+skills/             # mission-plan | mission-build | mission-validate (Claude skills) — generic
+templates/          # dossier templates + settings-external.json (the GENERIC cage base)
 missions/<project>/ # per-project mission dossiers (spec of record, committed)
 history.jsonl       # board history snapshots
 decisions.md        # ratified factory decisions
 constitution.md     # factory constitution
 RUNBOOK.md          # operator runbook
-deploy/             # projects.json manifest + DEPLOY-VPS.md + docker-compose
-docs/               # harness research, glm-cage briefing, harness review
+deploy/             # projects.json (legacy manifest, back-compat) + DEPLOY-VPS.md + docker-compose
+docs/               # harness research, cage research, plans
 ```
+
+`deploy/projects.json` is the **legacy** manifest. It is still read for back-compat, but on
+an id collision the `projects/<id>/project.json` entry wins. New projects use `projects/`.
 
 ## Two roots (the one design rule)
 

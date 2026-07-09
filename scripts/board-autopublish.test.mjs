@@ -478,7 +478,7 @@ test("root index: missões em voo count reflects fixture mission states", () => 
   }
 });
 
-test("scrumban redirect: dry-run writes dist/factory-board/scrumban/index.html → /wahub/", () => {
+test("scrumban redirect: dry-run writes dist/factory-board/scrumban/index.html → the root index", () => {
   const root = makeFixtureRoot("autopublish-redirect-");
   try {
     runCli(root, ["--dry-run"]);
@@ -486,8 +486,41 @@ test("scrumban redirect: dry-run writes dist/factory-board/scrumban/index.html �
     assert.ok(existsSync(redirect), "scrumban redirect written");
     const html = readFileSync(redirect, "utf8");
     assert.match(html, /<!doctype html>/i);
-    assert.match(html, /<meta\s+http-equiv="refresh"\s+content="0;\s*url=\/wahub\/"/i);
+    // The legacy single-board URL lands on the root index, which lists every
+    // project. It names no product — see the ordering test below for why.
+    assert.match(html, /<meta\s+http-equiv="refresh"\s+content="0;\s*url=\/"/i);
     assert.match(html, /movido para/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Regression pin. The redirect used to point at `cards[0]` — "the first project
+// in the manifest". With one project that reads as "the product this board was
+// built for"; with two it silently becomes "whichever id sorts first", and
+// adding the `factory` dogfood profile pointed the legacy URL at the engine's
+// own board. A redirect target must never depend on alphabetical luck, so the
+// target must be `/` no matter what the manifest holds or which order it holds it in.
+test("scrumban redirect: target is the root index regardless of manifest contents or order", () => {
+  const root = makeFixtureRoot("autopublish-redirect-generic-");
+  try {
+    writeFileSync(
+      path.join(root, "deploy", "projects.json"),
+      JSON.stringify([
+        { id: "agendazap", name: "AgendaZap", repo: ".", prd: "docs/prd/nexus-build-backlog.md" },
+        { id: "wahub", name: "WaHub", repo: ".", prd: "docs/prd/nexus-build-backlog.md" },
+      ]),
+    );
+    mkdirSync(path.join(root, "missions", "agendazap"), { recursive: true });
+    runCli(root, ["--dry-run"]);
+    const html = readFileSync(
+      path.join(root, "dist", "factory-board", "scrumban", "index.html"),
+      "utf8",
+    );
+    assert.match(html, /<meta\s+http-equiv="refresh"\s+content="0;\s*url=\/"/i);
+    // Neither manifest entry may steal the legacy URL, whatever the ordering.
+    assert.doesNotMatch(html, /url=\/agendazap\//, "first manifest entry must not claim the redirect");
+    assert.doesNotMatch(html, /url=\/wahub\//, "no product literal leaks from the engine");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

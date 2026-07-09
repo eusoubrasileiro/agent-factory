@@ -8,7 +8,7 @@
  */
 
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -16,6 +16,7 @@ import { test } from "node:test";
 import {
   auditCageSettings,
   cageSettingsPath,
+  criticalFileRules,
   denyRules,
   loadTemplate,
   renderCageSettings,
@@ -56,6 +57,43 @@ test("renderCageSettings: rejects a relative worktree path", () => {
 test("renderCageSettings: leaves ~/ rules untouched", () => {
   const out = renderCageSettings({ permissions: { deny: ["Read(~/.ssh/**)"] } }, WT);
   assert.deepEqual(denyRules(out), ["Read(~/.ssh/**)"]);
+});
+
+// ─── criticalFileRules + profile merge (Feature 03) ───────────────────────────
+
+test("criticalFileRules: emits Edit+Write //-anchored rules per glob", () => {
+  assert.deepEqual(
+    criticalFileRules(["backend/src/bot/**"]),
+    ["Edit(//{{WORKTREE}}/backend/src/bot/**)", "Write(//{{WORKTREE}}/backend/src/bot/**)"],
+  );
+  // multiple globs: each yields an Edit+Write pair, order preserved
+  assert.deepEqual(
+    criticalFileRules(["a/**", "b.ts"]),
+    [
+      "Edit(//{{WORKTREE}}/a/**)",
+      "Write(//{{WORKTREE}}/a/**)",
+      "Edit(//{{WORKTREE}}/b.ts)",
+      "Write(//{{WORKTREE}}/b.ts)",
+    ],
+  );
+  // non-array / empty / wrong-shaped input → [] (never throws)
+  assert.deepEqual(criticalFileRules([]), []);
+  assert.deepEqual(criticalFileRules(undefined), []);
+  assert.deepEqual(criticalFileRules(null), []);
+  assert.deepEqual(criticalFileRules("not-an-array"), []);
+});
+
+test("renderCageSettings: merges profile critical files into the base template", () => {
+  const out = renderCageSettings(
+    { permissions: { deny: ["Edit(//{{WORKTREE}}/keep)"] } },
+    WT,
+    { criticalFiles: ["backend/src/bot/**"] },
+  );
+  assert.deepEqual(denyRules(out), [
+    "Edit(//home/x/.claude/worktrees/demo/keep)",
+    "Edit(//home/x/.claude/worktrees/demo/backend/src/bot/**)",
+    "Write(//home/x/.claude/worktrees/demo/backend/src/bot/**)",
+  ]);
 });
 
 // ─── auditCageSettings ────────────────────────────────────────────────────────
@@ -121,23 +159,14 @@ test("the shipped template renders to a cage that passes its own audit", () => {
   assert.deepEqual(auditCageSettings(settings), [], "shipped template must be a sane cage");
 });
 
-test("the shipped template denies every wahub Critical File", () => {
-  const rules = denyRules(renderCageSettings(loadTemplate(), WT)).join("\n");
-  for (const critical of [
-    "backend/src/bot/**",
-    "backend/src/logger.ts",
-    "backend/src/middleware/audit-log.ts",
-    "backend/src/lib/waba.ts",
-    "backend/test/e2e/real/**",
-    "backend/test/eval/**",
-    "frontend/tests/e2e/**",
-    "frontend/tests/e2e-real/**",
-    ".husky/**",
-    "commitlint.config.cjs",
-    "quality-baseline.json",
-    "prisma/schema.prisma",
-  ]) {
-    assert.ok(rules.includes(critical), `Critical File not denied: ${critical}`);
+test("the base template alone contains zero product paths", () => {
+  // Feature 03: the engine carries NO product literals. Every product Critical
+  // File now comes from projects/<id>/critical-files.json at render time. The
+  // wahub-specific coverage moved to the per-profile conformance suite (Feature 05).
+  for (const r of denyRules(loadTemplate())) {
+    for (const product of ["backend/", "frontend/", "prisma/", ".husky", "commitlint", "quality-baseline"]) {
+      assert.ok(!r.includes(product), `product path leaked into the base template: ${r}`);
+    }
   }
 });
 
@@ -211,6 +240,47 @@ test("writeCageSettings: overwrites a tampered cage from a previous run", () => 
     const parsed = JSON.parse(readFileSync(out, "utf8"));
     assert.ok(denyRules(parsed).length > 0, "cage restored on re-render");
     assert.equal(parsed.sandbox.failIfUnavailable, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("writeCageSettings: a project's critical files land in the emitted settings", () => {
+  // Synthetic profile under a tmp factoryRoot — the engine must not know any
+  // product literally, so we build a fake projects/<id>/ and point the resolver
+  // at it. resolveProject is total, so a missing project degrades to [] (also
+  // asserted below).
+  const root = tmpRoot();
+  try {
+    const projDir = path.join(root, "projects", "synthetic");
+    mkdirSync(projDir, { recursive: true });
+    writeFileSync(path.join(projDir, "project.json"), JSON.stringify({ id: "synthetic" }));
+    writeFileSync(path.join(projDir, "critical-files.json"), JSON.stringify(["src/secret/**"]));
+
+    const wt = path.join(root, "wt");
+    const out = writeCageSettings(wt, { project: "synthetic", factoryRoot: root });
+    const parsed = JSON.parse(readFileSync(out, "utf8"));
+    const rules = denyRules(parsed);
+    // renderCageSettings strips the leading '/' from the worktree to form the
+    // `//`-anchored rule (see the "//home/x/…" test above). Mirror that here.
+    const anchor = wt.replace(/^\/+/, "");
+    assert.ok(
+      rules.includes(`Edit(//${anchor}/src/secret/**)`),
+      "project critical Edit rule must be emitted into the cage",
+    );
+    assert.ok(
+      rules.includes(`Write(//${anchor}/src/secret/**)`),
+      "project critical Write rule must be emitted into the cage",
+    );
+
+    // Unknown project → no throw, no product rules (best-effort empty profile).
+    const wt2 = path.join(root, "wt2");
+    const out2 = writeCageSettings(wt2, { project: "no-such-project", factoryRoot: root });
+    const rules2 = denyRules(JSON.parse(readFileSync(out2, "utf8")));
+    assert.ok(
+      rules2.every((r) => !r.includes("src/secret")),
+      "unknown project must not inject critical files",
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

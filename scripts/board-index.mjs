@@ -6,9 +6,9 @@
  * external resource loads — same rules as the per-project dashboard):
  *   - `renderRootIndex(projects, stats)` — one card per projects.json entry:
  *     nome, missões em voo (count), última atualização, link `/<id>/`.
- *   - `renderScrumbanRedirect(target)` — `/scrumban/` meta-refresh redirect →
- *     `/wahub/` (historical-compat: the old single-board URL now points at the
- *     wahub dashboard).
+ *   - `renderScrumbanRedirect(target)` — `/scrumban/` meta-refresh redirect to a
+ *     caller-chosen target (historical-compat for the old single-board URL;
+ *     `board-autopublish` sends it to the root index, which names no product).
  *
  * House style = `scripts/factory/board-sync.mjs`: pure exported core + thin IO
  * shell. This module does NO disk and NO network — the autopublish funnel
@@ -136,13 +136,19 @@ const REDIRECT_STYLES =
 
 /**
  * Render the `/scrumban/` meta-refresh redirect as a self-contained HTML
- * document. Defaults to `/wahub/` (the wahub dashboard). The redirect is
- * instant (content="0") and carries a canonical link for SEO/crawler hygiene.
+ * document. The redirect is instant (content="0") and carries a canonical link
+ * for SEO/crawler hygiene.
  *
- * @param {string} [target="/wahub/"] — absolute path or URL to redirect to.
+ * The target is a caller decision, never an engine fact. `board-autopublish`
+ * passes `/` — the root index, which lists every project and names none. It
+ * deliberately does NOT pass the first manifest entry: with one project that
+ * looks like "the product this board was built for", but with two it is just
+ * whichever id sorts first.
+ *
+ * @param {string} [target="/"] — absolute path or URL to redirect to.
  * @returns {string} — a complete HTML document.
  */
-export function renderScrumbanRedirect(target = "/wahub/") {
+export function renderScrumbanRedirect(target = "/") {
   const t = esc(target);
   return `<!doctype html>
 <html lang="pt-BR">
