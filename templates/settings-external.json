@@ -41,8 +41,8 @@
       "Edit(//{{WORKTREE}}/quality-baseline.json)",
       "Edit(//{{WORKTREE}}/prisma/schema.prisma)",
 
-      "Edit(//{{WORKTREE}}/.claude/**)",
-      "Write(//{{WORKTREE}}/.claude/**)",
+      "Edit(//{{WORKTREE}}/.claude/settings*.json)",
+      "Write(//{{WORKTREE}}/.claude/settings*.json)",
 
       "Read(//{{WORKTREE}}/.env)",
       "Read(//{{WORKTREE}}/.env.*)",
