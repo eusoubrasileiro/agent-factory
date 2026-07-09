@@ -325,10 +325,13 @@ function writeRootIndex({ projects: rendered, distDir }) {
   const rootPath = path.join(distDir, "index.html");
   writeFileSync(rootPath, rootHtml);
 
-  // Historical-compat: the old single-board URL points at the FIRST project in
-  // the manifest (the product the board was originally built for). No project →
-  // send them to the root index rather than a 404.
-  const redirectHtml = renderScrumbanRedirect(cards[0] ? `/${cards[0].id}/` : "/");
+  // Historical-compat: the old single-board URL lands on the root index, which
+  // lists every project. It deliberately does NOT pick a project. "First in the
+  // manifest" reads as "the product this board was built for" only while there is
+  // exactly one; the moment a second profile exists, directory order decides, and
+  // the legacy URL silently follows whichever id sorts first. A redirect target
+  // must not depend on alphabetical luck.
+  const redirectHtml = renderScrumbanRedirect("/");
   const redirectDir = path.join(distDir, "scrumban");
   mkdirSync(redirectDir, { recursive: true });
   const redirectPath = path.join(redirectDir, "index.html");
