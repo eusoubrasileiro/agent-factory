@@ -18,8 +18,12 @@
  * Secrets are contained by W1 (dummy env) + the OS sandbox. See D-11/D-12.
  *
  * Usage:
- *   node scripts/cage-settings.mjs render <worktree>   # writes the settings file
- *   node scripts/cage-settings.mjs print  <worktree>   # dumps JSON to stdout
+ *   node scripts/cage-settings.mjs render <worktree> [--project <id>]  # writes the settings file
+ *   node scripts/cage-settings.mjs print  <worktree> [--project <id>]  # dumps JSON to stdout
+ *
+ * `--project <id>` pulls that project's Critical Files from
+ * projects/<id>/critical-files.json and merges them into the cage. Without it,
+ * the base template is emitted alone (no product paths).
  *
  * Exit codes:
  *   0 ok · 1 template missing/unparseable · 2 usage error
@@ -28,6 +32,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+import { resolveProject } from "./lib/project.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATE_PATH = path.join(__dirname, "..", "templates", "settings-external.json");
@@ -38,20 +44,50 @@ export function cageSettingsPath(worktreeAbs) {
 }
 
 /**
+ * Deny rules for a project's Critical Files. Each glob yields BOTH an Edit and a
+ * Write rule, fs-absolute (`//`) anchored via the {{WORKTREE}} placeholder. The
+ * placeholder is left intact here — `renderCageSettings` substitutes it during
+ * its walk, so the existing anchoring + audit logic handles these rules too.
+ *
+ * @param {string[]} globs — repo-relative globs from projects/<id>/critical-files.json
+ * @returns {string[]}
+ */
+export function criticalFileRules(globs = []) {
+  if (!Array.isArray(globs)) return [];
+  const rules = [];
+  for (const g of globs) {
+    if (typeof g !== "string" || g.length === 0) continue;
+    rules.push(`Edit(//{{WORKTREE}}/${g})`, `Write(//{{WORKTREE}}/${g})`);
+  }
+  return rules;
+}
+
+/**
  * Substitute `{{WORKTREE}}` and drop the `_readme` block (Claude Code parses the
  * settings with a strict schema; the prose belongs to the human reading the
  * template, not to the CLI).
  *
+ * When `opts.criticalFiles` is given, those profile globs are appended to
+ * `template.permissions.deny` (as Edit+Write `//`-anchored rules) BEFORE the
+ * walk, so the existing anchoring logic substitutes {{WORKTREE}} for them too.
+ * The base template therefore carries zero product paths (Feature 03).
+ *
  * A trailing slash on `worktreeAbs` would yield `//path//backend` — normalize.
  * @param {object} template — parsed templates/settings-external.json
  * @param {string} worktreeAbs — absolute path, no trailing slash required
+ * @param {{criticalFiles?: string[]}} [opts]
  * @returns {object} the settings object to serialize
  */
-export function renderCageSettings(template, worktreeAbs) {
+export function renderCageSettings(template, worktreeAbs, opts = {}) {
   if (!template || typeof template !== "object") throw new Error("template must be an object");
   if (typeof worktreeAbs !== "string" || !path.isAbsolute(worktreeAbs)) {
     throw new Error(`worktree must be an absolute path, got: ${worktreeAbs}`);
   }
+  const { criticalFiles = [] } = opts || {};
+  const extra = criticalFileRules(criticalFiles);
+  const merged = extra.length === 0
+    ? template
+    : { ...template, permissions: { ...template.permissions, deny: [...(template.permissions?.deny ?? []), ...extra] } };
   // `//` + a path that already starts with `/` would double the separator.
   const anchor = path.normalize(worktreeAbs).replace(/\/+$/, "").replace(/^\//, "");
   const walk = (node) => {
@@ -67,7 +103,7 @@ export function renderCageSettings(template, worktreeAbs) {
     }
     return node;
   };
-  return walk(template);
+  return walk(merged);
 }
 
 /** Every deny rule in a rendered settings object. */
@@ -109,12 +145,38 @@ export function loadTemplate(templatePath = TEMPLATE_PATH) {
 }
 
 /**
+ * Resolve the template + profile critical files for a write/render call.
+ * Back-compat: a string second arg is treated as `templatePath` (the old
+ * `writeCageSettings(worktree, templatePath)` signature still works).
+ * `resolveProject` is total — an unknown project degrades to `[]`, never throws.
+ *
+ * @param {string|{templatePath?: string, project?: string, factoryRoot?: string}} [opts]
+ * @returns {{template: object, criticalFiles: string[]}}
+ */
+function buildSettingsInput(opts = {}) {
+  const isString = typeof opts === "string";
+  const templatePath = isString ? opts : opts?.templatePath || TEMPLATE_PATH;
+  const template = loadTemplate(templatePath);
+  let criticalFiles = [];
+  if (!isString && opts?.project) {
+    criticalFiles = resolveProject({ project: opts.project }, opts.factoryRoot).profile.criticalFiles;
+  }
+  return { template, criticalFiles };
+}
+
+/**
  * Render + write the cage into a worktree. Returns the settings path.
  * Throws on a mis-anchored or non-fail-closed result — a broken cage must never
  * be written to disk and then trusted.
+ *
+ * @param {string} worktreeAbs
+ * @param {string|{templatePath?: string, project?: string, factoryRoot?: string}} [opts] —
+ *   a string is treated as `templatePath` for back-compat; an object loads the
+ *   profile's Critical Files when `project` is given.
  */
-export function writeCageSettings(worktreeAbs, templatePath = TEMPLATE_PATH) {
-  const settings = renderCageSettings(loadTemplate(templatePath), worktreeAbs);
+export function writeCageSettings(worktreeAbs, opts = {}) {
+  const { template, criticalFiles } = buildSettingsInput(opts);
+  const settings = renderCageSettings(template, worktreeAbs, { criticalFiles });
   const problems = auditCageSettings(settings);
   if (problems.length > 0) throw new Error(`refusing to write a broken cage:\n- ${problems.join("\n- ")}`);
   const out = cageSettingsPath(worktreeAbs);
@@ -128,23 +190,27 @@ export function writeCageSettings(worktreeAbs, templatePath = TEMPLATE_PATH) {
 function usage() {
   process.stderr.write(
     "Usage:\n" +
-      "  node scripts/cage-settings.mjs render <worktree>\n" +
-      "  node scripts/cage-settings.mjs print  <worktree>\n",
+      "  node scripts/cage-settings.mjs render <worktree> [--project <id>]\n" +
+      "  node scripts/cage-settings.mjs print  <worktree> [--project <id>]\n",
   );
 }
 
 function main() {
-  const [cmd, wt] = process.argv.slice(2);
+  const argv = process.argv.slice(2);
+  const [cmd, wt] = argv;
   if (!cmd || !wt || !["render", "print"].includes(cmd)) {
     usage();
     return 2;
   }
+  const projectIdx = argv.indexOf("--project");
+  const project = projectIdx !== -1 ? argv[projectIdx + 1] : undefined;
   const abs = path.resolve(wt);
+  const { template, criticalFiles } = buildSettingsInput(project ? { project } : {});
   if (cmd === "print") {
-    process.stdout.write(`${JSON.stringify(renderCageSettings(loadTemplate(), abs), null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify(renderCageSettings(template, abs, { criticalFiles }), null, 2)}\n`);
     return 0;
   }
-  process.stdout.write(`${writeCageSettings(abs)}\n`);
+  process.stdout.write(`${writeCageSettings(abs, project ? { project } : {})}\n`);
   return 0;
 }
 
