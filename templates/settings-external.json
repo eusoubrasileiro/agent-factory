@@ -14,7 +14,14 @@
     "       straight through Read(...) deny, because deny only covers the built-in",
     "       file tools plus RECOGNIZED bash commands (cat/head/tail/sed). Secrets",
     "       are contained by W1 (dummy .env in the worktree) + the OS sandbox.",
-    "The Read/Bash denies below are therefore defense-in-depth, not a boundary."
+    "The Read/Bash denies below are therefore defense-in-depth, not a boundary.",
+    "",
+    "PRODUCT CRITICAL FILES (Feature 03): the deny list below is the GENERIC BASE",
+    "only — engine-internal rails, secrets reads, and the bash guardrails. The",
+    "per-project Edit/Write denies (e.g. wahub's backend/frontend globs) are NO",
+    "LONGER hardcoded here; they are generated at render time from the active",
+    "profile's projects/<id>/critical-files.json and appended to permissions.deny.",
+    "The engine therefore carries zero product paths."
   ],
 
   "sandbox": {
@@ -27,20 +34,6 @@
   "permissions": {
     "defaultMode": "acceptEdits",
     "deny": [
-      "Edit(//{{WORKTREE}}/backend/src/bot/**)",
-      "Write(//{{WORKTREE}}/backend/src/bot/**)",
-      "Edit(//{{WORKTREE}}/backend/src/logger.ts)",
-      "Edit(//{{WORKTREE}}/backend/src/middleware/audit-log.ts)",
-      "Edit(//{{WORKTREE}}/backend/src/lib/waba.ts)",
-      "Edit(//{{WORKTREE}}/backend/test/e2e/real/**)",
-      "Edit(//{{WORKTREE}}/backend/test/eval/**)",
-      "Edit(//{{WORKTREE}}/frontend/tests/e2e/**)",
-      "Edit(//{{WORKTREE}}/frontend/tests/e2e-real/**)",
-      "Edit(//{{WORKTREE}}/.husky/**)",
-      "Edit(//{{WORKTREE}}/commitlint.config.cjs)",
-      "Edit(//{{WORKTREE}}/quality-baseline.json)",
-      "Edit(//{{WORKTREE}}/prisma/schema.prisma)",
-
       "Edit(//{{WORKTREE}}/.claude/settings*.json)",
       "Write(//{{WORKTREE}}/.claude/settings*.json)",
 
