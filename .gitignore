@@ -5,6 +5,10 @@ dist/
 .publish.log
 dist/factory-board/.hash
 
+# PR projection side-channel: records why a `gh` call failed on THIS machine.
+# The `PR` marker itself is mission state and stays tracked.
+missions/**/.pr.log
+
 # VPS deploy secrets (basicauth users live here, never commit).
 deploy/.env
 deploy/factory-board/.env

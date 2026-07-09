@@ -190,6 +190,27 @@ function readLastVerdict(missionDirPath) {
 }
 
 /**
+ * Read a mission's `PR` marker (pr-record.mjs output, factory-pr-record W4).
+ * Missing/corrupt/number-less → null; the card simply renders no PR link. The
+ * marker is stable content (number + url), so it never churns the publish hash.
+ * @param {string} missionDirPath
+ * @returns {{number: number, url: string}|null}
+ */
+function readPrMarker(missionDirPath) {
+  const text = readMaybe(path.join(missionDirPath, "PR"));
+  if (text === null) return null;
+  try {
+    const obj = JSON.parse(text);
+    if (obj && typeof obj === "object" && Number.isFinite(obj.number)) {
+      return { number: obj.number, url: typeof obj.url === "string" ? obj.url : "" };
+    }
+  } catch {
+    // corrupt marker is inert — the dashboard must never crash on it
+  }
+  return null;
+}
+
+/**
  * Read a mission's `stats.json` (mission-stats.mjs output). Missing/corrupt →
  * null. The volatile `generatedAt` is stripped so the embedded model + content
  * hash stay stable across recollections of identical state (no republish loop —
@@ -284,6 +305,7 @@ export function buildTraceabilityModel({ missionsDir, prdPath, gitInfo }) {
       lastVerdict,
       branch: branchBySlug.get(slug) ?? null,
       stats: readStats(dir),
+      pr: readPrMarker(dir),
     };
   });
 
@@ -491,6 +513,8 @@ a.mission-link:hover { text-decoration: underline; }
 .card-slug { font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92rem; }
 .card-progress { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 0.82rem; }
 .card-branch { color: var(--muted); font-size: 0.78rem; }
+.card-pr { color: var(--muted); font-size: 0.78rem; text-decoration: none; border: 1px solid var(--border); border-radius: 4px; padding: 0 0.35rem; }
+.card-pr:hover { color: var(--fg); }
 .card-chips { display: inline-flex; gap: 0.25rem; flex-wrap: wrap; }
 .chip { display: inline-block; padding: 0.05rem 0.4rem; border-radius: 4px; background: var(--bg); border: 1px solid var(--border); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; color: var(--muted); }
 .card-stats { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.4rem; }
@@ -594,6 +618,11 @@ function renderMissionCard(m) {
     ? `<span class="card-branch">${esc(m.branch.name)} · ${m.branch.merged ? "mergeado" : "não mergeado"}${m.branch.lastCommitISO ? ` · ${esc(formatDDMM(m.branch.lastCommitISO))}` : ""}</span>`
     : "";
   const chipsHtml = chips ? `<span class="card-chips">${chips}</span>` : "";
+  // The PR is a projection of disk state; the link is informational only, so a
+  // missing marker (gh down, projection off) degrades to no link, never a gap.
+  const prHtml = m.pr
+    ? `<a class="card-pr" href="${esc(m.pr.url)}" target="_blank" rel="noopener">PR #${esc(m.pr.number)}</a>`
+    : "";
   const featuresLine = `<p>${m.features ?? 0} features, ${m.handoffs ?? 0} com handoff</p>`;
   const verdictLine = m.lastVerdict?.verdict
     ? `<p>Último veredicto: <span class="verdict-${esc(m.lastVerdict.verdict)}">${esc(m.lastVerdict.verdict)}</span> (rodada ${esc(m.lastVerdict.round)})</p>`
@@ -606,6 +635,7 @@ function renderMissionCard(m) {
             ${gateBadge}
             <span class="card-progress">${esc(progress)}</span>
             ${branchHtml}
+            ${prHtml}
             ${chipsHtml}
           </div>
           ${statsLine}

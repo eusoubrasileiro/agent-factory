@@ -166,6 +166,30 @@ function collectStats(root, slug, repoRoot) {
 }
 
 /**
+ * Best-effort projection of the mission onto a product-repo PR (factory-pr-record
+ * W4). `open` is idempotent, so it is safe to call on every round: the first
+ * verdict (PASS *or* FAIL) opens the draft PR, and every round is then posted as
+ * a comment, giving the PR the full validate→fix timeline. Never throws, never
+ * touches the caller's exit code — disk stays canonical, GitHub is a projection.
+ *
+ * OPT-IN: inert unless FACTORY_PR=1, because `open` pushes `agent/<slug>` to the
+ * product remote. Guarded here too so tests never even spawn the child.
+ */
+function projectPr(root, slug, repoRoot, subcommand) {
+  try {
+    if (process.env.FACTORY_PR !== "1") return;
+    const prPath = fileURLToPath(new URL("./pr-record.mjs", import.meta.url));
+    if (!existsSync(prPath)) return;
+    const extra = repoRoot ? ["--repo", repoRoot] : [];
+    spawnSync(process.execPath, [prPath, subcommand, slug, "--dir", root, ...extra], {
+      stdio: "ignore",
+    });
+  } catch {
+    // soft-fail: the PR projection must never affect verdict recording
+  }
+}
+
+/**
  * Fire-and-forget trigger of the autopublish funnel (factory-live-board A2).
  * Detached + unref so it never blocks the caller and never affects its exit
  * code. Mirrors syncBoard's soft-fail philosophy — a missing or broken
@@ -243,6 +267,10 @@ async function cmdRecord(root, slug, repoRoot) {
   appendFileSync(logPath(root, slug), `${JSON.stringify(obj)}\n`);
   syncBoard(root, slug, repoRoot);
   collectStats(root, slug, repoRoot);
+  // Order matters: stats.json and validate.log are both on disk by now, so the
+  // PR body/comment render the round that was just recorded.
+  projectPr(root, slug, repoRoot, "open");
+  projectPr(root, slug, repoRoot, "comment");
   autoCommit(root, slug, `chore(factory): verdict ${slug} round ${obj.round} ${obj.verdict}`);
   triggerAutopublish();
   process.stdout.write(
