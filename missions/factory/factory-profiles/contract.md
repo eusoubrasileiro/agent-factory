@@ -28,6 +28,34 @@ exactly as before — same dispatch, same dummy env, same cage rules.
 | A11 | `board-index.mjs` output is byte-identical to before when wahub is the sole manifest entry (redirect default now derived, not hardcoded) | `scripts/board-index.test.mjs` |
 | A12 | Test count GREW: no test was deleted, only moved (the wahub-critical-file assertion moved from `cage-settings.test.mjs` into the conformance suite) | compare `pnpm test` totals vs baseline 348/346-pass/2-skip |
 
+## Amendment 1 — A11 (coordinator, 2026-07-09, AFTER code, BEFORE validation)
+
+**A11 as written is unprovable, and the reason is a defect it failed to catch.**
+
+A11 says the board output must be "byte-identical to before **when wahub is the sole
+manifest entry**." That premise died inside this very mission: F6 adds the `factory`
+dogfood profile, so there are now two entries. The assertion was authored against a
+world the mission's own plan had already scheduled to end.
+
+Worse, the behavior A11 blessed — "the redirect target is derived from the manifest,
+`cards[0]`" — is wrong once a second profile exists. Profiles are discovered with
+`readdirSync`, so `cards[0]` is whichever id sorts first, and the legacy `/scrumban/`
+URL silently began pointing at the engine's own dogfood board rather than a product
+board. "Derived, not hardcoded" is necessary but not sufficient: derived-from-alphabetical-
+order is still arbitrary.
+
+**A11 is therefore replaced, not relaxed:**
+
+> **A11′** — `/scrumban/` (the legacy single-board URL) redirects to `/`, the root index,
+> for ANY manifest: zero entries, one entry, or many, in any order. The engine's board
+> output names no product. Proof: `scripts/board-autopublish.test.mjs` — the ordering test
+> uses a two-entry manifest and asserts neither entry claims the redirect.
+
+This amendment is recorded rather than applied silently: a contract edited to match the
+code it is meant to judge is worthless. The validator should assess the amendment's
+legitimacy as part of its verdict, and mark the mission FAIL if it concludes A11 was
+weakened to accommodate a defect rather than corrected to expose one.
+
 ## House-standard gate (always applies)
 
 - `pnpm test` from the factory repo root exits 0
