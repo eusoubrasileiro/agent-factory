@@ -1,0 +1,59 @@
+{
+  "_readme": [
+    "CAGE for the EXTERNAL (untrusted, e.g. GLM) worker seat. Rendered into",
+    "<worktree>/.claude/settings.external.json by scripts/cage-settings.mjs at",
+    "spawn time — the agent never authors it and cannot edit it (see .claude deny).",
+    "",
+    "{{WORKTREE}} is substituted with the absolute worktree path. The '//' prefix",
+    "is FILESYSTEM-ABSOLUTE. A single leading '/' would anchor to THIS FILE's",
+    "directory, not the fs root — that is the anchoring trap; never write '/foo'.",
+    "",
+    "What these rules do and do NOT do (proved empirically, decisions.md D-11):",
+    "  DO   block Claude's own Edit/Write tools on the Critical Files (threat T1).",
+    "  DO NOT stop a secret read: `python3 -c \"print(open('.env').read())\"` walks",
+    "       straight through Read(...) deny, because deny only covers the built-in",
+    "       file tools plus RECOGNIZED bash commands (cat/head/tail/sed). Secrets",
+    "       are contained by W1 (dummy .env in the worktree) + the OS sandbox.",
+    "The Read/Bash denies below are therefore defense-in-depth, not a boundary."
+  ],
+
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "autoAllowBashIfSandboxed": true
+  },
+
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "deny": [
+      "Edit(//{{WORKTREE}}/backend/src/bot/**)",
+      "Write(//{{WORKTREE}}/backend/src/bot/**)",
+      "Edit(//{{WORKTREE}}/backend/src/logger.ts)",
+      "Edit(//{{WORKTREE}}/backend/src/middleware/audit-log.ts)",
+      "Edit(//{{WORKTREE}}/backend/src/lib/waba.ts)",
+      "Edit(//{{WORKTREE}}/backend/test/e2e/real/**)",
+      "Edit(//{{WORKTREE}}/backend/test/eval/**)",
+      "Edit(//{{WORKTREE}}/frontend/tests/e2e/**)",
+      "Edit(//{{WORKTREE}}/frontend/tests/e2e-real/**)",
+      "Edit(//{{WORKTREE}}/.husky/**)",
+      "Edit(//{{WORKTREE}}/commitlint.config.cjs)",
+      "Edit(//{{WORKTREE}}/quality-baseline.json)",
+      "Edit(//{{WORKTREE}}/prisma/schema.prisma)",
+
+      "Edit(//{{WORKTREE}}/.claude/**)",
+      "Write(//{{WORKTREE}}/.claude/**)",
+
+      "Read(//{{WORKTREE}}/.env)",
+      "Read(//{{WORKTREE}}/.env.*)",
+      "Read(~/.config/amiticia/**)",
+      "Read(~/.ssh/**)",
+
+      "Bash(git push:*)",
+      "Bash(git push *)",
+      "Bash(* push)",
+      "Bash(sh:*)",
+      "Bash(bash -c:*)"
+    ]
+  }
+}
