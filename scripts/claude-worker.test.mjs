@@ -17,7 +17,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -26,6 +26,7 @@ import { fileURLToPath } from "node:url";
 import {
   CLAUDE_ENV_KEYS,
   assertExternalEndpoint,
+  assertSeatEndpoint,
   buildClaudeEnv,
   loadSeatCredentials,
   parseClaudeResult,
@@ -255,4 +256,87 @@ test("CLI: usage error when required args are missing", () => {
   const r = runCli([]);
   assert.equal(r.status, 2);
   assert.match(r.stderr, /Usage:/);
+});
+
+// ─── Sonnet (or any Anthropic-hosted model) as an OPT-IN seat ────────────────
+//
+// The endpoint guard exists to stop ACCIDENTAL spend, not to forbid deliberate
+// spend. Running Sonnet as a worker is a legitimate choice — it just costs
+// Anthropic tokens (or the operator's plan quota) instead of the flat z.ai plan,
+// so it must be typed, never defaulted into.
+
+test("assertSeatEndpoint: default (external) behaves exactly as before", () => {
+  assert.throws(
+    () => assertSeatEndpoint({ ANTHROPIC_BASE_URL: "https://api.anthropic.com", ANTHROPIC_AUTH_TOKEN: "t" }, {}),
+    /anthropic\.com/,
+  );
+  assert.throws(() => assertSeatEndpoint({}, {}), /ANTHROPIC_BASE_URL/);
+});
+
+test("assertSeatEndpoint: --allow-anthropic permits an anthropic.com endpoint", () => {
+  assert.doesNotThrow(() =>
+    assertSeatEndpoint({ ANTHROPIC_BASE_URL: "https://api.anthropic.com", ANTHROPIC_API_KEY: "k" }, { allowAnthropic: true }),
+  );
+});
+
+test("assertSeatEndpoint: --allow-anthropic permits NO credentials (use the logged-in session)", () => {
+  // `claude -p` with no ANTHROPIC_* falls back to the operator's own OAuth session.
+  // That is the whole point of a Sonnet worker: it runs on the plan you already pay for.
+  assert.doesNotThrow(() => assertSeatEndpoint({}, { allowAnthropic: true }));
+});
+
+test("assertSeatEndpoint: --allow-anthropic still rejects a malformed base URL", () => {
+  assert.throws(() => assertSeatEndpoint({ ANTHROPIC_BASE_URL: "not a url" }, { allowAnthropic: true }), /not a URL/);
+});
+
+test("buildClaudeEnv: with no seat creds, no ANTHROPIC_* reaches the child (OAuth path)", () => {
+  const env = buildClaudeEnv({ PATH: "/usr/bin", HOME: "/home/a", ANTHROPIC_BASE_URL: "https://api.z.ai/x" }, {});
+  assert.ok(!("ANTHROPIC_BASE_URL" in env), "a stale coordinator base URL must not redirect a Sonnet seat");
+  assert.equal(env.HOME, "/home/a", "HOME must survive — it is where the OAuth credentials live");
+});
+
+// ─── full spawn path, with a stubbed `claude` binary (costs nothing) ─────────
+
+/** Put a fake `claude` on PATH that prints one result event. */
+function stubClaude(resultJson) {
+  const dir = mkdtempSync(path.join(tmpdir(), "stub-claude-"));
+  const bin = path.join(dir, "claude");
+  writeFileSync(bin, `#!/bin/sh\ncat <<'JSON'\n${resultJson}\nJSON\n`, { mode: 0o755 });
+  return dir;
+}
+
+test("CLI: --allow-anthropic runs a Sonnet seat end-to-end, caged, no creds needed", () => {
+  const wt = mkdtempSync(path.join(tmpdir(), "cw-sonnet-"));
+  const stub = stubClaude(
+    JSON.stringify({ type: "result", is_error: false, session_id: "sess-1", usage: { input_tokens: 7, output_tokens: 3 } }),
+  );
+  try {
+    const r = runCli(
+      ["--dir", wt, "--allow-any-dir", "--model", "sonnet", "--prompt", "hi", "--allow-anthropic", "--creds", "/nonexistent"],
+      { PATH: `${stub}:${process.env.PATH}` },
+    );
+    assert.equal(r.status, 0, `expected success, got ${r.status}\n${r.stderr}`);
+    assert.match(r.stdout, /model=sonnet/);
+    assert.match(r.stdout, /tokens=10/);
+    assert.match(r.stdout, /session=sess-1/);
+    // The cage is still installed — an opt-in seat is not an uncaged seat.
+    assert.ok(existsSync(path.join(wt, ".claude", "settings.external.json")), "cage must be written");
+  } finally {
+    rmSync(wt, { recursive: true, force: true });
+    rmSync(stub, { recursive: true, force: true });
+  }
+});
+
+test("CLI: without --allow-anthropic, the same invocation still refuses", () => {
+  const wt = mkdtempSync(path.join(tmpdir(), "cw-sonnet-refuse-"));
+  const stub = stubClaude("{}");
+  try {
+    const r = runCli(["--dir", wt, "--allow-any-dir", "--model", "sonnet", "--prompt", "hi", "--creds", "/nonexistent"], {
+      PATH: `${stub}:${process.env.PATH}`,
+    });
+    assert.equal(r.status, 2, "opting into Anthropic spend must be explicit");
+  } finally {
+    rmSync(wt, { recursive: true, force: true });
+    rmSync(stub, { recursive: true, force: true });
+  }
 });
