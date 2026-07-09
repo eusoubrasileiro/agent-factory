@@ -6,8 +6,8 @@
  * Two pure renderers, both self-contained PT-BR HTML:
  *   1. `renderRootIndex(projects, stats)` — one card per project manifest entry
  *      (nome, missões em voo count, última atualização, link `/<id>/`).
- *   2. `renderScrumbanRedirect(target)` — meta-refresh + canonical redirect to
- *      `/wahub/` (historical-compat for the old single-board URL).
+ *   2. `renderScrumbanRedirect(target)` — meta-refresh + canonical redirect to a
+ *      caller-chosen target (historical-compat for the old single-board URL).
  *
  * House style mirrors board-report.test.mjs: pure-function assertions, no disk.
  */
@@ -176,26 +176,34 @@ test("renderScrumbanRedirect: emits a complete <!doctype html> document", () => 
   assert.match(html, /<\/html>\s*$/);
 });
 
-test("renderScrumbanRedirect: contains meta-refresh to /wahub/ (default target)", () => {
-  const html = renderScrumbanRedirect();
-  assert.match(html, /<meta\s+http-equiv="refresh"\s+content="0;\s*url=\/wahub\/"/i);
+test("renderScrumbanRedirect: contains a meta-refresh to the given target", () => {
+  const html = renderScrumbanRedirect("/proj/");
+  assert.match(html, /<meta\s+http-equiv="refresh"\s+content="0;\s*url=\/proj\/"/i);
 });
 
-test("renderScrumbanRedirect: carries a canonical link to /wahub/", () => {
-  const html = renderScrumbanRedirect();
-  assert.match(html, /<link\s+rel="canonical"\s+href="\/wahub\/"/i);
+test("renderScrumbanRedirect: carries a canonical link to the given target", () => {
+  const html = renderScrumbanRedirect("/proj/");
+  assert.match(html, /<link\s+rel="canonical"\s+href="\/proj\/"/i);
 });
 
-test("renderScrumbanRedirect: has the PT-BR line 'movido para /wahub/'", () => {
-  const html = renderScrumbanRedirect();
+test("renderScrumbanRedirect: has the PT-BR line 'movido para <target>'", () => {
+  const html = renderScrumbanRedirect("/proj/");
   assert.match(html, /movido para/);
-  assert.match(html, /\/wahub\//);
+  assert.match(html, /\/proj\//);
 });
 
 test("renderScrumbanRedirect: target is overridable", () => {
   const html = renderScrumbanRedirect("/other/");
   assert.match(html, /url=\/other\//);
-  assert.doesNotMatch(html, /\/wahub\//);
+  assert.doesNotMatch(html, /\/proj\//);
+});
+
+// The renderer is a pure function of its argument: it must not smuggle in a
+// product id of its own. `board-autopublish` chooses the target (first project
+// in the manifest); the default is the root index, never a named product.
+test("renderScrumbanRedirect: defaults to the root index, naming no product", () => {
+  const html = renderScrumbanRedirect();
+  assert.match(html, /<meta\s+http-equiv="refresh"\s+content="0;\s*url=\/"/i);
 });
 
 test("renderScrumbanRedirect: self-contained — inline styles, no external resource loads", () => {

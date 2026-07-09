@@ -1,0 +1,41 @@
+{
+  "slug": "factory-profiles",
+  "generatedAt": "2026-07-09T16:21:12.114Z",
+  "branch": "agent/factory-profiles",
+  "mergeBase": "06276ed6eeaaa9cb0f9dafe31ed5f797cd800edc",
+  "loc": {
+    "added": 1447,
+    "deleted": 195,
+    "files": 31
+  },
+  "testsAdded": 39,
+  "baselineChanged": false,
+  "baselineKeysChanged": [],
+  "durations": {
+    "building": null,
+    "validating": null
+  },
+  "tokens": {
+    "worker": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "total": 0
+    },
+    "validator": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "total": 0
+    },
+    "total": 0
+  },
+  "models": {
+    "worker": null,
+    "validator": null
+  },
+  "rounds": 1,
+  "attention": 1,
+  "escalations": 0,
+  "pr": null
+}

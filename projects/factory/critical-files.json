@@ -1,0 +1,11 @@
+[
+  "scripts/verdict.mjs",
+  "scripts/ratify.mjs",
+  "scripts/metrics.mjs",
+  "scripts/cage-settings.mjs",
+  "scripts/lib/project.mjs",
+  "templates/**",
+  "projects/**",
+  "constitution.md",
+  "decisions.md"
+]
