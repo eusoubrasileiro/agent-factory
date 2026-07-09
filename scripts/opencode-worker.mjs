@@ -27,16 +27,21 @@
  *
  * Usage:
  *   node scripts/factory/opencode-worker.mjs \
- *     --dir <worktree> --model <provider/model> \
+ *     --dir <worktree> --model <provider/model> --project <id> \
  *     (--prompt "<text>" | --prompt-file <path>) \
- *     [--slug <slug>] [--metric-seat worker|validator] [--project <id>] \
+ *     [--slug <slug>] [--metric-seat worker|validator] \
  *     [--session <id>] [--continue] [--timeout <ms>] \
  *     [--json-out <path>] [--no-auto] [--allow-any-dir]
+ *
+ * `--project` is REQUIRED and must name a known profile (`projects/<id>/`): the
+ * cage's Critical-File deny rules and this run's telemetry routing both come from
+ * it. An absent or unknown id is refused (exit 2), not defaulted — a forgotten flag
+ * would otherwise render a cage with zero Critical-File protections and say nothing.
  *
  * Exit codes:
  *   0 external agent finished (opencode exited 0)
  *   1 opencode errored / timed out / produced no completion
- *   2 usage error or worktree-confinement violation
+ *   2 usage error, absent/unknown --project, or worktree-confinement violation
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -45,7 +50,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { isMainModule } from "./lib/is-main.mjs";
-import { DEFAULT_GRACE_MS, killGracefully } from "./lib/worker-common.mjs";
+import { resolveProject } from "./lib/project.mjs";
+import { assertKnownProject, DEFAULT_GRACE_MS, killGracefully } from "./lib/worker-common.mjs";
 import { opencodeCagePath, writeOpencodeCage } from "./cage-opencode.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -220,9 +226,9 @@ function parseArgs(argv) {
 function usage() {
   process.stderr.write(
     "Usage:\n" +
-      "  node scripts/factory/opencode-worker.mjs --dir <worktree> --model <provider/model> \\\n" +
+      "  node scripts/factory/opencode-worker.mjs --dir <worktree> --model <provider/model> --project <id> \\\n" +
       '    (--prompt "<text>" | --prompt-file <path>) [--slug <slug>] \\\n' +
-      "    [--metric-seat worker|validator] [--project <id>] [--session <id>] [--continue] \\\n" +
+      "    [--metric-seat worker|validator] [--session <id>] [--continue] \\\n" +
       "    [--timeout <ms>] [--json-out <path>] [--no-auto] [--allow-any-dir]\n",
   );
 }
@@ -316,6 +322,15 @@ function runOpencode(opts) {
       }
     }
 
+    // Defense in depth: the cage rendered, but if the profile declares no Critical
+    // Files it protects nothing. Valid for a brand-new project, but the operator
+    // must see it — a warning, not a refusal.
+    if (resolveProject({ project: opts.project }).profile.criticalFiles.length === 0) {
+      process.stderr.write(
+        `opencode-worker: WARNING — cage for project "${opts.project}" has zero Critical-File rules\n`,
+      );
+    }
+
     const cliArgs = ["run", "-m", opts.model, "--dir", opts.dir, "--format", "json"];
     if (opts.auto) cliArgs.push("--auto");
     if (opts.continue) cliArgs.push("--continue");
@@ -364,6 +379,15 @@ async function main() {
   const opts = parseArgs(process.argv);
   if (opts._bad || !opts.dir || !opts.model || (!opts.prompt && !opts.promptFile)) {
     usage();
+    return 2;
+  }
+
+  // A cage with zero Critical-File rules is the exact failure this driver exists to
+  // prevent, and a forgotten/misspelled --project renders one silently. Refuse.
+  try {
+    assertKnownProject(opts.project);
+  } catch (err) {
+    process.stderr.write(`opencode-worker: ${err.message}\n`);
     return 2;
   }
 

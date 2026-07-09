@@ -3,14 +3,52 @@
  * a caged Claude Code driver later).
  *
  * Usage:
- *   import { killGracefully } from "./lib/worker-common.mjs";
+ *   import { assertKnownProject, killGracefully } from "./lib/worker-common.mjs";
  *   const { escalated } = await killGracefully(child, { graceMs: 30_000 });
+ *   assertKnownProject(opts.project); // throws on absent/unknown --project
  *
  * No exit codes — this is a library, not a CLI.
  */
 
+import { FACTORY_ROOT, loadProjects } from "./project.mjs";
+
 /** Default grace period before a stubborn child is killed outright. */
 export const DEFAULT_GRACE_MS = 30_000;
+
+/**
+ * Refuse to run a seat driver without a KNOWN `--project`.
+ *
+ * A driver renders the cage's Critical-File deny rules and routes the run's
+ * telemetry from the project profile (`projects/<id>/`). `resolveProject` is
+ * deliberately TOTAL for the mission tooling — an absent OR misspelled id degrades
+ * to a default profile with ZERO Critical-File rules — so the strictness that a
+ * driver needs cannot live there. It lives here: the id must be present AND name a
+ * real profile, or the driver refuses.
+ *
+ * The known ids are read at runtime from `loadProjects()` and sorted; they are
+ * never hardcoded (the meta test forbids product literals in `scripts/`). The
+ * message names them so an operator sees the valid set. It never interpolates
+ * anything from the environment — only the caller-supplied `project`.
+ *
+ * @param {string|undefined} project — the `--project` value as parsed from argv
+ * @param {string} [factoryRoot]
+ * @returns {string} the validated project id
+ */
+export function assertKnownProject(project, factoryRoot = FACTORY_ROOT) {
+  const known = loadProjects(factoryRoot)
+    .map((p) => p.id)
+    .sort();
+  const list = known.join(", ");
+  const why =
+    "the cage's Critical-File rules and this run's telemetry routing come from the project profile";
+  if (!project) {
+    throw new Error(`--project is required — ${why}. Known projects: ${list}`);
+  }
+  if (!known.includes(project)) {
+    throw new Error(`--project "${project}" is unknown — ${why}. Known projects: ${list}`);
+  }
+  return project;
+}
 
 /**
  * Ask a child process to stop, and only kill it if it refuses.

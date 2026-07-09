@@ -219,7 +219,7 @@ function runCli(args, env = {}) {
 test("CLI: refuses to spawn with no credentials (exit 2, would bill Anthropic)", () => {
   const wt = mkdtempSync(path.join(tmpdir(), "cw-nocreds-"));
   try {
-    const r = runCli(["--dir", wt, "--allow-any-dir", "--model", "m", "--prompt", "hi", "--creds", "/nonexistent"]);
+    const r = runCli(["--dir", wt, "--allow-any-dir", "--model", "m", "--project", "factory", "--prompt", "hi", "--creds", "/nonexistent"]);
     assert.equal(r.status, 2);
     assert.match(r.stderr, /ANTHROPIC_BASE_URL is unset/);
   } finally {
@@ -231,7 +231,7 @@ test("CLI: refuses an anthropic.com endpoint, and never echoes the token", () =>
   const wt = mkdtempSync(path.join(tmpdir(), "cw-anthropic-"));
   const { dir, f } = writeEnvFile("ANTHROPIC_BASE_URL=https://api.anthropic.com\nANTHROPIC_AUTH_TOKEN=sk-do-not-leak\n");
   try {
-    const r = runCli(["--dir", wt, "--allow-any-dir", "--model", "m", "--prompt", "hi", "--creds", f]);
+    const r = runCli(["--dir", wt, "--allow-any-dir", "--model", "m", "--project", "factory", "--prompt", "hi", "--creds", f]);
     assert.equal(r.status, 2);
     assert.match(r.stderr, /anthropic\.com/);
     assert.doesNotMatch(`${r.stdout}${r.stderr}`, /sk-do-not-leak/, "the token must never be printed");
@@ -244,7 +244,7 @@ test("CLI: refuses an anthropic.com endpoint, and never echoes the token", () =>
 test("CLI: refuses to run outside a dispatched worktree without --allow-any-dir", () => {
   const wt = mkdtempSync(path.join(tmpdir(), "cw-confine-"));
   try {
-    const r = runCli(["--dir", wt, "--model", "m", "--prompt", "hi", "--creds", "/nonexistent"]);
+    const r = runCli(["--dir", wt, "--model", "m", "--project", "factory", "--prompt", "hi", "--creds", "/nonexistent"]);
     assert.equal(r.status, 2);
     assert.match(r.stderr, /dispatched worktree/);
   } finally {
@@ -256,6 +256,38 @@ test("CLI: usage error when required args are missing", () => {
   const r = runCli([]);
   assert.equal(r.status, 2);
   assert.match(r.stderr, /Usage:/);
+});
+
+// ─── --project is required AND a known profile (before creds / cage) ─────────
+//
+// A forgotten --project used to render a cage with zero Critical-File rules and
+// say nothing. The driver now refuses BEFORE the credentials guard, so these
+// spawns never reach `claude` (the guard fires first — the property under test).
+
+test("CLI: no --project is refused (exit 2, stderr lists the known ids)", () => {
+  const wt = mkdtempSync(path.join(tmpdir(), "cw-noproject-"));
+  try {
+    const r = runCli(["--dir", wt, "--allow-any-dir", "--model", "m", "--prompt", "hi", "--creds", "/nonexistent"]);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /--project/);
+    assert.match(r.stderr, /factory/, "the refusal must list the known project ids");
+  } finally {
+    rmSync(wt, { recursive: true, force: true });
+  }
+});
+
+test("CLI: an unknown --project is refused (exit 2)", () => {
+  const wt = mkdtempSync(path.join(tmpdir(), "cw-badproject-"));
+  try {
+    const r = runCli(
+      ["--dir", wt, "--allow-any-dir", "--model", "m", "--project", "this-id-does-not-exist", "--prompt", "hi", "--creds", "/nonexistent"],
+    );
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /this-id-does-not-exist/);
+    assert.match(r.stderr, /factory/);
+  } finally {
+    rmSync(wt, { recursive: true, force: true });
+  }
 });
 
 // ─── Sonnet (or any Anthropic-hosted model) as an OPT-IN seat ────────────────
@@ -312,7 +344,7 @@ test("CLI: --allow-anthropic runs a Sonnet seat end-to-end, caged, no creds need
   );
   try {
     const r = runCli(
-      ["--dir", wt, "--allow-any-dir", "--model", "sonnet", "--prompt", "hi", "--allow-anthropic", "--creds", "/nonexistent"],
+      ["--dir", wt, "--allow-any-dir", "--model", "sonnet", "--project", "factory", "--prompt", "hi", "--allow-anthropic", "--creds", "/nonexistent"],
       { PATH: `${stub}:${process.env.PATH}` },
     );
     assert.equal(r.status, 0, `expected success, got ${r.status}\n${r.stderr}`);
@@ -331,7 +363,7 @@ test("CLI: without --allow-anthropic, the same invocation still refuses", () => 
   const wt = mkdtempSync(path.join(tmpdir(), "cw-sonnet-refuse-"));
   const stub = stubClaude("{}");
   try {
-    const r = runCli(["--dir", wt, "--allow-any-dir", "--model", "sonnet", "--prompt", "hi", "--creds", "/nonexistent"], {
+    const r = runCli(["--dir", wt, "--allow-any-dir", "--model", "sonnet", "--project", "factory", "--prompt", "hi", "--creds", "/nonexistent"], {
       PATH: `${stub}:${process.env.PATH}`,
     });
     assert.equal(r.status, 2, "opting into Anthropic spend must be explicit");
