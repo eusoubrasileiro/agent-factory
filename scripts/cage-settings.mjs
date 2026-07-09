@@ -29,7 +29,8 @@
  *   0 ok · 1 template missing/unparseable · 2 usage error
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -38,6 +39,35 @@ import { resolveProject } from "./lib/project.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATE_PATH = path.join(__dirname, "..", "templates", "settings-external.json");
+
+/** Machine-local answer to "can the OS sandbox actually run here?" (D-18). */
+export const MACHINE_CONFIG_PATH = path.join(homedir(), ".config", "amiticia", "factory-machine.json");
+
+/**
+ * Machine-local sandbox gate (D-18).
+ *
+ * `sandbox.enabled` is a fact about THIS MACHINE, not about the repo. On this box
+ * Claude Code's sandbox cannot initialise (`apply-seccomp: write /proc/self/setgroups`,
+ * identical with AppArmor's userns restriction on and off), and with
+ * `failIfUnavailable` it then refuses to run any command at all — a cage that stops
+ * the worker working is negative value.
+ *
+ * So the checked-in template declares the INTENT (`enabled: true, failIfUnavailable:
+ * true`) and this reads the machine's ANSWER from `~/.config/amiticia/factory-machine.json`.
+ * Absent or corrupt → `false`. Fail safe, not fail loud: a missing machine file must
+ * not brick every dispatch on a fresh checkout.
+ *
+ * @param {string} [configPath]
+ * @returns {boolean}
+ */
+export function machineSandboxEnabled(configPath = MACHINE_CONFIG_PATH) {
+  if (!existsSync(configPath)) return false;
+  try {
+    return JSON.parse(readFileSync(configPath, "utf8"))?.sandbox === true;
+  } catch {
+    return false; // corrupt machine config — treat as "no sandbox here"
+  }
+}
 
 /** Where the cage settings land inside a worktree. */
 export function cageSettingsPath(worktreeAbs) {
@@ -84,11 +114,13 @@ export function renderCageSettings(template, worktreeAbs, opts = {}) {
   if (typeof worktreeAbs !== "string" || !path.isAbsolute(worktreeAbs)) {
     throw new Error(`worktree must be an absolute path, got: ${worktreeAbs}`);
   }
-  const { criticalFiles = [] } = opts || {};
+  const { criticalFiles = [], sandboxEnabled = machineSandboxEnabled() } = opts || {};
   const extra = criticalFileRules(criticalFiles);
-  const merged = extra.length === 0
+  let merged = extra.length === 0
     ? template
     : { ...template, permissions: { ...template.permissions, deny: [...(template.permissions?.deny ?? []), ...extra] } };
+  // The template states the intent; the machine states what is possible (D-18).
+  merged = { ...merged, sandbox: { ...merged.sandbox, enabled: sandboxEnabled === true } };
   // `//` + a path that already starts with `/` would double the separator.
   const anchor = path.normalize(worktreeAbs).replace(/\/+$/, "").replace(/^\//, "");
   const walk = (node) => {
@@ -121,14 +153,26 @@ export function denyRules(settings) {
  */
 export function auditCageSettings(settings) {
   const problems = [];
-  if (settings?.sandbox?.enabled !== true) problems.push("sandbox.enabled must be true");
-  // Without failIfUnavailable the sandbox degrades SILENTLY to no sandbox (D-12).
-  if (settings?.sandbox?.failIfUnavailable !== true) {
-    problems.push("sandbox.failIfUnavailable must be true (fail-closed)");
+
+  // Tier A / Tier B (D-18). The OS sandbox is a MACHINE capability, not a policy:
+  // on this kernel Claude Code's sandbox cannot initialise at all (it dies at
+  // `write /proc/self/setgroups`, identically with AppArmor's userns restriction
+  // on and off), and with failIfUnavailable it then refuses to run any command.
+  // So a DISABLED or ABSENT sandbox must audit clean — that is Tier A, the posture
+  // we actually ship, and its limits are documented rather than hidden.
+  //
+  // What stays a refusal is the dangerous middle: sandbox ENABLED but not
+  // fail-closed silently degrades to NO sandbox while believing itself contained
+  // (D-12 / M5). A false belief in containment is worse than none.
+  if (settings?.sandbox?.enabled === true) {
+    if (settings?.sandbox?.failIfUnavailable !== true) {
+      problems.push("sandbox.failIfUnavailable must be true (fail-closed) when sandbox.enabled");
+    }
+    if (settings?.sandbox?.allowUnsandboxedCommands !== false) {
+      problems.push("sandbox.allowUnsandboxedCommands must be false when sandbox.enabled");
+    }
   }
-  if (settings?.sandbox?.allowUnsandboxedCommands !== false) {
-    problems.push("sandbox.allowUnsandboxedCommands must be false");
-  }
+
   for (const rule of denyRules(settings)) {
     if (rule.includes("{{")) problems.push(`unsubstituted placeholder: ${rule}`);
     const m = rule.match(/^(Edit|Write|Read)\((.*)\)$/);
@@ -177,7 +221,10 @@ function buildSettingsInput(opts = {}) {
  */
 export function writeCageSettings(worktreeAbs, opts = {}) {
   const { template, criticalFiles } = buildSettingsInput(opts);
-  const settings = renderCageSettings(template, worktreeAbs, { criticalFiles });
+  const sandboxEnabled = typeof opts === "object" && opts !== null && "sandboxEnabled" in opts
+    ? opts.sandboxEnabled
+    : machineSandboxEnabled();
+  const settings = renderCageSettings(template, worktreeAbs, { criticalFiles, sandboxEnabled });
   const problems = auditCageSettings(settings);
   if (problems.length > 0) throw new Error(`refusing to write a broken cage:\n- ${problems.join("\n- ")}`);
   const out = cageSettingsPath(worktreeAbs);

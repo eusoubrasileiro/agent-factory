@@ -27,8 +27,9 @@ Canonical statement + onboarding runbook:
 ## Layout
 
 ```
-scripts/            # engine: board-*, verdict, ratify, metrics, git-autocommit,
-                    #   history, opencode-worker, probe-secrets, cage-settings
+scripts/            # engine: board-*, verdict, ratify, metrics, git-autocommit, history,
+                    #   claude-worker (default external seat) + opencode-worker (fallback),
+                    #   cage-settings + cage-opencode, probe-cage, probe-secrets
                     #   (+ *.test.mjs, + project-profile.test.mjs = the conformance suite)
 scripts/lib/        # project.mjs — the path resolver (factoryRoot vs repoRoot) + profile loader
 projects/<id>/      # THE PROJECT PROFILE — project.json, critical-files.json,

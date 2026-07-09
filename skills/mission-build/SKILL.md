@@ -47,14 +47,23 @@ Paste the project's `gate[]` commands into the worker's spec — a worker seat n
 reads the profile itself, and an external seat may not even be able to.
 
 ### 3a. Optional — route a worker to the external agent seat
-The default worker is a Claude seat. To save Anthropic tokens on mechanical work,
-a worker MAY instead run on an **external agent** (opencode → e.g. GLM 5.2 on a
-subscription plan). Same spec, same clean-context rules; only the executor changes:
+The default worker runs on the operator's own Claude session. To spend no Anthropic
+tokens on mechanical work, a worker MAY instead run on the **external seat**: Claude
+Code pointed at a third-party Anthropic-compatible endpoint (z.ai → GLM, on a flat
+subscription). Same spec, same clean-context rules; only the executor changes:
 ```bash
-pnpm factory:opencode --dir <worktree> --model zai-coding-plan/glm-5.2 \
+node scripts/claude-worker.mjs --dir <worktree> --model glm-5.2 \
   --slug <slug> --project <project> --metric-seat worker --timeout 2700000 \
   --prompt "Read missions/<project>/<slug>/features/NN.md and execute it exactly, TDD, then run the pre-commit gate and commit."
 ```
+The seat is **caged**: a fresh `settings.external.json` is rendered from the project
+profile at every spawn, and the driver refuses to run without it. It also refuses to
+run against `anthropic.com` — that would silently bill real money for a seat that
+must be flat-rate.
+
+`opencode-worker.mjs` is the **fallback**, for providers with no Anthropic-compatible
+endpoint. Its cage (`cage-opencode.mjs`) is real but its containment is not yet
+proven (D-17); prefer the Claude seat.
 Always pass `--timeout` explicitly — the driver's default kill is abrupt and has
 already cost one worker its mid-handoff state.
 
