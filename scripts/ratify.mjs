@@ -114,6 +114,29 @@ function collectStats(root, slug, repoRoot) {
 }
 
 /**
+ * Best-effort finalization of the mission's product-repo PR (factory-pr-record
+ * W4): flips the draft to ready-for-review. The local merge + `git push origin
+ * main` then flips it to Merged automatically — no `gh pr merge` dependency. A
+ * mission whose PR was never opened (gh down, or FACTORY_PR unset) simply has
+ * no marker and ships anyway; reconciliation is manual and optional.
+ *
+ * OPT-IN: inert unless FACTORY_PR=1. Never throws, never affects ratification.
+ */
+function finalizePr(root, slug, repoRoot) {
+  try {
+    if (process.env.FACTORY_PR !== "1") return;
+    const prPath = fileURLToPath(new URL("./pr-record.mjs", import.meta.url));
+    if (!existsSync(prPath)) return;
+    const extra = repoRoot ? ["--repo", repoRoot] : [];
+    spawnSync(process.execPath, [prPath, "finalize", slug, "--dir", root, ...extra], {
+      stdio: "ignore",
+    });
+  } catch {
+    // soft-fail: the PR projection must never affect ratification
+  }
+}
+
+/**
  * Fire-and-forget trigger of the autopublish funnel (factory-live-board A2).
  * Detached + unref so it never blocks the caller and never affects its exit
  * code. Mirrors syncBoard's soft-fail philosophy. Loop-safe by construction:
@@ -169,6 +192,7 @@ function ratify(root, slug, force, repoRoot) {
   writeFileSync(rPath, `ratified ${today()}\n`);
   syncBoard(root, slug, repoRoot);
   collectStats(root, slug, repoRoot);
+  finalizePr(root, slug, repoRoot);
   autoCommit(root, slug, `chore(factory): ratify ${slug}`);
   triggerAutopublish();
   process.stdout.write(`${slug}: ratified ${today()}\n`);

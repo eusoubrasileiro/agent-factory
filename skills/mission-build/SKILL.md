@@ -66,6 +66,19 @@ it never changes the default Claude seat.
   `unmet_knowledge` collected, and that it is awaiting validation.
 - Run `pnpm board:sync <slug>` so the card tracks into `Validating`.
 
+## 6. Fix rounds — keep the PR timeline honest
+Only when `missions/<project>/<slug>/PR` exists (the projection opened a draft PR;
+see `scripts/pr-record.mjs`), the **orchestrator** — never the worker, whose prompt
+still forbids pushing — pushes after each fix-round commit so the PR shows the
+validate→fix history rather than one squashed blob:
+
+```bash
+git -C <repoRoot> push origin agent/<slug>
+```
+
+No PR marker (projection off, or `gh` was down) → skip it; the mission ships from
+disk regardless. Never force-push a mission branch.
+
 ## Rules
 - Local-first: workers prove green against LOCAL only. Upstream is Andre's call
   after validation.
