@@ -64,8 +64,9 @@ must be flat-rate.
 `opencode-worker.mjs` is the **fallback**, for providers with no Anthropic-compatible
 endpoint. Its cage (`cage-opencode.mjs`) is real but its containment is not yet
 proven (D-17); prefer the Claude seat.
-Always pass `--timeout` explicitly — the driver's default kill is abrupt and has
-already cost one worker its mid-handoff state.
+Always pass `--timeout` explicitly. Both drivers now stop a timed-out seat with
+SIGTERM, a 30-second grace, then SIGKILL — but the default window is 30 minutes, and
+a real feature often needs more.
 
 Always pass `--project` too. It routes the worker's telemetry to
 `missions/<project>/<slug>/metrics.jsonl`. Omit it and the recorder falls back to
@@ -73,11 +74,15 @@ the sole profile — or, once a second profile exists, to a synthesized `default
 and the KPI numbers for the run land in another project's tree. `metrics.mjs` now
 warns on stderr when it has to invent a mission dir; do not ignore that warning.
 
-The external agent is **still governed by the harness**: it is confined to the
-dispatched worktree, dispatched with `--seat external` so it never sees a real
-secret, and its output only counts once the project's `gate[]` is green — the
-orchestrator re-runs the gate itself before accepting the commit. This is opt-in;
-it never changes the default Claude seat.
+The external seat is **still governed by the harness**: it is confined to the
+dispatched worktree, dispatched with `--seat external` so its `.env` holds only dummy
+values, caged so it cannot edit a Critical File, and its output only counts once the
+project's `gate[]` is green — the orchestrator re-runs the gate itself before
+accepting the commit.
+
+Honest limit: the cage stops the seat's *edit tools*. It does not stop a subprocess
+reading a file (`python3 -c "open('.env').read()"`). Real secrets stay out of the
+worktree; that is what contains them, not the deny rule.
 
 ## 4. Between features
 - Confirm the worker committed and the tree is green before starting a dependent
