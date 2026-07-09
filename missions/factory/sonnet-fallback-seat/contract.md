@@ -27,7 +27,7 @@ A model alias that would silently resolve to a different model is refused.
 | A7 | A `429`/`rate_limit_error` response exits with code **3**, prints the provider's reset timestamp verbatim, and prints the exact Sonnet fallback command | new test, stubbed 429 body | **not built** |
 | A8 | No automatic failover: nothing in the driver switches model on a 429 | grep + test | **not built** |
 | A9 | wahub exposes `factory:claude`, `factory:sonnet`, `probe:cage`, `probe:secrets`, `mission:verdict` | `pnpm <script>` resolves | **not built** |
-| A10 | Spawning a seat **without `--project`** does not silently drop the Critical-File denies | new test | **not built** |
+| A10 | Spawning a seat **without `--project`** does not silently drop the Critical-File denies | new test | **built** |
 
 ## Why A10 exists (found while verifying this contract, 2026-07-10)
 
@@ -43,6 +43,14 @@ control rather than an instrument.
 The fix is not "remember the flag". Candidates: warn loudly on stderr when a seat is caged with
 zero Critical Files; or refuse to spawn without `--project` unless `--allow-uncaged` is also typed.
 Andre decides which, because the second one can block a legitimate engine-only run.
+
+**Fix chosen (2026-07-10, D-24): refuse, not warn.** Both drivers now require `--project` and
+validate it against the known profiles (`loadProjects`); an absent or unknown id exits 2 before
+the credentials guard and cage render. `--allow-uncaged` does NOT bypass it — telemetry still
+needs routing. A valid profile that happens to declare zero Critical Files is allowed but warns
+on stderr (legitimate for a brand-new project). A stderr warning alone was rejected: a warning is
+exactly the channel that already swallowed a 429 (D-20). Decided by the coordinator under Andre's
+delegation.
 
 ## Why A6 exists (it silently poisons an A/B)
 
