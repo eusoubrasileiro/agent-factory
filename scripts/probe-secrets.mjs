@@ -63,8 +63,8 @@ export function parseEnv(envText) {
 
 /**
  * Extract candidate secret VALUES from a dotenv-format text: every value, quotes
- * stripped, whose length exceeds `minLen`. Short/common values (ports, `wahub`,
- * `test`) fall below the length floor and are never treated as secrets.
+ * stripped, whose length exceeds `minLen`. Short/common values (ports, a project
+ * name, `test`) fall below the length floor and are never treated as secrets.
  * @param {string} envText
  * @param {number} minLen
  * @returns {string[]}
@@ -84,10 +84,11 @@ export function extractSecrets(envText, minLen = DEFAULT_MIN_LEN) {
  * template's values).
  *
  * Exact-value (not substring) match is deliberate: the external seat's per-agent
- * `DATABASE_URL` shares the harmless local-dev prefix
- * (`postgresql://wahub:wahub@localhost:5437/`) with the parent's, so a substring
- * test would false-positive on it. A real leaked secret is copied verbatim, so
- * exact match catches every genuine exposure while ignoring the shared prefix.
+ * `DATABASE_URL` shares a harmless local-dev prefix
+ * (`postgresql://<user>:<pw>@localhost:<port>/`) with the parent's, differing only
+ * in the database name, so a substring test would false-positive on it. A real
+ * leaked secret is copied verbatim, so exact match catches every genuine exposure
+ * while ignoring the shared prefix.
  * `dummyValues` subtraction ignores non-secret config the seat and parent share
  * on purpose (e.g. a `http://localhost:3000` BASE_URL).
  *

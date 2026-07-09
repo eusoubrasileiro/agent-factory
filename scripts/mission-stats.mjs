@@ -21,7 +21,7 @@
  * verdict.mjs (after each verdict) and ratify.mjs.
  *
  * Usage:
- *   node scripts/mission-stats.mjs collect <slug> [--project wahub]
+ *   node scripts/mission-stats.mjs collect <slug> [--project <id>]
  *     [--branch agent/<slug>] [--dir <missions-root>] [--repo <repoRoot>]
  *     [--trunk main]
  *
@@ -56,7 +56,7 @@ export function isExcludedPath(p) {
   if (clean === "pnpm-lock.yaml" || clean.endsWith("/pnpm-lock.yaml")) return true;
   if (clean === "history.jsonl") return true;
   if (/(^|\/)\.publish\.log$/.test(clean)) return true;
-  // factory dossier / state roots (old wahub `factory/` + extracted `missions/`)
+  // factory dossier / state roots (legacy in-product `factory/` + extracted `missions/`)
   if (/^factory\//.test(clean)) return true;
   if (/^missions\//.test(clean)) return true;
   if (/^deploy\/factory-board\//.test(clean)) return true;
