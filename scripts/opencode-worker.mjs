@@ -7,11 +7,14 @@
  * `standards/agent-patterns/factory-templates/opencode-worker.mjs` (see the
  * companion `external-agent-seat.md` there). Keep the two in sync.
  *
- * The factory's default seats run on Claude Code. This driver makes an
- * *external* coding agent (any model configured in opencode — e.g.
- * `zai-coding-plan/glm-5.2`) available as an OPTIONAL worker/validator seat,
- * so heavy mechanical work can run off a subscription plan instead of spending
- * Anthropic tokens. It is purely additive: default dispatch is untouched.
+ * FALLBACK SEAT (D-19). The default external seat is `claude-worker.mjs`: Claude
+ * Code pointed at z.ai's Anthropic-compatible endpoint runs the same models on the
+ * same flat plan, and its Critical-File deny is empirically proven (cage-research
+ * M1) where opencode's is not (D-17). One driver, one cage.
+ *
+ * This driver stays for providers with NO Anthropic-compatible endpoint. It is
+ * caged by `cage-opencode.mjs` (opencode's own `permission` schema) and refuses to
+ * spawn without one.
  *
  * Harness restriction (this is the "external agent, still governed by the
  * harness" contract): the driver refuses to run unless `--dir` is an isolated

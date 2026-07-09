@@ -73,30 +73,42 @@ the validated diff. The machine owns the middle.
 | Validate | `/mission-validate <slug>` | fresh validator proves the contract against LOCAL; returns PASS/FAIL |
 | Ship (your call) | ratify, then `pnpm ship` / push | only after PASS and your ratification |
 
-## The cage (external worker seats)
+## The external seat and its cage
 
-The external seat runs under a cage rendered from the project's
-`critical-files.json` into **opencode's own** `permission` schema — because opencode,
-not Claude Code, is the driver we run. It is written fresh at every spawn, **outside**
-the worktree, and handed over via `OPENCODE_CONFIG`. The driver **refuses to spawn
-without it** (exit 2); `--allow-uncaged` is the deliberate escape hatch.
+The default external seat is **Claude Code pointed at z.ai** (`claude-worker.mjs`). Same
+flat z.ai plan, zero Anthropic tokens, and its Critical-File deny is the one we have
+actually proven (cage-research M1). `opencode-worker.mjs` is the fallback for providers
+with no Anthropic-compatible endpoint.
 
 ```bash
-node scripts/cage-opencode.mjs print --project <id>       # what the seat will get
-node scripts/probe-cage.mjs <worktree> --project <id>     # static: what the cage SAYS (free)
-node scripts/probe-cage.mjs <worktree> --project <id> \
-     --live -m zai-coding-plan/glm-5.2                    # live: what the cage DOES (costs tokens)
+node scripts/claude-worker.mjs --dir <worktree> --model glm-5.2 \
+  --slug <slug> --project <id> --metric-seat worker --timeout 2700000 \
+  --prompt "..."
 ```
 
-**Read this before trusting it.** The static probe proves our renderer. It does not
-prove opencode honours the deny — that needs `--live`, which asserts on file hashes
-and never on `permission_denials` (which returns empty even when a deny fires).
-**The live probe has not been run yet** (decisions.md D-17). Until it has, treat the
-cage as installed-but-unproven.
+It **refuses to spawn** in two cases, both silent and expensive if allowed:
+- no `ANTHROPIC_BASE_URL`, or one pointing at `anthropic.com` → it would quietly bill real
+  money for a seat that must be flat-rate. Credentials live in `~/.config/amiticia/zai.env` (0600).
+- the cage cannot be written or fails its own audit → `--allow-uncaged` is the explicit override.
 
-What the cage does and does not do: an `edit` deny stops the agent's edit/write
-tools. It does not stop `python3 -c "open('.env').read()"`. Secrets are contained by
-the dummy `.env` in the worktree, not by a deny rule.
+Probe the cage:
+```bash
+node scripts/probe-cage.mjs <worktree> --project <id>                      # static, free
+node scripts/probe-cage.mjs <worktree> --project <id> --live -m glm-5.2    # live, costs quota
+```
+
+**Read this before trusting it.** The static probe proves our renderer. Only `--live` proves
+the driver honours the deny, and it asserts on file hashes and git refs — never on
+`permission_denials`, which returns `[]` even when a deny fires. The live probe has not yet
+run against either driver (D-17).
+
+**The OS sandbox is OFF here, and that is a machine fact, not a choice.** Claude Code's
+sandbox cannot initialise on this kernel (`write /proc/self/setgroups`), identically with
+AppArmor's userns restriction on and off (D-18). `sandbox.enabled` is read from
+`~/.config/amiticia/factory-machine.json`; absent → off. What the cage does give you is the
+Edit/Write deny on Critical Files, which is a **real** boundary. What it does not give you:
+an `Edit` deny does not stop `python3 -c "open('.env').read()"`. Secrets are contained by the
+dummy `.env` in the worktree, not by a deny rule.
 
 ## Onboarding a project (~1 hour, no engine edits)
 

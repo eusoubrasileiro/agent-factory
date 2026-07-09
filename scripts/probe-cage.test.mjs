@@ -9,8 +9,9 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 
+import { loadTemplate, renderCageSettings } from "./cage-settings.mjs";
 import { renderOpencodeCage } from "./cage-opencode.mjs";
-import { staticChecks } from "./probe-cage.mjs";
+import { claudeStaticChecks, staticChecks } from "./probe-cage.mjs";
 
 const GLOBS = ["backend/src/bot/**", "prisma/schema.prisma"];
 const WT = "/tmp/wt";
@@ -55,4 +56,49 @@ test("staticChecks: FAILS when the cage file sits inside the worktree it guards"
   const cage = renderOpencodeCage({ criticalFiles: GLOBS });
   const inside = path.join(WT, ".opencode-cage.json");
   assert.ok(names(staticChecks(cage, GLOBS, WT, inside)).includes("cage file lives outside the worktree"));
+});
+
+// ─── the Claude cage's static checks must be able to go RED ──────────────────
+
+const CC_WT = "/tmp/wt";
+const CC_CAGE = "/tmp/wt/.claude/settings.external.json";
+
+function ccCage(globs = GLOBS) {
+  return renderCageSettings(loadTemplate(), CC_WT, { criticalFiles: globs, sandboxEnabled: false });
+}
+
+test("claudeStaticChecks: a correct Claude cage passes every class", () => {
+  assert.deepEqual(names(claudeStaticChecks(ccCage(), GLOBS, CC_WT, CC_CAGE)), []);
+});
+
+test("claudeStaticChecks: FAILS when a critical file loses its Write deny", () => {
+  const cage = ccCage();
+  cage.permissions.deny = cage.permissions.deny.filter((r) => !r.startsWith("Write(//tmp/wt/prisma"));
+  assert.ok(names(claudeStaticChecks(cage, GLOBS, CC_WT, CC_CAGE)).includes("critical-file Edit+Write denied"));
+});
+
+test("claudeStaticChecks: FAILS on a mis-anchored rule (the single-slash trap)", () => {
+  const cage = ccCage();
+  cage.permissions.deny.push("Edit(/tmp/wt/backend/src/bot/**)"); // single slash = anchored to the settings dir
+  const failed = names(claudeStaticChecks(cage, GLOBS, CC_WT, CC_CAGE));
+  assert.ok(failed.some((n) => /mis-anchored/.test(n)));
+});
+
+test("claudeStaticChecks: FAILS on a wholesale .claude/** deny (M11: it bricks the seat)", () => {
+  const cage = ccCage();
+  cage.permissions.deny.push("Write(//tmp/wt/.claude/**)");
+  const failed = names(claudeStaticChecks(cage, GLOBS, CC_WT, CC_CAGE));
+  assert.ok(failed.some((n) => /wholesale-deny/.test(n)));
+});
+
+test("claudeStaticChecks: FAILS when git push is not denied", () => {
+  const cage = ccCage();
+  cage.permissions.deny = cage.permissions.deny.filter((r) => !/git push/.test(r));
+  assert.ok(names(claudeStaticChecks(cage, GLOBS, CC_WT, CC_CAGE)).includes("git push denied"));
+});
+
+test("claudeStaticChecks: FAILS on an unsubstituted placeholder", () => {
+  const cage = ccCage();
+  cage.permissions.deny.push("Edit(//{{WORKTREE}}/x)");
+  assert.ok(names(claudeStaticChecks(cage, GLOBS, CC_WT, CC_CAGE)).includes("no unsubstituted {{placeholder}}"));
 });
