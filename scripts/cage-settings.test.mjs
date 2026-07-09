@@ -141,9 +141,30 @@ test("the shipped template denies every wahub Critical File", () => {
   }
 });
 
-test("the shipped template denies the agent editing its own cage", () => {
-  const rules = denyRules(renderCageSettings(loadTemplate(), WT)).join("\n");
-  assert.ok(rules.includes(".claude/**"), "agent must not edit .claude/**");
+test("the shipped template denies the agent editing its own cage settings", () => {
+  const rules = denyRules(renderCageSettings(loadTemplate(), WT));
+  assert.ok(
+    rules.some((r) => r.startsWith("Edit(") && r.includes("/.claude/settings")),
+    "agent must not edit its own settings",
+  );
+  assert.ok(
+    rules.some((r) => r.startsWith("Write(") && r.includes("/.claude/settings")),
+    "agent must not write its own settings",
+  );
+});
+
+test("the shipped template does NOT deny all of .claude/** (that breaks the sandbox)", () => {
+  // Regression pin. Denying the whole dir makes Claude Code's sandbox mount
+  // .claude read-only; it then cannot create .claude/commands and EVERY bash
+  // command dies at bootstrap — a cage so tight the agent cannot work at all.
+  // Narrowness is safe: a deny rule can never be overridden by an allow rule.
+  const rules = denyRules(renderCageSettings(loadTemplate(), WT));
+  for (const r of rules) {
+    assert.ok(
+      !/\.claude\/\*\*\)$/.test(r),
+      `wholesale .claude/** deny breaks the sandbox bootstrap: ${r}`,
+    );
+  }
 });
 
 // ─── writeCageSettings ────────────────────────────────────────────────────────
