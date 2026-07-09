@@ -200,9 +200,12 @@ test("record: still exits 0 and records when board-sync.mjs is missing next to v
     // verdict.mjs now statically imports git-autocommit.mjs — ship it alongside
     // so this fixture isolates ONLY the board-sync-absent scenario.
     cpSync(path.join(HERE, "git-autocommit.mjs"), path.join(tmpScripts, "git-autocommit.mjs"));
-    // verdict.mjs also imports ./lib/project.mjs — ship the resolver too.
+    // verdict.mjs also imports ./lib/project.mjs and ./lib/is-main.mjs — ship both.
+    // (Keep this list in step with verdict.mjs's static imports; a missing one makes
+    // the fixture fail to load, which looks like the soft-fail under test failing.)
     mkdirSync(path.join(tmpScripts, "lib"), { recursive: true });
     cpSync(path.join(HERE, "lib", "project.mjs"), path.join(tmpScripts, "lib", "project.mjs"));
+    cpSync(path.join(HERE, "lib", "is-main.mjs"), path.join(tmpScripts, "lib", "is-main.mjs"));
     assert.ok(
       !existsSync(path.join(tmpScripts, "board-sync.mjs")),
       "fixture must not have board-sync.mjs",

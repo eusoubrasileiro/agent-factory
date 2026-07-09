@@ -1,12 +1,12 @@
 {
   "name": "@amiticia/factory",
   "version": "0.1.0",
-  "description": "AmiticIA software factory — AI-agent mission engine (plan→build→validate) with a live board, serving any product via projects/<id>/ profiles",
+  "description": "AmiticIA software factory \u2014 AI-agent mission engine (plan\u2192build\u2192validate) with a live board, serving any product via projects/<id>/ profiles",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.30.2",
   "scripts": {
-    "test": "FACTORY_AUTOPUBLISH=0 FACTORY_PR=0 node --test \"scripts/*.test.mjs\" \"projects/*/*.test.mjs\"",
+    "test": "FACTORY_AUTOPUBLISH=0 FACTORY_PR=0 node --test \"scripts/*.test.mjs\" \"scripts/lib/*.test.mjs\" \"projects/*/*.test.mjs\"",
     "board:sync": "node scripts/board-sync.mjs",
     "board:report": "node scripts/board-report.mjs",
     "board:publish": "bash scripts/board-publish.sh",

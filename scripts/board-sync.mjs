@@ -26,8 +26,9 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
+import { isMainModule } from "./lib/is-main.mjs";
 import { FACTORY_ROOT, resolveProject } from "./lib/project.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -340,7 +341,7 @@ function positionalOverflow(argv) {
   return positional > 1;
 }
 
-const isMain = import.meta.url === pathToFileURL(process.argv[1]).href;
+const isMain = isMainModule(import.meta.url);
 if (isMain) {
   try {
     process.exit(main());
