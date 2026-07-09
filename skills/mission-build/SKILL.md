@@ -64,6 +64,29 @@ must be flat-rate.
 `opencode-worker.mjs` is the **fallback**, for providers with no Anthropic-compatible
 endpoint. Its cage (`cage-opencode.mjs`) is real but its containment is not yet
 proven (D-17); prefer the Claude seat.
+
+#### Want a Sonnet worker instead of GLM?
+
+The same driver runs it, still caged. It costs Anthropic tokens (or your plan quota)
+instead of the flat z.ai plan, so you must say so out loud:
+
+```bash
+node scripts/claude-worker.mjs --dir <worktree> --model sonnet \
+  --slug <slug> --project <project> --allow-anthropic --timeout 2700000 --prompt "..."
+```
+
+Without `--allow-anthropic` the driver refuses, because a missing `ANTHROPIC_BASE_URL`
+silently falls back to Anthropic — and a seat that was supposed to be flat-rate would
+quietly bill you. With no credentials at all, `claude -p` uses your own logged-in
+session, which is usually what you want.
+
+**The trap, if you ever A/B Sonnet against GLM.** Do NOT pass `--model sonnet` while
+`ANTHROPIC_BASE_URL` points at z.ai. Claude Code resolves the `sonnet` alias through
+`ANTHROPIC_DEFAULT_SONNET_MODEL`, which z.ai's own setup guide tells you to set to
+`glm-5.2`. You would run GLM twice, see two nearly identical scorecards, and conclude
+the models are equivalent. Compare seats by pointing each at its own endpoint, and
+read `metrics.jsonl` for tokens/feature — never `total_cost_usd`, which is fiction on
+a flat plan (D-13).
 Always pass `--timeout` explicitly. Both drivers now stop a timed-out seat with
 SIGTERM, a 30-second grace, then SIGKILL — but the default window is 30 minutes, and
 a real feature often needs more.

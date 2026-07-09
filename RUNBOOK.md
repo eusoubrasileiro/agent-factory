@@ -86,6 +86,15 @@ node scripts/claude-worker.mjs --dir <worktree> --model glm-5.2 \
   --prompt "..."
 ```
 
+Want a **Sonnet** worker instead? Same driver, same cage, one extra flag:
+```bash
+node scripts/claude-worker.mjs --dir <worktree> --model sonnet --allow-anthropic --prompt "..."
+```
+It spends Anthropic tokens (or your plan quota) rather than the flat z.ai plan, which
+is why the flag is mandatory rather than a default. Never combine `--model sonnet` with
+a z.ai base URL: the alias resolves through `ANTHROPIC_DEFAULT_SONNET_MODEL`, which z.ai
+tells you to point at `glm-5.2` — you would run GLM while believing you ran Sonnet.
+
 It **refuses to spawn** in two cases, both silent and expensive if allowed:
 - no `ANTHROPIC_BASE_URL`, or one pointing at `anthropic.com` → it would quietly bill real
   money for a seat that must be flat-rate. Credentials live in `~/.config/amiticia/zai.env` (0600).
