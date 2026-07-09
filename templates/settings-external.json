@@ -18,7 +18,7 @@
     "",
     "PRODUCT CRITICAL FILES (Feature 03): the deny list below is the GENERIC BASE",
     "only — engine-internal rails, secrets reads, and the bash guardrails. The",
-    "per-project Edit/Write denies (e.g. wahub's backend/frontend globs) are NO",
+    "per-project Edit/Write denies (a product's source/schema/hook globs) are NO",
     "LONGER hardcoded here; they are generated at render time from the active",
     "profile's projects/<id>/critical-files.json and appended to permissions.deny.",
     "The engine therefore carries zero product paths."
