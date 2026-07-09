@@ -252,6 +252,31 @@ pnpm board:publish    # low-level: rsync only (bypasses the hash guard)
 - Queue several intents: plan them all, approve the ones you like, let build +
   validate run, then ratify the green ones in a batch.
 
+### Vendor limits on the external seat (z.ai coding plan, glm-5.2)
+
+- **Max concurrency: 10.** Do not run more than ten `glm-5.2` builder seats at once.
+  Past that the provider rejects the extra sessions; the fan-out does not queue for you.
+- **Usage is a 5-hour rolling window, not a credit balance.** When it is exhausted the
+  API answers `429 rate_limit_error` (z.ai `code 1308`) with the exact reset timestamp —
+  e.g. *"Usage limit reached for 5 hour. Your limit will reset at 2026-07-10 03:55:20"*.
+  Your credit is fine; you are early.
+- **The failure is silent in `opencode`.** It hangs with zero bytes on stdout AND stderr
+  until the timeout kills it — a 30-minute no-op that looks like a slow build. `claude -p`
+  only reveals it with `--print-logs`. If a builder produces nothing, check the limit
+  before you debug anything else:
+
+```bash
+# Is z.ai answering? 200 = fine. 429 = rate-limited, and the body names the reset time.
+set -a; . ~/.config/amiticia/zai.env; set +a
+curl -s -o /dev/null -w '%{http_code}\n' -X POST "$ANTHROPIC_BASE_URL/v1/messages" \
+  -H 'content-type: application/json' -H 'anthropic-version: 2023-06-01' \
+  -H "Authorization: Bearer $ANTHROPIC_AUTH_TOKEN" \
+  -d '{"model":"glm-5.2","max_tokens":4,"messages":[{"role":"user","content":"hi"}]}'
+```
+
+Concurrency and the rolling window interact: ten seats burn the window five times faster
+than two. Sizing a fan-out is a spend decision, not a throughput one.
+
 ## Safety rails (already true — the factory just obeys them)
 - **Local-first:** nothing goes upstream until validated green locally and you
   ratify. Tenant A is in coexistence — real users — so this is non-negotiable.

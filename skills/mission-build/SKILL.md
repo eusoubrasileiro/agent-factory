@@ -19,6 +19,11 @@ and Andre approved the plan. If not, stop and route to `/mission-plan`.
 - Read `plan.md`. Build a dependency order. Features with no dependency on each
   other MAY run in parallel; anything with a real dependency runs **serial** so
   each worker inherits a green tree.
+- **External-seat concurrency cap: 10.** The z.ai coding plan allows at most ten
+  concurrent `glm-5.2` sessions. Beyond that the provider rejects the extras — it
+  does not queue them for you. Its usage limit is also a **5-hour rolling window**,
+  not a credit balance, so ten parallel seats drain it five times faster than two.
+  Sizing a fan-out is a spend decision, not a throughput one.
 
 ## 2. Isolate
 - Materialize an isolated worktree for the mission with the project's `dispatch`
@@ -64,6 +69,13 @@ must be flat-rate.
 `opencode-worker.mjs` is the **fallback**, for providers with no Anthropic-compatible
 endpoint. Its cage (`cage-opencode.mjs`) is real but its containment is not yet
 proven (D-17); prefer the Claude seat.
+
+**If a builder returns nothing, check the rate limit before anything else.** z.ai
+answers a spent 5-hour window with `429 rate_limit_error` (code 1308) naming the exact
+reset time. `opencode` swallows it — zero bytes on stdout AND stderr, a silent
+30-minute hang that looks like a slow build. `claude -p` reveals it only under
+`--print-logs`. Do not debug the spec, the worktree, or the model until the provider
+answers `200`.
 
 #### Want a Sonnet worker instead of GLM?
 
