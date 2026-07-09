@@ -66,6 +66,30 @@ the validated diff. The machine owns the middle.
 - `factory/decisions.md` — append-only log (the ADR replacement).
 - `factory/constitution.md` + `AGENTS.md` — the rules every seat obeys.
 
+## The PR record (opt-in)
+Each mission can project itself onto a PR on the **product** repo carrying the
+full validate→fix timeline: the first verdict (PASS *or* FAIL) opens a draft PR,
+every round is posted as a comment, and `mission:ratify` marks it ready — the
+local merge + `git push origin main` then flips it to Merged on its own. Disk
+stays canonical; GitHub is a projection, exactly like the board. Every `gh` call
+soft-fails, so an offline machine never blocks a verdict.
+
+It is **off unless `FACTORY_PR=1`**, because `open` runs
+`git push -u origin agent/<slug>`, which publishes every commit reachable from
+that branch. Arm it only when the product repo's `main` is already pushed —
+otherwise the PR drags along unpushed trunk commits:
+
+```bash
+# check first: 0 means the trunk is published and it is safe to arm
+git -C ../../products/wahub rev-list --count origin/main..main
+# then, per mission
+FACTORY_PR=1 pnpm mission:ratify <slug> --project wahub
+```
+
+A mission whose PR never opened (projection off, or `gh` down) ships anyway;
+`missions/<project>/<slug>/.pr.log` says why. Reconciliation is manual and
+optional.
+
 ## The board
 `pnpm board` (terminal: `backlog board`) is a ONE-WAY projection of
 `missions/wahub/*` — a read-model, never a source of truth. Columns: Intake ·
