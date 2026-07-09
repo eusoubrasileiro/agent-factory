@@ -8,7 +8,12 @@
  */
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   buildPhaseEndEvent,
   buildPhaseStartEvent,
@@ -216,4 +221,39 @@ test("buildSpawnEnv skips undefined values", () => {
   const env = buildSpawnEnv({ PATH: undefined, HOME: "/h" });
   assert.equal("PATH" in env, false);
   assert.equal(env.HOME, "/h");
+});
+
+// ─── CLI: --project is required AND a known profile (before spawn) ────────────
+//
+// A forgotten --project used to render a cage with zero Critical-File rules and
+// say nothing. The driver now refuses BEFORE it resolves the worktree or spawns
+// opencode, so these spawns never reach the `opencode` binary.
+
+function runCli(args) {
+  const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "opencode-worker.mjs");
+  return spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
+}
+
+test("CLI: no --project is refused (exit 2, stderr lists the known ids)", () => {
+  const wt = mkdtempSync(path.join(tmpdir(), "ocw-noproject-"));
+  try {
+    const r = runCli(["--dir", wt, "--allow-any-dir", "--model", "m", "--prompt", "hi"]);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /opencode-worker: --project is required/);
+    assert.match(r.stderr, /factory/, "the refusal must list the known project ids");
+  } finally {
+    rmSync(wt, { recursive: true, force: true });
+  }
+});
+
+test("CLI: an unknown --project is refused (exit 2)", () => {
+  const wt = mkdtempSync(path.join(tmpdir(), "ocw-badproject-"));
+  try {
+    const r = runCli(["--dir", wt, "--allow-any-dir", "--model", "m", "--project", "this-id-does-not-exist", "--prompt", "hi"]);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /this-id-does-not-exist/);
+    assert.match(r.stderr, /factory/);
+  } finally {
+    rmSync(wt, { recursive: true, force: true });
+  }
 });

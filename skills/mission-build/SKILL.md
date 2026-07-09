@@ -103,11 +103,16 @@ Always pass `--timeout` explicitly. Both drivers now stop a timed-out seat with
 SIGTERM, a 30-second grace, then SIGKILL — but the default window is 30 minutes, and
 a real feature often needs more.
 
-Always pass `--project` too. It routes the worker's telemetry to
-`missions/<project>/<slug>/metrics.jsonl`. Omit it and the recorder falls back to
-the sole profile — or, once a second profile exists, to a synthesized `default` —
-and the KPI numbers for the run land in another project's tree. `metrics.mjs` now
-warns on stderr when it has to invent a mission dir; do not ignore that warning.
+`--project` is now REQUIRED. Both drivers **refuse to spawn** (exit 2) unless
+`--project <id>` names a known profile — the id validated against `loadProjects`,
+before the credentials guard and the cage render. It routes the worker's telemetry
+to `missions/<project>/<slug>/metrics.jsonl`, and — the reason it is a refusal and
+not a nag — the cage's Critical-File deny rules come from the same profile: a
+forgotten flag used to render a cage with zero product Critical Files and say
+nothing. `--allow-uncaged` does not bypass it. The old soft fallback still lives in
+`metrics.mjs`, but a driver can no longer reach it. A valid profile that declares
+zero Critical Files spawns but warns on stderr — legitimate only for a brand-new
+project.
 
 The external seat is **still governed by the harness**: it is confined to the
 dispatched worktree, dispatched with `--seat external` so its `.env` holds only dummy

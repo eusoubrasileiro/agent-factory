@@ -8,12 +8,21 @@
 | 02 | Alias-trap guard: refuse `--model sonnet\|opus\|haiku` at a non-Anthropic base URL | coordinator | pending |
 | 03 | Rate-limit detection: exit 3, print reset time + fallback command, never auto-failover | coordinator | pending |
 | 04 | Wire the seats into wahub (`package.json`, `dispatch-worktree.sh`, `CLAUDE.md`) | coordinator (secrets-handling) | pending |
-| 05 | A seat spawned without `--project` must not silently lose its Critical-File denies | coordinator (**Andre picks warn-vs-refuse**) | pending |
+| 05 | A seat spawned without `--project` must not silently lose its Critical-File denies | Opus subagent, coordinator-reviewed (**refuse**, D-24) | **done** |
 
 **Seat assignment.** Every feature touches `claude-worker.mjs` — the file that decides whether a
-seat sees real secrets and whether it is caged — or wahub's dispatch script. An external builder
-must never author either (C3). All four are coordinator-seat work. This is not a fallback because
-GLM is rate-limited; it is the rule.
+seat sees real secrets and whether it is caged — or wahub's dispatch script. An **external** builder
+must never author either (C3). This is not a fallback because GLM is rate-limited; it is the rule.
+
+**Amendment 2 (2026-07-10) — who authored feature 05.** Andre directed that the code be written by
+an agent rather than typed in the coordinator's own turn, and delegated the warn-vs-refuse decision
+to the coordinator. Feature 05 was therefore implemented by an **Opus subagent in an isolated
+factory worktree** (`agent/project-required`), not by the coordinator's hand and not by the external
+z.ai seat. C3's target is the *external, caged, third-party* seat authoring its own cage; an
+Anthropic subagent under line-by-line coordinator review is a different risk class. The review was
+not a formality: the coordinator re-ran the suite, re-measured the 35-vs-11 deny-rule counts, and
+**mutation-tested the guard** (neutering `assertKnownProject` turned 7 tests red across both
+drivers, proving the new tests are not hollow). Recorded rather than assumed.
 
 ## Findings from verifying this contract
 
