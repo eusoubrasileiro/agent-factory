@@ -448,16 +448,71 @@ function run({ repoRoot, dryRun }) {
     return 0;
   }
 
-  // Real publish: delegate rsync to board-publish.sh (feature 03 repoints it
-  // to public/). Best-effort — a failed rsync logs but does not skip history.
-  try {
-    spawnSync("bash", [BOARD_PUBLISH], { cwd: repoRoot, stdio: "ignore" });
-  } catch {
-    // soft-fail: board-publish.sh missing or rsync failed — log + continue
+  // Append history snapshots per mission (inline until feature 04 extracts).
+  // Independent of the rsync: the snapshot describes local disk, which is real
+  // whether or not the VPS ever hears about it.
+  appendHistorySnapshots({ rendered, repoRoot, ts: new Date().toISOString() });
+
+  // ── Who is allowed to touch the live board.
+  //
+  // `board-publish.sh` runs `rsync -az --delete <repoRoot>/dist/factory-board/
+  // deploy-host:/opt/app/factory/public/`. That `--delete` makes the source
+  // directory authoritative: whatever it holds BECOMES the published board.
+  //
+  // The tests drive this CLI with `--repo <mkdtemp>`, and several of them omit
+  // `--dry-run`. Before this guard, each such test rsynced its own fixture over
+  // production. Observed 2026-07-09: `factory.example.com` was serving a fixture
+  // board — one requirement `A1`, one mission `alpha` — because a raw
+  // `node --test` run had overwritten the real one. `FACTORY_AUTOPUBLISH=0` did
+  // not stop it: that guard lives in `verdict.mjs`/`ratify.mjs`, the CALLERS, and
+  // nothing guarded the dangerous action itself.
+  //
+  // So the guard belongs HERE, at the rsync, and it is positive: publish only
+  // from the real factory checkout, and only when publishing is not disabled.
+  // Same doctrine as D-24 — refuse at the dangerous step, do not warn at the
+  // edges.
+  const isFactoryRoot = path.resolve(repoRoot) === ROOT;
+  const skipReason = !isFactoryRoot
+    ? "repoRoot não é a fábrica real"
+    : process.env.FACTORY_AUTOPUBLISH === "0"
+      ? "FACTORY_AUTOPUBLISH=0"
+      : null;
+
+  if (skipReason) {
+    // A fixture root owns its own memo (tests rely on the second run no-opping),
+    // and it can never describe the VPS. The REAL root under FACTORY_AUTOPUBLISH=0
+    // must NOT memoize: the content was never delivered, and a memo would make
+    // the next genuine run skip it.
+    if (!isFactoryRoot) {
+      mkdirSync(path.dirname(memoPath), { recursive: true });
+      writeFileSync(memoPath, hash);
+    }
+    logLine(repoRoot, `renderizado (hash ${hash.slice(0, 12)}) — rsync ignorado: ${skipReason}`);
+    return 0;
   }
 
-  // Append history snapshots per mission (inline until feature 04 extracts).
-  appendHistorySnapshots({ rendered, repoRoot, ts: new Date().toISOString() });
+  // Real publish. The rsync's EXIT STATUS decides everything below it.
+  //
+  // A publish that did not happen must never be recorded as published: the memo
+  // is what makes the next run a no-op, so writing it after a failed rsync
+  // freezes the live board in silence — every later run reports "sem mudanças"
+  // while the VPS serves stale HTML, and nothing anywhere says so. Same class as
+  // D-25: a step that cannot fail must never report success.
+  //
+  // On failure: log it, leave the memo untouched so the next run RETRIES, and
+  // still exit 0 — publishing is best-effort and must never fail a verdict.
+  let published = false;
+  try {
+    const r = spawnSync("bash", [BOARD_PUBLISH], { cwd: repoRoot, stdio: "ignore" });
+    published = !r.error && r.status === 0;
+  } catch {
+    published = false; // board-publish.sh missing / spawn refused
+  }
+
+  if (!published) {
+    logLine(repoRoot, `rsync falhou — nada publicado (hash ${hash.slice(0, 12)}); memo preservado`);
+    return 0;
+  }
 
   // Persist the hash memo so the next run no-ops on identical state.
   mkdirSync(path.dirname(memoPath), { recursive: true });

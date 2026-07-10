@@ -35,6 +35,7 @@ import { fileURLToPath } from "node:url";
 import { normalizeSituacao, parseBacklogTables } from "./board-import-backlog.mjs";
 import { deriveMissionState } from "./board-sync.mjs";
 import { aggregate, readHistory } from "./history.mjs";
+import { buildChain, readIntake } from "./intake-report.mjs";
 import { isMainModule } from "./lib/is-main.mjs";
 import { resolveProject } from "./lib/project.mjs";
 
@@ -249,19 +250,25 @@ function countFeatures(missionDirPath) {
 /**
  * Assemble the traceability model from disk + an injected git snapshot.
  *
+ * `intakeSources` (from the project profile) is optional: a project that declares
+ * no requirement-capture log simply gets `intake: []`, and the renderer omits the
+ * tab entirely.
+ *
  * @param {{
  *   missionsDir: string,
  *   prdPath: string,
  *   gitInfo: { branches: Array<{ name: string, slug: string, merged: boolean, lastCommitISO: string|null }> },
+ *   intakeSources?: Array<{ file: string, prefix?: string, label?: string }>,
  * }} args
  * @returns {{
  *   generatedAt: string,
  *   requirements: Array<{ id: string, recurso: string, risco: string, situacao: string, missionSlug: string|null, liveStatus: string }>,
  *   missions: Array<{ slug: string, status: string, gateReason: string|null, requirements: string[]|null, features: number, handoffs: number, lastVerdict: {verdict: string, round: number}|null, branch: {name: string, slug: string, merged: boolean, lastCommitISO: string|null}|null }>,
  *   orphanBranches: Array<{ name: string, slug: string, merged: boolean, lastCommitISO: string|null }>,
+ *   intake: Array<{ id: string, date: string, type: string, summary: string, status: string, detail: string, backlog: Array<{id: string, missionSlug: string|null, liveStatus: string|null, verdict: string|null}> }>,
  * }}
  */
-export function buildTraceabilityModel({ missionsDir, prdPath, gitInfo }) {
+export function buildTraceabilityModel({ missionsDir, prdPath, gitInfo, intakeSources = [] }) {
   const generatedAt = new Date().toISOString();
   const branches = gitInfo && Array.isArray(gitInfo.branches) ? gitInfo.branches : [];
   const branchBySlug = new Map();
@@ -334,7 +341,32 @@ export function buildTraceabilityModel({ missionsDir, prdPath, gitInfo }) {
     };
   });
 
-  return { generatedAt, requirements, missions, orphanBranches };
+  // ── Intake: the requirement as the client stated it, joined FORWARD to the
+  // backlog rows that cite it, and through them to mission + verdict. This is
+  // the half of the chain the board could not see: `IN-NN` is prose in the PRD's
+  // `Porquê / fonte` column, never a parsed id. An intake row that no backlog row
+  // cites keeps an empty `backlog` — the renderer calls that "não despachado",
+  // which is the truth, rather than hiding the row.
+  const { rows: intakeRows } = readIntake(intakeSources);
+  const chain = buildChain(prdRows, intakeRows.map((r) => r.id));
+  const reqById = new Map(requirements.map((r) => [r.id, r]));
+  const missionBySlug = new Map(missions.map((m) => [m.slug, m]));
+
+  const intake = intakeRows.map((row) => ({
+    ...row,
+    backlog: (chain[row.id] ?? []).map((backlogId) => {
+      const req = reqById.get(backlogId) ?? null;
+      const mission = req?.missionSlug ? missionBySlug.get(req.missionSlug) : null;
+      return {
+        id: backlogId,
+        missionSlug: req?.missionSlug ?? null,
+        liveStatus: req?.liveStatus ?? null,
+        verdict: mission?.lastVerdict?.verdict ?? null,
+      };
+    }),
+  }));
+
+  return { generatedAt, requirements, missions, orphanBranches, intake };
 }
 
 // ─── HTML renderer (feature 02) ───────────────────────────────────────────────
@@ -375,7 +407,7 @@ const BODIES = [
 ];
 
 /** Escape the five HTML-significant characters for safe text interpolation. */
-function esc(value) {
+export function esc(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -407,6 +439,89 @@ export function renderInline(text) {
   return esc(text).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
 }
 
+/**
+ * The inline subset the intake's prose actually uses: `code`, **bold**, *italic*.
+ *
+ * Same security ordering as `renderInline` and for the same reason: `esc()` runs
+ * first, so every `<` `>` `&` `"` `'` in the file is already an entity before any
+ * tag is introduced; only then do three whitelisted regexes splice in literal
+ * `code` / `strong` / `em` tokens. File content can never influence a tag name or
+ * an attribute. Order matters: code spans first (so `**` inside backticks stays
+ * literal), then bold, then the single-star italic — whose guard `(?!\*)` keeps it
+ * from eating a bold marker it did not consume.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function renderInlineRich(text) {
+  return esc(text)
+    .replace(/`([^`]+?)`/g, "<code>$1</code>")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*(?!\*)([^*]+?)\*(?!\*)/g, "$1<em>$2</em>");
+}
+
+/**
+ * Render one `### IN-NN` technical block: paragraphs, `-` bullets, `1.` ordered
+ * lists and `>` quotes. Deliberately NOT a markdown parser — a general one would
+ * accept raw HTML from the source file and break the escape-first invariant
+ * above, and it would be this engine's first runtime dependency. Anything the
+ * subset does not recognize renders as an escaped paragraph, which is safe and
+ * legible.
+ *
+ * @param {string} markdown
+ * @returns {string}
+ */
+function renderDetailBlock(markdown) {
+  const out = [];
+  let kind = null; // "ul" | "ol" | "quote" | "p"
+  /** @type {string[][]} — items of the open block; each item is its own line buffer. */
+  let items = [];
+
+  const flush = () => {
+    if (kind === null) return;
+    const html = items.map((it) => renderInlineRich(it.join(" ")));
+    if (kind === "p") out.push(...html.map((h) => `<p>${h}</p>`));
+    else if (kind === "quote") out.push(`<blockquote>${html.map((h) => `<p>${h}</p>`).join("")}</blockquote>`);
+    else out.push(`<${kind}>${html.map((h) => `<li>${h}</li>`).join("")}</${kind}>`);
+    kind = null;
+    items = [];
+  };
+  const open = (next) => {
+    if (kind !== next) flush();
+    kind = next;
+  };
+
+  for (const raw of String(markdown ?? "").split("\n")) {
+    const line = raw.trim();
+    if (line === "") {
+      flush();
+      continue;
+    }
+    const bullet = line.match(/^[-*]\s+(.*)$/);
+    const ordered = line.match(/^\d+\.\s+(.*)$/);
+    const quote = line.match(/^>\s?(.*)$/);
+
+    if (bullet) {
+      open("ul");
+      items.push([bullet[1]]);
+    } else if (ordered) {
+      open("ol");
+      items.push([ordered[1]]);
+    } else if (quote) {
+      open("quote");
+      items.push([quote[1]]);
+    } else if (kind !== null && kind !== "p" && items.length > 0) {
+      items[items.length - 1].push(line); // wrapped continuation of the open item
+    } else {
+      open("p");
+      if (items.length === 0) items.push([]);
+      items[0].push(line);
+    }
+  }
+  flush();
+  return out.join("\n");
+}
+
 /** Map a board status to a stable CSS class suffix (falls back to "intake"). */
 function statusClass(status) {
   return STATUS_CLASS[status] ?? "intake";
@@ -431,7 +546,7 @@ function formatDDMM(iso) {
   return `${dd}/${mm}`;
 }
 
-function renderStyles() {
+export function renderStyles() {
   return `
 :root {
   --bg: #fafafa;
@@ -451,6 +566,12 @@ function renderStyles() {
   --risk-med-bg: #fef3c7; --risk-med-fg: #92400e;
   --risk-high-bg: #fee2e2; --risk-high-fg: #991b1b;
   --risk-neutral-bg: #f3f4f6; --risk-neutral-fg: #4b5563;
+  --type-feature-bg: #dbeafe; --type-feature-fg: #1e40af;
+  --type-bug-bg: #fee2e2; --type-bug-fg: #991b1b;
+  --type-spec-bg: #ede9fe; --type-spec-fg: #5b21b6;
+  --type-vision-bg: #ccfbf1; --type-vision-fg: #115e59;
+  --type-biz-bg: #fef3c7; --type-biz-fg: #92400e;
+  --tech: #0369a1; --tech-bg: #f0f7fb;
 }
 * { box-sizing: border-box; }
 body {
@@ -535,6 +656,31 @@ footer.site { padding: 1rem 2rem; border-top: 1px solid var(--border); color: va
 .stat-value { font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--fg); }
 .stat-label { font-size: 0.72rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 0.25rem; }
 .stat-value.sem-dados { font-size: 0.95rem; font-weight: 500; color: var(--muted); }
+.intake-legend { font-size: 0.82rem; margin: 1rem 0 0; }
+.intake-card { border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); padding: 0.75rem 1rem; margin-bottom: 0.5rem; }
+.intake-summary { margin: 0.5rem 0 0.25rem; font-size: 0.9rem; }
+.intake-source { margin: 0; font-size: 0.75rem; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.badge-type.type-feature { background: var(--type-feature-bg); color: var(--type-feature-fg); }
+.badge-type.type-bug { background: var(--type-bug-bg); color: var(--type-bug-fg); }
+.badge-type.type-spec { background: var(--type-spec-bg); color: var(--type-spec-fg); }
+.badge-type.type-vision { background: var(--type-vision-bg); color: var(--type-vision-fg); }
+.badge-type.type-biz { background: var(--type-biz-bg); color: var(--type-biz-fg); }
+.badge-type.type-neutral, .badge-life.life-neutral { background: var(--risk-neutral-bg); color: var(--risk-neutral-fg); }
+.badge-life.life-new { background: var(--status-intake-bg); color: var(--status-intake-fg); }
+.badge-life.life-distilled { background: var(--status-planning-bg); color: var(--status-planning-fg); }
+.badge-life.life-ratified { background: var(--status-building-bg); color: var(--status-building-fg); }
+.badge-life.life-landed { background: var(--status-done-bg); color: var(--status-done-fg); }
+.badge-undispatched { background: var(--risk-neutral-bg); color: var(--risk-neutral-fg); border: 1px dashed var(--border); }
+.chain { display: inline-flex; align-items: center; gap: 0.3rem; }
+.chain-arrow { color: var(--muted); font-size: 0.75rem; }
+.tech-block { margin-top: 0.6rem; border-left: 3px solid var(--tech); background: var(--tech-bg); border-radius: 0 6px 6px 0; padding: 0.4rem 0.75rem; }
+.tech-block > summary { cursor: pointer; font-size: 0.78rem; font-weight: 600; color: var(--tech); }
+.tech-body { font-size: 0.85rem; margin-top: 0.5rem; }
+.tech-body p { margin: 0.4rem 0; }
+.tech-body ul, .tech-body ol { margin: 0.4rem 0; padding-left: 1.25rem; }
+.tech-body li { margin-bottom: 0.2rem; }
+.tech-body blockquote { margin: 0.4rem 0; padding-left: 0.75rem; border-left: 2px solid var(--border); color: var(--muted); }
+.tech-body code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; padding: 0 0.2rem; }
 `;
 }
 
@@ -678,6 +824,113 @@ function renderMissionStatsLine(stats) {
   }
   if (cells.length === 0) return "";
   return `<div class="card-stats">${cells.join("")}</div>`;
+}
+
+// ─── Intake tab ───────────────────────────────────────────────────────────────
+//
+// The requirement as the client stated it, followed forward to its verdict. The
+// tab exists only when the project profile declares an `intake[]` source — the
+// engine stays product-agnostic (D-15), and no project gets an empty tab.
+
+/** Intake row `Tipo` → CSS suffix. Unknown values render neutral, never raw. */
+const TYPE_CLASS = {
+  feature: "feature",
+  bug: "bug",
+  "spec-change": "spec",
+  vision: "vision",
+  "business-decision": "biz",
+};
+
+/** Intake row `Situação` → CSS suffix (the intake lifecycle, not the board's). */
+const LIFE_CLASS = {
+  New: "new",
+  Distilled: "distilled",
+  Ratified: "ratified",
+  Landed: "landed",
+};
+
+/**
+ * The forward chain of one intake row: `→ C7 → sdr-nonlead-gate → PASS`.
+ * A row no backlog row cites says so, instead of rendering an empty gap.
+ */
+function renderChain(backlog) {
+  if (!Array.isArray(backlog) || backlog.length === 0) {
+    return `<span class="badge badge-undispatched">não despachado</span>`;
+  }
+  return backlog
+    .map((b) => {
+      const mission = b.missionSlug
+        ? `<span class="chain-arrow">→</span><a class="mission-link" href="#mission-${esc(b.missionSlug)}" data-jump-to-mission>${esc(b.missionSlug)}</a>`
+        : `<span class="chain-arrow">→</span><span class="muted">sem missão</span>`;
+      const verdict = b.verdict
+        ? `<span class="chain-arrow">→</span><span class="verdict-${esc(b.verdict)}">${esc(b.verdict)}</span>`
+        : "";
+      return `<span class="chain"><span class="chain-arrow">→</span><span class="chip">${esc(b.id)}</span>${mission}${verdict}</span>`;
+    })
+    .join("");
+}
+
+function renderIntakeCard(row) {
+  const typeClass = TYPE_CLASS[row.type] ?? "neutral";
+  const lifeClass = LIFE_CLASS[row.status] ?? "neutral";
+  const shared = row.detailShared
+    ? ` <span class="muted">(bloco compartilhado)</span>`
+    : "";
+  const tech = row.detail
+    ? `        <details class="tech-block">
+          <summary>🔬 detalhamento técnico${shared}</summary>
+          <div class="tech-body">
+${renderDetailBlock(row.detail)}
+          </div>
+        </details>`
+    : "";
+  return `      <article class="intake-card" id="intake-${esc(row.id)}">
+        <div class="card-row">
+          <span class="card-slug">${esc(row.id)}</span>
+          <span class="badge badge-type type-${esc(typeClass)}">${esc(row.type || "—")}</span>
+          <span class="badge badge-life life-${esc(lifeClass)}">${esc(row.status || "—")}</span>
+          ${renderChain(row.backlog)}
+        </div>
+        <p class="intake-summary">${renderInlineRich(row.summary)}</p>
+        <p class="intake-source">${renderInlineRich(row.dateSource)}</p>
+${tech}
+      </article>`;
+}
+
+/**
+ * Group intake rows by day (newest first) and render one card each.
+ *
+ * Exported because `intake-server.mjs` renders the SAME markup locally — one
+ * parser, one renderer, one look. The local editor shows the panel immediately
+ * (`hidden: false`); the dashboard keeps it behind its tab.
+ *
+ * @param {Array<object>} intake
+ * @param {{hidden?: boolean}} [opts]
+ * @returns {string} — empty string when there is no intake at all.
+ */
+export function renderIntakeTab(intake, { hidden = true } = {}) {
+  if (!Array.isArray(intake) || intake.length === 0) return "";
+
+  const byDate = new Map();
+  for (const row of intake) {
+    if (!byDate.has(row.date)) byDate.set(row.date, []);
+    byDate.get(row.date).push(row);
+  }
+
+  const undispatched = intake.filter((r) => !r.backlog || r.backlog.length === 0).length;
+  const summary = `    <p class="muted intake-legend">${intake.length} requisitos captados · ${intake.length - undispatched} despachados para o backlog · ${undispatched} ainda não</p>`;
+
+  const sections = [...byDate.entries()]
+    .map(([date, rows]) => `    <section class="body-section">
+      <h2>${esc(date)}</h2>
+${rows.map(renderIntakeCard).join("\n")}
+    </section>`)
+    .join("\n");
+
+  return `  <section id="tab-intake" class="tab-panel" role="tabpanel"${hidden ? " hidden" : ""}>
+${summary}
+${sections}
+  </section>`;
 }
 
 function renderMissionsTab(missions, orphans) {
@@ -946,13 +1199,20 @@ export function renderDashboardHtml(model) {
   const reqs = Array.isArray(safe.requirements) ? safe.requirements : [];
   const missions = Array.isArray(safe.missions) ? safe.missions : [];
   const orphans = Array.isArray(safe.orphanBranches) ? safe.orphanBranches : [];
+  const intake = Array.isArray(safe.intake) ? safe.intake : [];
   const generatedAt = safe.generatedAt ?? new Date().toISOString();
   const history = safe.history ?? null;
+
+  // The Intake tab exists only for a project whose profile declares a capture log.
+  const intakeTabButton =
+    intake.length > 0
+      ? `\n      <button type="button" role="tab" data-tab="intake" aria-selected="false">Intake</button>`
+      : "";
 
   // Embed the model for debugging. Rewrite `<` so a hostile payload can never
   // close the `<script>` tag early.
   const modelJson = JSON.stringify(
-    { generatedAt, requirements: reqs, missions, orphanBranches: orphans },
+    { generatedAt, requirements: reqs, missions, orphanBranches: orphans, intake },
     null,
     2,
   ).replace(/</g, "\\u003c");
@@ -978,7 +1238,7 @@ ${renderStyles()}
       <button type="button" role="tab" data-tab="requisitos" aria-selected="true">Requisitos</button>
       <button type="button" role="tab" data-tab="missoes" aria-selected="false">Missões</button>
       <button type="button" role="tab" data-tab="agentes" aria-selected="false">Agentes</button>
-      <button type="button" role="tab" data-tab="historico" aria-selected="false">Histórico</button>
+      <button type="button" role="tab" data-tab="historico" aria-selected="false">Histórico</button>${intakeTabButton}
     </nav>
   </header>
   <main>
@@ -986,6 +1246,7 @@ ${renderRequirementsTab(reqs)}
 ${renderMissionsTab(missions, orphans)}
 ${renderAgentsTab(missions)}
 ${renderHistoryTab(history)}
+${renderIntakeTab(intake)}
   </main>
   <footer class="site">
     gerado em <time datetime="${esc(generatedAt)}">${esc(generatedAt)}</time> · board-report
@@ -1063,7 +1324,12 @@ function main() {
   if (branchPrefix !== undefined) gitOpts.branchPrefix = branchPrefix;
   if (trunk !== undefined) gitOpts.trunk = trunk;
   const gitInfo = collectGitInfo(repoRoot, gitOpts);
-  const model = buildTraceabilityModel({ missionsDir, prdPath, gitInfo });
+  const model = buildTraceabilityModel({
+    missionsDir,
+    prdPath,
+    gitInfo,
+    intakeSources: resolved.profile.intake,
+  });
 
   // History aggregation (feature 04): read JSONL, aggregate stats, pass to
   // the renderer. Missing/empty/corrupt → null (Histórico tab shows "sem dados").
@@ -1076,8 +1342,9 @@ function main() {
   mkdirSync(path.dirname(outPath), { recursive: true });
   writeFileSync(outPath, html);
 
+  const intakeNote = model.intake.length > 0 ? `, ${model.intake.length} requisitos captados` : "";
   process.stdout.write(
-    `board-report: ${model.requirements.length} requisitos, ${model.missions.length} missões -> ${outPath}\n`,
+    `board-report: ${model.requirements.length} requisitos, ${model.missions.length} missões${intakeNote} -> ${outPath}\n`,
   );
   return 0;
 }

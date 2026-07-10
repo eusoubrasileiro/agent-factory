@@ -28,6 +28,7 @@ import {
   parseRequirementsLine,
   renderDashboardHtml,
   renderInline,
+  renderIntakeTab,
 } from "./board-report.mjs";
 import { deriveMissionState } from "./board-sync.mjs";
 
@@ -1711,4 +1712,307 @@ test("Missões: a mission card with stats shows LOC, modelo, tokens, tempo, rond
   assert.match(html, /\+2862/); // LOC added
   assert.match(html, /2359696|2\.36M|2,359,696/); // tokens (some rendering)
   assert.match(html, /glm-5\.2/); // modelo
+});
+
+// ─── Intake tab (contract intake-board I9–I12) ────────────────────────────────
+//
+// The intake tab follows a requirement FORWARD from the words the client used
+// (a `| IN-NN |` row in requirements-intake.md) to the backlog rows that cite it
+// in their `Porquê / fonte` column, and through those to the mission + verdict.
+//
+// NEVER touch the real clients/tenant-a/requirements-intake.md — every fixture
+// below writes its own throwaway intake `.md` inside a mkdtemp root.
+
+/** The shared feature-body PRD header, verbatim (board-import-backlog.mjs HEADER). */
+const PRD_BODY_HEADER =
+  "| ID | Recurso | Porquê / fonte | Prova | Risco | Situação |\n|---|---|---|---|---|---|\n";
+
+/**
+ * A PRD body-table doc whose `Porquê / fonte` cells carry raw `IN-NN` citations.
+ * `rows` is `[{ id, porque, risco?, situacao? }]`; `porque` is spliced in verbatim
+ * so a compressed run like `IN-33/35/38/40a` reaches the parser intact.
+ */
+function writeCitingPrd(root, rows) {
+  const body = rows
+    .map(
+      (r) =>
+        `| ${r.id} | **${r.id} feat** — desc | ${r.porque} | prova | ${r.risco ?? "low"} | ${
+          r.situacao ?? "todo"
+        } |\n`,
+    )
+    .join("");
+  const p = path.join(root, "prd.md");
+  writeFileSync(p, `# PRD fixture\n\n${PRD_BODY_HEADER}${body}\n`);
+  return p;
+}
+
+/**
+ * Write a throwaway `requirements-intake.md` (the append-only 6-column table) and
+ * return its absolute path. `rows` is `[{ id, date, source?, type?, summary?, status? }]`.
+ * A caller may pass a raw `detail` markdown string to append a `### <id>` block
+ * under the `# Detalhamento técnico` section.
+ */
+function writeIntakeDoc(root, rows, name = "requirements-intake.md") {
+  const header =
+    "| ID | Data · Fonte | Tipo | Resumo | Situação | Landed |\n|----|----|----|----|----|----|\n";
+  const body = rows
+    .map(
+      (r) =>
+        `| ${r.id} | ${r.date} · ${r.source ?? "audio"} | ${r.type ?? "feature"} | ${
+          r.summary ?? `resumo ${r.id}`
+        } | ${r.status ?? "New"} |  |\n`,
+    )
+    .join("");
+  const detailRows = rows.filter((r) => typeof r.detail === "string" && r.detail.length > 0);
+  let details = "";
+  if (detailRows.length > 0) {
+    details =
+      "\n# Detalhamento técnico\n\n" +
+      detailRows.map((r) => `### ${r.id} — bloco\n\n${r.detail}\n`).join("\n");
+  }
+  const p = path.join(root, name);
+  writeFileSync(p, `# Intake fixture\n\n${header}${body}${details}\n`);
+  return p;
+}
+
+/** A hand-rolled intake model row (renderIntakeTab / renderChain input shape). */
+function intakeRow(id, over = {}) {
+  return {
+    id,
+    date: "2026-06-10",
+    dateSource: "2026-06-10 · audio",
+    type: "feature",
+    summary: `resumo ${id}`,
+    status: "New",
+    detail: "",
+    detailShared: false,
+    backlog: [],
+    ...over,
+  };
+}
+
+// ── I9: buildTraceabilityModel → model.intake with the forward chain ──────────
+
+test("I9: intake row carries a backlog[] of PRD ids whose Porquê cites it (PRD order)", () => {
+  const root = makeTmpRoot("board-report-intake-i9-");
+  try {
+    // C3 cites IN-33/35/38/40a; C7 cites IN-39/40a/48. C3 precedes C7 in the doc.
+    const prd = writeCitingPrd(root, [
+      { id: "C3", porque: "vem de IN-33/35/38/40a" },
+      { id: "C7", porque: "consolidação de IN-39/40a/48" },
+    ]);
+    const intakePath = writeIntakeDoc(root, [
+      { id: "IN-33", date: "2026-06-10" },
+      { id: "IN-35", date: "2026-06-10" },
+      { id: "IN-38", date: "2026-06-10" },
+      { id: "IN-39", date: "2026-06-11" },
+      { id: "IN-40", date: "2026-06-11" },
+      { id: "IN-48", date: "2026-06-12" },
+      { id: "IN-99", date: "2026-06-12", summary: "ninguém cita" },
+    ]);
+    const missionsDir = path.join(root, "missions");
+    mkdirSync(missionsDir, { recursive: true });
+
+    const model = buildTraceabilityModel({
+      missionsDir,
+      prdPath: prd,
+      gitInfo: { branches: [] },
+      intakeSources: [{ file: intakePath, prefix: "IN", label: "tenant-a" }],
+    });
+
+    assert.ok(Array.isArray(model.intake), "model.intake is an array");
+    const byId = new Map(model.intake.map((r) => [r.id, r]));
+
+    const ids = (id) => byId.get(id).backlog.map((b) => b.id);
+    assert.deepEqual(ids("IN-33"), ["C3"], "IN-33 cited only by C3");
+    // IN-40 is cited by BOTH (via IN-40a) — must list them in PRD order: C3, C7.
+    assert.deepEqual(ids("IN-40"), ["C3", "C7"], "IN-40 cited by C3 then C7 (doc order)");
+    assert.deepEqual(ids("IN-99"), [], "an uncited row keeps an empty backlog (não despachado)");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("I9: each backlog entry carries {id, missionSlug, liveStatus, verdict} from the mission", () => {
+  const root = makeTmpRoot("board-report-intake-i9b-");
+  try {
+    const prd = writeCitingPrd(root, [{ id: "C3", porque: "de IN-33/35" }]);
+    const intakePath = writeIntakeDoc(root, [
+      { id: "IN-33", date: "2026-06-10" },
+      { id: "IN-35", date: "2026-06-10" },
+    ]);
+    const missionsDir = path.join(root, "missions");
+    // A mission whose brief CLAIMS C3 and whose validate.log ends on PASS.
+    mkMission(missionsDir, "sdr-nonlead-gate", {
+      "brief.md": "# Brief\n\n**Requirements:** C3\n",
+      "validate.log": jsonl(verdict(1, "FAIL"), verdict(2, "PASS")),
+    });
+
+    const model = buildTraceabilityModel({
+      missionsDir,
+      prdPath: prd,
+      gitInfo: { branches: [] },
+      intakeSources: [{ file: intakePath, prefix: "IN", label: "tenant-a" }],
+    });
+
+    const in33 = model.intake.find((r) => r.id === "IN-33");
+    assert.equal(in33.backlog.length, 1);
+    const entry = in33.backlog[0];
+    assert.equal(entry.id, "C3");
+    assert.equal(entry.missionSlug, "sdr-nonlead-gate", "chained to the claiming mission");
+    assert.equal(entry.verdict, "PASS", "the mission's last verdict flows onto the chain");
+    // liveStatus is the mission's derived board status (PASS → Needs Human).
+    assert.equal(entry.liveStatus, "Needs Human");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ── I10: renderDashboardHtml WITH intake → tab + one card per row + jump link ──
+
+test("I10: intake non-empty → one data-tab=intake, an <article> per row, a jump link", () => {
+  const model = {
+    generatedAt: "2026-07-08T00:00:00.000Z",
+    requirements: [],
+    missions: [],
+    orphanBranches: [],
+    intake: [
+      intakeRow("IN-33", {
+        backlog: [
+          { id: "C3", missionSlug: "sdr-nonlead-gate", liveStatus: "Needs Human", verdict: "PASS" },
+        ],
+      }),
+      intakeRow("IN-40", { date: "2026-06-11" }),
+    ],
+  };
+  const html = renderDashboardHtml(model);
+
+  // The tab exists exactly once (the nav button; the panel id is `tab-intake`).
+  assert.equal(
+    (html.match(/data-tab="intake"/g) ?? []).length,
+    1,
+    "exactly one intake tab button",
+  );
+  assert.match(html, /id="tab-intake"/);
+
+  // One <article class="intake-card" id="intake-IN-NN"> per intake row.
+  assert.match(html, /<article class="intake-card" id="intake-IN-33">/);
+  assert.match(html, /<article class="intake-card" id="intake-IN-40">/);
+  assert.equal(
+    (html.match(/class="intake-card"/g) ?? []).length,
+    2,
+    "one card per intake row",
+  );
+
+  // The forward chain links into the mission card by in-page anchor.
+  assert.match(html, /href="#mission-sdr-nonlead-gate" data-jump-to-mission/);
+});
+
+// ── I11: renderDashboardHtml WITHOUT intake → no tab, no panel, no empty tab ───
+
+test("I11: empty intake → no data-tab=intake, no id=tab-intake; renderIntakeTab([]) is ''", () => {
+  // Absent `intake` key entirely.
+  const noKey = renderDashboardHtml(EMPTY_MODEL);
+  assert.doesNotMatch(noKey, /data-tab="intake"/);
+  assert.doesNotMatch(noKey, /id="tab-intake"/);
+
+  // Present but empty array — same outcome (no empty tab is ever shown).
+  const emptyArr = renderDashboardHtml({ ...EMPTY_MODEL, intake: [] });
+  assert.doesNotMatch(emptyArr, /data-tab="intake"/);
+  assert.doesNotMatch(emptyArr, /id="tab-intake"/);
+
+  // The renderer helper itself collapses to the empty string.
+  assert.equal(renderIntakeTab([]), "");
+  assert.equal(renderIntakeTab(undefined), "");
+});
+
+// ── I12: every .md-sourced string is escaped BEFORE any markdown transform ────
+
+test("I12: a <script> in an intake summary is escaped, never emitted as a tag", () => {
+  const out = renderIntakeTab([intakeRow("IN-1", { summary: "<script>alert(1)</script>" })], {
+    hidden: false,
+  });
+  assert.match(out, /&lt;script&gt;/, "the angle brackets are entity-escaped");
+  assert.ok(!out.includes("<script>alert"), "no live <script> tag leaks through");
+});
+
+test("I12: an unbalanced ** never opens a dangling <strong>", () => {
+  const out = renderIntakeTab([intakeRow("IN-1", { summary: "**não fecha aqui" })], {
+    hidden: false,
+  });
+  assert.doesNotMatch(out, /<strong>/, "odd ** count produces no <strong> opener");
+  assert.doesNotMatch(out, /<\/strong>/);
+  assert.ok(out.includes("**não fecha aqui"), "the stray ** survives as plain text");
+});
+
+test("I12: a Detalhamento block with <img onerror> is escaped, not injected", () => {
+  const out = renderIntakeTab(
+    [intakeRow("IN-1", { detail: "antes\n\n<img src=x onerror=1>\n\ndepois" })],
+    { hidden: false },
+  );
+  assert.match(out, /&lt;img src=x onerror=1&gt;/, "the img tag is entity-escaped");
+  assert.ok(!out.includes("<img src=x onerror=1>"), "no live <img> tag leaks through");
+});
+
+test("I12: the supported markdown subset renders (bold/code/italic/ul/ol/quote)", () => {
+  const detail = [
+    "**negrito** e `code` e *itálico*",
+    "",
+    "- item um",
+    "- item dois",
+    "",
+    "1. primeiro",
+    "2. segundo",
+    "",
+    "> citação aqui",
+  ].join("\n");
+  const out = renderIntakeTab([intakeRow("IN-1", { detail })], { hidden: false });
+
+  assert.match(out, /<strong>negrito<\/strong>/, "**bold** → <strong>");
+  assert.match(out, /<code>code<\/code>/, "`code` → <code>");
+  assert.match(out, /<em>itálico<\/em>/, "*italic* → <em>");
+  assert.match(out, /<ul>.*<li>item um<\/li>.*<li>item dois<\/li>.*<\/ul>/s, "- item → <li> in <ul>");
+  assert.match(out, /<ol>.*<li>primeiro<\/li>.*<li>segundo<\/li>.*<\/ol>/s, "1. item → <li> in <ol>");
+  assert.match(out, /<blockquote>.*citação aqui.*<\/blockquote>/s, "> quote → <blockquote>");
+});
+
+test("I12: a wrapped bullet continuation stays INSIDE the same <li> (no loose text)", () => {
+  const detail = "- primeira parte\ncontinua aqui\n- outra";
+  const out = renderIntakeTab([intakeRow("IN-1", { detail })], { hidden: false });
+
+  // The continuation line is folded into its bullet's <li>, joined by a space.
+  assert.match(out, /<li>primeira parte continua aqui<\/li>/);
+  // No loose (non-tag, non-whitespace) text may sit between </li> and the next
+  // <li>, or between </li> and </ul> — that would be a leaked continuation.
+  assert.doesNotMatch(out, /<\/li>[^<]*\S[^<]*<li>/, "no loose text between </li> and <li>");
+  assert.doesNotMatch(out, /<\/li>[^<]*\S[^<]*<\/ul>/, "no loose text between </li> and </ul>");
+});
+
+// ── renderIntakeTab: the `hidden` option ──────────────────────────────────────
+
+test("renderIntakeTab: hidden defaults to true, {hidden:false} omits the attribute", () => {
+  const rows = [intakeRow("IN-1")];
+  const openTag = (s) => s.match(/<section id="tab-intake"[^>]*>/)[0];
+
+  // Default (no opts) → hidden present (dashboard keeps it behind its tab).
+  assert.match(openTag(renderIntakeTab(rows)), /\shidden>/);
+  // Empty opts object → still hidden (default kicks in).
+  assert.match(openTag(renderIntakeTab(rows, {})), /\shidden>/);
+  // Explicit {hidden:false} → no hidden attribute (local editor shows it at once).
+  assert.doesNotMatch(openTag(renderIntakeTab(rows, { hidden: false })), /\shidden>/);
+});
+
+test("renderIntakeTab: a row with no backlog renders the 'não despachado' badge", () => {
+  const dispatched = intakeRow("IN-1", {
+    backlog: [{ id: "C3", missionSlug: "m", liveStatus: "Done", verdict: "PASS" }],
+  });
+  const orphan = intakeRow("IN-2", { backlog: [] });
+  const out = renderIntakeTab([dispatched, orphan], { hidden: false });
+
+  assert.match(out, /não despachado/, "the uncited row says so of itself");
+  assert.equal(
+    (out.match(/não despachado/g) ?? []).length,
+    1,
+    "only the uncited row gets the badge",
+  );
 });

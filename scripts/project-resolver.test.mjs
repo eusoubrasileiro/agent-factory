@@ -49,6 +49,7 @@ function assertDefaultProfile(actual) {
     criticalFiles: [],
     seatEnvPath: null,
     validationPath: null,
+    intake: [],
   });
 }
 

@@ -212,14 +212,28 @@ hash guard; the funnel makes no commits itself, so it can never re-fire a hook.
 `--dry-run` renders + hashes + prints the rsync target but never writes the
 memo, never touches the network — safe to run repeatedly.
 
-**Tests stay quiet.** `pnpm test:factory` exports `FACTORY_AUTOPUBLISH=0`; both
-recorders' `triggerAutopublish()` return early under that flag, so
-test-spawned verdicts/ratifications never publish the real board or pollute
-`history.jsonl`.
+**Only the real factory publishes** (D-31). `board-publish.sh` rsyncs
+`<repoRoot>/dist/factory-board/` with `--delete`, so whatever that directory
+holds *becomes* the live board. `run()` therefore refuses the rsync unless
+`path.resolve(repoRoot) === ROOT` **and** `FACTORY_AUTOPUBLISH !== "0"`; a fixture
+root renders, keeps its own local memo, and logs `rsync ignorado: …`. This is the
+guard that matters: `FACTORY_AUTOPUBLISH=0` alone protects nothing, because it
+lives in `verdict.mjs`/`ratify.mjs` — the *callers*. Until 2026-07-09 every test
+that ran the CLI with `--repo <tmp>` and no `--dry-run` published its own fixture
+over production; the live board was found serving one requirement `A1` and one
+mission `alpha`. Note `pnpm test` sets the flag but a raw `node --test` does not.
+
+**A failed rsync never memoizes** (D-32). The rsync's exit status decides: on
+failure the funnel logs `rsync falhou — nada publicado`, **preserves** the old
+hash memo so the next run retries, and still exits 0. Writing the memo after a
+failed publish would freeze the live board in silence — every later run reporting
+`sem mudanças` while the VPS serves stale HTML.
 
 **Debugging.** Every run appends one line to `factory/.publish.log` (gitignored,
-append-only): `[<iso>] <publicado (hash …) | sem mudanças | erro …>`. If the
-board looks stale or a publish silently failed, read it first.
+append-only): `[<iso>] <publicado (hash …) | sem mudanças | rsync falhou … |
+rsync ignorado: … | erro …>`. If the board looks stale, read it first — and
+remember the log lives under the `repoRoot` that ran, so a fixture's lines never
+land here.
 
 **Per-project layout.** The manifest is `deploy/projects.json`:
 ```json
@@ -240,12 +254,31 @@ appended on each publish that changed the hash
 renders "sem dados", never crashes. History content is stripped from the hash so
 appending snapshots never triggers a republish loop.
 
+**Intake tab.** A project whose profile declares `intake[]` gets a fourth tab: the
+requirement as the client stated it, followed forward to its verdict.
+```json
+"intake": [{ "file": "../../../clients/tenant-a/requirements-intake.md",
+             "prefix": "IN", "label": "Tenant A — WaHub / Nexus" }]
+```
+`file` is relative to the factory root, like `path`. The chain is
+`IN-NN → backlog row → mission → verdict`: the row's `Porquê / fonte` column is
+scanned for citations, including the compressed form the docs actually use
+(`IN-33/35/38/40a` expands to four ids; a sub-part letter collapses onto its row).
+An `IN` no row cites renders **"não despachado"**. No `intake[]` → no tab, so the
+engine stays product-agnostic (D-15). **What is declared is published** — see
+D-30 before adding a source; the CIPE and CIDS intakes are deliberately absent.
+
+Edit it locally with `pnpm intake` (`scripts/intake-server.mjs`): binds `127.0.0.1`
+only, reuses the board's own `renderIntakeTab`, and writes back to the `.md` after
+a `.bak` copy. Writes stay local-first; the VPS never gets write access.
+
 **Manual fallback** (the bindings make this rare):
 ```bash
 node scripts/board-autopublish.mjs --dry-run   # offline: render + print rsync target
 node scripts/board-autopublish.mjs             # real publish (render + hash-guard + rsync)
 pnpm board:report     # low-level: render only the wahub dashboard HTML
 pnpm board:publish    # low-level: rsync only (bypasses the hash guard)
+pnpm intake           # local intake editor (loopback, writes the .md + .bak)
 ```
 
 ## Running many in a window
