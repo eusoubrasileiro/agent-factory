@@ -564,3 +564,59 @@ test("root index: self-contained — zero external http(s) resource loads", () =
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// ─── Publish guard: a fixture root must never touch the live board ──────────
+//
+// Regression for a live incident (2026-07-09): `board-publish.sh` runs
+// `rsync -az --delete <repoRoot>/dist/factory-board/ deploy-host:<public>/`, and
+// the tests above drive this CLI with a temp `--repo` root, several of them
+// without `--dry-run`. Each such run published its own fixture over production —
+// `factory.example.com` was found serving a board with one requirement `A1` and
+// one mission `alpha`. `FACTORY_AUTOPUBLISH=0` did not help: that guard lives in
+// the CALLERS (verdict/ratify), never in the thing that actually rsyncs.
+
+test("publish guard: a non-factory repoRoot renders + memoizes but never rsyncs", () => {
+  const root = makeFixtureRoot("autopublish-guard-fixture-");
+  makeMission(root, "demo", { "brief.md": "**Requirements:** A1\n" });
+  try {
+    const r = runCli(root);
+    assert.equal(r.status, 0, `exit 0; stderr=${r.stderr}`);
+
+    const log = readFileSync(path.join(root, ".publish.log"), "utf8");
+    assert.match(log, /rsync ignorado: repoRoot não é a fábrica real/);
+    assert.doesNotMatch(log, /^\[.*\] publicado/m, "a fixture root must never log a publish");
+
+    // The memo IS written for a fixture root: the hash-guard idempotence tests
+    // depend on a second run no-opping, and a temp dir can never describe the VPS.
+    assert.ok(
+      existsSync(path.join(root, "dist", "factory-board", ".hash")),
+      "fixture root keeps its own hash memo",
+    );
+
+    // Second run still no-ops, exactly as before the guard.
+    runCli(root);
+    assert.match(readFileSync(path.join(root, ".publish.log"), "utf8"), /sem mudanças/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Source-level invariants (house style: see autopublish-guard.test.mjs). The
+// FACTORY_AUTOPUBLISH=0 branch and the rsync-status branch both run against the
+// REAL factory root, so exercising them here would rewrite the real dist and
+// append to the real history.jsonl. Asserting on source text is the honest,
+// cheap proof that the code paths exist and are ordered correctly.
+test("publish guard: source pins the rsync preconditions and the status check", () => {
+  const src = readFileSync(CLI, "utf8");
+
+  assert.match(src, /const isFactoryRoot = path\.resolve\(repoRoot\) === ROOT;/);
+  assert.match(src, /process\.env\.FACTORY_AUTOPUBLISH === "0"/);
+  assert.match(src, /if \(skipReason\)/);
+
+  // The rsync's exit status decides whether we memoize. A failed publish must
+  // leave the memo alone so the next run retries, instead of freezing the board.
+  assert.match(src, /published = !r\.error && r\.status === 0;/);
+  const failIdx = src.indexOf("rsync falhou");
+  const memoIdx = src.indexOf("writeFileSync(memoPath, hash);", failIdx);
+  assert.ok(failIdx > 0 && memoIdx > failIdx, "the failure branch returns before the memo write");
+});

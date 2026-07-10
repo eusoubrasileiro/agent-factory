@@ -24,8 +24,15 @@
  * Each entry (merged manifest shape):
  *   { "id": "<id>", "name": "...", "path": "../../products/<id>",
  *     "prd": "docs/prd/<file>.md", "trunk": "main",
- *     "branchPrefix": "agent/", "gate": [...], "dispatch": "..." }
- * `path` is relative to factoryRoot. (`repo` is accepted as a legacy alias.)
+ *     "branchPrefix": "agent/", "gate": [...], "dispatch": "...",
+ *     "intake": [{ "file": "<rel>", "prefix": "IN", "label": "..." }] }
+ * `path` and every `intake[].file` are relative to factoryRoot. (`repo` is
+ * accepted as a legacy alias of `path`.)
+ *
+ * `intake` is how a requirement-capture log — which lives OUTSIDE both roots, in
+ * the client's own repo — reaches the board. Declaring it here rather than in the
+ * engine is what keeps `scripts/` free of product literals (D-15). A project that
+ * omits it simply has no Intake tab.
  *
  * Design rule from the extraction plan: NEVER use relative `../..` to escape a
  * worktree. factoryRoot comes from `$FACTORY_ROOT` (dispatch writes it into a
@@ -127,7 +134,8 @@ export function loadProjects(factoryRoot = FACTORY_ROOT) {
  * @param {string} factoryRoot
  * @returns {{gate: string[], trunk: string, branchPrefix: string,
  *            criticalFiles: string[], seatEnvPath: string|null,
- *            validationPath: string|null}}
+ *            validationPath: string|null,
+ *            intake: Array<{file: string, prefix: string, label: string}>}}
  */
 function buildProfile(entry, factoryRoot) {
   const projectDir = path.join(factoryRoot, "projects", entry.id);
@@ -156,7 +164,21 @@ function buildProfile(entry, factoryRoot) {
   const validation = path.join(projectDir, "validation.md");
   const validationPath = existsSync(validation) ? validation : null;
 
-  return { gate, trunk, branchPrefix, criticalFiles, seatEnvPath, validationPath };
+  // intake[] lives in project.json (the file it points at is in a THIRD repo).
+  // Paths resolve against factoryRoot, like `path`. Any malformed entry is
+  // dropped rather than thrown — a bad profile must not take the board down.
+  let intake = [];
+  if (Array.isArray(entry.intake)) {
+    intake = entry.intake
+      .filter((it) => it && typeof it.file === "string" && it.file.length > 0)
+      .map((it) => ({
+        file: path.resolve(factoryRoot, it.file),
+        prefix: typeof it.prefix === "string" ? it.prefix : "",
+        label: typeof it.label === "string" ? it.label : "",
+      }));
+  }
+
+  return { gate, trunk, branchPrefix, criticalFiles, seatEnvPath, validationPath, intake };
 }
 
 /**
@@ -181,7 +203,8 @@ function buildProfile(entry, factoryRoot) {
  *            missionsRoot: string, prdPath: string|null, entry: object,
  *            profile: {gate: string[], trunk: string, branchPrefix: string,
  *                      criticalFiles: string[], seatEnvPath: string|null,
- *                      validationPath: string|null}}}
+ *                      validationPath: string|null,
+ *                      intake: Array<{file: string, prefix: string, label: string}>}}}
  */
 export function resolveProject(opts = {}, factoryRoot = FACTORY_ROOT) {
   const { project, dir, repo } = typeof opts === "string" ? { project: opts } : opts;

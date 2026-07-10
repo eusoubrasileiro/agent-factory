@@ -30,7 +30,8 @@
  */
 
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -240,7 +241,121 @@ for (const id of PROFILE_IDS) {
       assert.ok(path.isAbsolute(profile.validationPath), `validationPath not absolute: ${profile.validationPath}`);
     }
   });
+
+  // 9 — intake[], when present, is an array of {file, prefix, label}. A profile
+  // that omits `intake` must still surface `profile.intake === []` (never
+  // undefined). When declared, each on-disk entry carries a non-empty RELATIVE
+  // `file` (resolved against factoryRoot, like `path`) and an all-caps `prefix`.
+  test(`profile ${id}: intake[], when present, is an array of {file, prefix, label}`, () => {
+    const { profile } = resolveProject({ project: id }, FACTORY_ROOT);
+    assert.ok(Array.isArray(profile.intake), `profile.intake is not an array: ${typeof profile.intake}`);
+
+    const declared = projectJson && Array.isArray(projectJson.intake) ? projectJson.intake : null;
+    if (!declared) {
+      assert.deepEqual(profile.intake, [], "profile.intake must be [] when project.json declares no intake");
+      return;
+    }
+    declared.forEach((it, i) => {
+      assert.ok(it && typeof it === "object", `intake[${i}] is not an object`);
+      assert.equal(typeof it.file, "string", `intake[${i}].file is not a string: ${typeof it.file}`);
+      assert.ok(it.file.length > 0, `intake[${i}].file is the empty string`);
+      assert.ok(!path.isAbsolute(it.file), `intake[${i}].file is not repo-relative: ${it.file}`);
+      assert.match(
+        it.prefix,
+        /^[A-Z]+$/,
+        `intake[${i}].prefix does not match /^[A-Z]+$/: ${JSON.stringify(it.prefix)}`,
+      );
+    });
+  });
+
+  // 10 — the resolver turns every intake[].file into an absolute path, and the
+  // count survives the round-trip (well-formed entries are never dropped).
+  test(`profile ${id}: intake[] resolves to absolute paths`, () => {
+    const declared = projectJson && Array.isArray(projectJson.intake) ? projectJson.intake : [];
+    const { profile } = resolveProject({ project: id }, FACTORY_ROOT);
+    assert.equal(
+      profile.intake.length,
+      declared.length,
+      `resolved intake length (${profile.intake.length}) ≠ project.json intake length (${declared.length})`,
+    );
+    for (const it of profile.intake) {
+      assert.ok(path.isAbsolute(it.file), `resolved intake file is not absolute: ${it.file}`);
+    }
+  });
+
+  // 11 — the intake files exist. Same skip logic as test 7 (`path resolves…`):
+  // inside an engine worktree the relative profile path under-resolves, so the
+  // skip reason must NOT claim the file is missing when it is merely
+  // mis-anchored. A profile with no intake passes trivially.
+  test(`profile ${id}: intake[] files exist`, (t) => {
+    const { profile } = resolveProject({ project: id }, FACTORY_ROOT);
+    if (profile.intake.length === 0) return; // no intake → nothing to assert
+    const inWorktree = FACTORY_ROOT.split(path.sep).includes(".worktrees");
+    for (const it of profile.intake) {
+      if (!existsSync(it.file)) {
+        t.skip(
+          inWorktree
+            ? `intake file ${it.file} does not exist — expected inside an engine worktree, where a ` +
+              `relative profile path under-resolves. Run from the main factory checkout to assert this.`
+            : `intake file not present on this machine: ${it.file}`,
+        );
+        return;
+      }
+      assert.ok(existsSync(it.file), `intake file does not exist: ${it.file}`);
+    }
+  });
 }
+
+// ─── Resolver robustness: a corrupt intake[] must never throw ─────────────────
+//
+// `buildProfile` is private, so exercise it through `resolveProject` against a
+// throwaway factoryRoot. The resolver is documented as TOTAL: a non-array
+// `intake`, or an entry missing `file`, must degrade to `[]` / drop-the-bad-row
+// — never crash a mission. This follows what the code actually does
+// (Array.isArray gate + a `.filter` on `typeof it.file === "string"`).
+
+test("resolveProject tolerates a corrupt intake[] without throwing", () => {
+  const tmp = mkdtempSync(path.join(os.tmpdir(), "factory-intake-"));
+  try {
+    // Case A — intake is a string, not an array → profile.intake === [].
+    const idA = "intakestring";
+    mkdirSync(path.join(tmp, "projects", idA), { recursive: true });
+    writeFileSync(
+      path.join(tmp, "projects", idA, "project.json"),
+      JSON.stringify({ id: idA, intake: "not-an-array" }),
+    );
+
+    // Case B — a good entry alongside one missing `file` → the bad one is dropped.
+    const idB = "intakebadentry";
+    mkdirSync(path.join(tmp, "projects", idB), { recursive: true });
+    writeFileSync(
+      path.join(tmp, "projects", idB, "project.json"),
+      JSON.stringify({
+        id: idB,
+        intake: [
+          { prefix: "NO", label: "missing file" },
+          { file: "docs/log.md", prefix: "OK", label: "good" },
+        ],
+      }),
+    );
+
+    let a;
+    let b;
+    assert.doesNotThrow(() => {
+      a = resolveProject({ project: idA }, tmp);
+    }, "string intake must not throw");
+    assert.doesNotThrow(() => {
+      b = resolveProject({ project: idB }, tmp);
+    }, "an entry missing `file` must not throw");
+
+    assert.deepEqual(a.profile.intake, [], "a non-array intake must degrade to []");
+    assert.equal(b.profile.intake.length, 1, "the entry missing `file` must be dropped, keeping the good one");
+    assert.equal(b.profile.intake[0].prefix, "OK", "the surviving entry is the well-formed one");
+    assert.ok(path.isAbsolute(b.profile.intake[0].file), "the surviving entry's file resolves absolute");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
 
 // ─── Part 2 — the meta test: the engine carries no product literals ───────────
 //
