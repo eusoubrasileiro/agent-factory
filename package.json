@@ -12,7 +12,8 @@
     "board:publish": "bash scripts/board-publish.sh",
     "board:autopublish": "node scripts/board-autopublish.mjs",
     "mission:ratify": "node scripts/ratify.mjs",
-    "factory:opencode": "node scripts/opencode-worker.mjs"
+    "factory:opencode": "node scripts/opencode-worker.mjs",
+    "spend": "node scripts/spend.mjs"
   },
   "engines": {
     "node": ">=20"
