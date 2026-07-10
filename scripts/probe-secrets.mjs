@@ -25,7 +25,8 @@
  * Exit codes:
  *   0 no real parent-secret value found in the worktree's env files (clean)
  *   1 at least one real secret value leaked
- *   2 usage error / worktree missing
+ *   2 precondition failure (parent .env missing — the leak scan could not run) /
+ *     usage error / worktree missing
  */
 
 import { spawnSync } from "node:child_process";
@@ -203,7 +204,7 @@ function usage() {
   process.stderr.write(
     "Usage:\n" +
       "  node scripts/probe-secrets.mjs <worktree-dir> [--parent <dir>] [--project <id>] [--min-len <n>]\n" +
-      "  exit 0 clean · 1 leak found · 2 usage error\n",
+      "  exit 0 clean · 1 leak found · 2 precondition failure (no parent .env) / usage error\n",
   );
 }
 
@@ -222,9 +223,15 @@ function main() {
   const parentRoot = parent ? path.resolve(parent) : resolveParentRoot(worktreeDir);
   const parentEnv = path.join(parentRoot, ".env");
   if (!existsSync(parentEnv)) {
-    // No real parent secrets to compare against — nothing can leak.
-    process.stdout.write(`no parent .env at ${parentEnv}; nothing to probe (clean)\n`);
-    return 0;
+    // The comparison base is missing, so the leak scan never ran. "clean" is
+    // reserved for "compared, and nothing leaked" — a missing base is a
+    // precondition failure, not a clean bill of health. A seat holding a
+    // genuinely leaked secret would otherwise certify clean (the fail-open).
+    process.stderr.write(
+      `probe-secrets: no parent .env at ${parentEnv} — could not compare ` +
+        `(point --parent <dir> at a root with a real .env)\n`,
+    );
+    return 2;
   }
 
   const secrets = extractSecrets(readFileSync(parentEnv, "utf8"), minLen);

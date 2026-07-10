@@ -230,3 +230,44 @@ test("CLI: exits 2 on a missing worktree argument", () => {
   assert.equal(r.status, 2);
   assert.match(r.stderr, /Usage:/);
 });
+
+// ─── Defect 2: "could not compare" is not "clean" ─────────────────────────────
+//
+// When the parent `.env` is absent the leak scan never runs, yet the old code
+// printed "(clean)" and exited 0 — so a seat holding a genuinely leaked secret
+// certified clean. The missing comparison base is a precondition failure (exit 2),
+// not a clean bill of health (exit 0). Exit 1 stays reserved for "LEAK found".
+
+test("CLI: exits 2 (NOT 0) when the parent .env is absent — could not compare, not clean", () => {
+  const parent = mkdtempSync(path.join(tmpdir(), "probe-cli-noparent-")); // no .env here
+  const seat = mkdtempSync(path.join(tmpdir(), "probe-cli-noparent-seat-"));
+  try {
+    writeFileSync(path.join(seat, ".env"), "OPENAI_API_KEY=sk-a-leaked-looking-secret-1234567890\n");
+    const r = runProbe([seat, "--parent", parent]);
+    assert.equal(r.status, 2, `expected precondition-failure exit 2, got ${r.status}\n${r.stdout}\n${r.stderr}`);
+    // The message must say it could not compare, and name the path + the --parent flag.
+    const combined = `${r.stdout}\n${r.stderr}`;
+    assert.match(combined, /could not compare/);
+    assert.match(combined, /--parent/);
+    assert.ok(combined.includes(parent), "message must name the path it looked for");
+    // And it must NOT claim clean — that is the bug.
+    assert.doesNotMatch(combined, /clean/);
+  } finally {
+    for (const d of [parent, seat]) rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test("CLI: a leaked secret with no parent .env still exits 2 (the scan never ran)", () => {
+  // The defect: a real leaked secret certified clean because the base was missing.
+  // Now it is a precondition failure regardless of seat contents.
+  const parent = mkdtempSync(path.join(tmpdir(), "probe-cli-noparent-leak-"));
+  const seat = mkdtempSync(path.join(tmpdir(), "probe-cli-noparent-leak-seat-"));
+  try {
+    writeFileSync(path.join(seat, ".env"), "SUPABASE_SERVICE_ROLE_KEY=sk-leaked-real-parent-secret-abcdef\n");
+    const r = runProbe([seat, "--parent", parent]);
+    assert.equal(r.status, 2, "missing base ⇒ precondition failure, never clean (0) and never a leak claim (1)");
+    assert.doesNotMatch(`${r.stdout}\n${r.stderr}`, /LEAK/);
+  } finally {
+    for (const d of [parent, seat]) rmSync(d, { recursive: true, force: true });
+  }
+});
