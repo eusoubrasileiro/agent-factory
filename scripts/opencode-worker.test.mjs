@@ -122,6 +122,34 @@ test("buildPhaseEndEvent keeps tokensReasoning=null (unknown) when provider omit
   assert.equal(ev.seat, "validator");
 });
 
+test("buildPhaseEndEvent carries cache tokens + apiCostUsd (factory-cost Stage 1c)", () => {
+  const ev = buildPhaseEndEvent("worker", "claude-opus-4-8", {
+    tokensIn: 60477,
+    tokensOut: 11881,
+    tokensCacheRead: 19008,
+    tokensCacheWrite: 0,
+    apiCostUsd: 0.4231,
+    durationMs: 820000,
+  });
+  assert.equal(ev.tokensCacheRead, 19008);
+  assert.equal(ev.tokensCacheWrite, 0);
+  assert.equal(ev.apiCostUsd, 0.4231);
+  // legacy mirror stays in sync until old consumers are gone
+  assert.equal(ev.costUsd, 0.4231);
+});
+
+test("buildPhaseEndEvent maps legacy `cost` → apiCostUsd when apiCostUsd is absent", () => {
+  const ev = buildPhaseEndEvent("worker", "zai-coding-plan/glm-5.2", {
+    cost: 0.0012,
+    durationMs: 1000,
+  });
+  assert.equal(ev.apiCostUsd, 0.0012);
+  assert.equal(ev.costUsd, 0.0012);
+  // cache tiers default to 0 when the provider reports none (opencode/glm)
+  assert.equal(ev.tokensCacheRead, 0);
+  assert.equal(ev.tokensCacheWrite, 0);
+});
+
 test("parseOpencodeStream concatenates multiple text parts in order", () => {
   const stream = [
     '{"type":"text","sessionID":"s","part":{"type":"text","text":"Hello, "}}',

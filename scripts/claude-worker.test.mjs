@@ -10,9 +10,10 @@
  *      is the guard, and it fails closed.
  *   2. The z.ai token leaks into a log, a metric, or a JSON artifact.
  *
- * Everything else (tokens, session id) is telemetry. Note `total_cost_usd` is
- * deliberately NOT parsed: it is priced at Anthropic rates on a flat plan and is
- * fiction (decisions.md D-13).
+ * Everything else (tokens, session id) is telemetry. `total_cost_usd` IS parsed
+ * now (decisions.md D-XX overturns D-13): it is the public-API-basis cost — real $
+ * for Anthropic seats, the Anthropic-equivalent comparison figure for flat-plan
+ * seats. Surfaced as `apiCostUsd`, never mistaken for cash spend on the flat plan.
  */
 
 import assert from "node:assert/strict";
@@ -170,19 +171,27 @@ const RESULT = JSON.stringify({
   permission_denials: [],
 });
 
-test("parseClaudeResult: extracts tokens and session id", () => {
+test("parseClaudeResult: extracts tokens, session id, and cache split first-class", () => {
   const r = parseClaudeResult(RESULT);
   assert.equal(r.sessionID, "abc-123");
   assert.equal(r.tokensIn, 10);
   assert.equal(r.tokensOut, 5);
-  assert.equal(r.tokens, 135, "total counts cache reads + creations, like the opencode seat");
+  assert.equal(r.tokensCacheRead, 100, "cache read surfaced first-class, not folded away");
+  assert.equal(r.tokensCacheWrite, 20, "cache write surfaced first-class");
+  assert.equal(r.tokens, 135, "legacy total still counts cache reads + creations");
   assert.equal(r.sawFinish, true);
 });
 
-test("parseClaudeResult: NEVER surfaces total_cost_usd (D-13: it is fiction)", () => {
+test("parseClaudeResult: surfaces total_cost_usd as apiCostUsd (D-XX overturns D-13)", () => {
   const r = parseClaudeResult(RESULT);
-  assert.ok(!("costUsd" in r), "cost on a flat plan is priced at Anthropic rates and is fiction");
-  assert.ok(!("total_cost_usd" in r));
+  assert.equal(r.apiCostUsd, 0.42, "public-API-basis cost is now recorded for ROI comparison");
+});
+
+test("parseClaudeResult: apiCostUsd defaults to 0 when the result omits it", () => {
+  const r = parseClaudeResult(
+    JSON.stringify({ type: "result", is_error: false, session_id: "x", usage: {} }),
+  );
+  assert.equal(r.apiCostUsd, 0);
 });
 
 test("parseClaudeResult: is_error true means the run did not finish", () => {

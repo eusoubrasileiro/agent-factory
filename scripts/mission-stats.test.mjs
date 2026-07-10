@@ -20,6 +20,7 @@ import {
   isExcludedPath,
   isTestFile,
   parseNumstat,
+  seatCost,
   seatDuration,
   seatModel,
   seatTokens,
@@ -112,8 +113,28 @@ test("seatTokens uses the split when present, else the legacy tokens total", () 
     in: 2000,
     out: 400,
     reasoning: 60,
-    total: 2400,
+    cacheRead: 0,
+    cacheWrite: 0,
+    total: 2460,
   });
+});
+
+test("seatTokens sums cache read/write first-class across phase_end rows", () => {
+  const records = [
+    {
+      seat: "worker",
+      type: "phase_end",
+      tokensIn: 60477,
+      tokensOut: 11881,
+      tokensReasoning: 10238,
+      tokensCacheRead: 19008,
+      tokensCacheWrite: 0,
+    },
+  ];
+  const s = seatTokens(records, "worker");
+  assert.equal(s.cacheRead, 19008);
+  assert.equal(s.cacheWrite, 0);
+  assert.equal(s.total, 60477 + 11881 + 10238 + 19008); // cache counted in the billable total
 });
 
 test("seatTokens falls back to legacy tokens and reports reasoning=null", () => {
@@ -125,13 +146,72 @@ test("seatTokens falls back to legacy tokens and reports reasoning=null", () => 
     in: 0,
     out: 0,
     reasoning: null,
+    cacheRead: 0,
+    cacheWrite: 0,
     total: 1336911,
   });
   assert.equal(seatTokens(records, "validator").total, 1022785);
 });
 
 test("seatTokens on no records is zeros/null", () => {
-  assert.deepEqual(seatTokens([], "worker"), { in: 0, out: 0, reasoning: null, total: 0 });
+  assert.deepEqual(seatTokens([], "worker"), {
+    in: 0,
+    out: 0,
+    reasoning: null,
+    cacheRead: 0,
+    cacheWrite: 0,
+    total: 0,
+  });
+});
+
+// ─── seatCost (factory-cost Stage 1e) ─────────────────────────────────────────
+
+test("seatCost prefers the provider-reported apiCostUsd", () => {
+  const records = [
+    {
+      seat: "worker",
+      type: "phase_end",
+      model: "claude-opus-4-8",
+      tokensIn: 1_000_000,
+      tokensOut: 1_000_000,
+      apiCostUsd: 0.42,
+    },
+  ];
+  const c = seatCost(records, "worker");
+  assert.equal(c.api, 0.42); // reported wins over the pricing-table derivation
+  assert.equal(c.reported, 0.42);
+});
+
+test("seatCost derives from tokens × pricing when no report is present", () => {
+  const records = [
+    {
+      seat: "worker",
+      type: "phase_end",
+      model: "claude-opus-4-8",
+      tokensIn: 1_000_000,
+      tokensOut: 1_000_000,
+    },
+  ];
+  const c = seatCost(records, "worker");
+  assert.equal(c.api, 5 + 25); // $30 derived at sticker rates
+  assert.equal(c.reported, null);
+  assert.equal(c.derived, 30);
+});
+
+test("seatCost: unknown model (glm) with no report → api null (sem dados, not a fake 0)", () => {
+  const records = [
+    { seat: "worker", type: "phase_end", model: "zai-coding-plan/glm-5.2", tokensIn: 1_000_000, tokensOut: 1_000_000 },
+  ];
+  const c = seatCost(records, "worker");
+  assert.equal(c.api, null);
+  assert.equal(c.derived, null);
+});
+
+test("seatCost on no records → all null/zero", () => {
+  const c = seatCost([], "worker");
+  assert.equal(c.api, null);
+  assert.equal(c.derived, null);
+  assert.equal(c.reported, null);
 });
 
 // ─── seatDuration ─────────────────────────────────────────────────────────────
@@ -236,4 +316,45 @@ test("collect counts escalations + attention and reads the token split from metr
   assert.equal(res.stats.attention, 3); // 2 escalations + 1 touchpoint
   assert.equal(res.stats.tokens.worker.total, 100);
   assert.equal(res.stats.models.worker, "glm-5.2");
+});
+
+test("collect rolls cost + orchestrator bucket + durations.total into stats.json", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "mstats-cost-"));
+  const missions = path.join(root, "missions", "wahub");
+  const slugDir = path.join(missions, "costed");
+  mkdirSync(slugDir, { recursive: true });
+  writeFileSync(
+    path.join(slugDir, "metrics.jsonl"),
+    [
+      JSON.stringify({
+        seat: "worker",
+        type: "phase_start",
+        detail: "external:claude-opus-4-8",
+        model: "claude-opus-4-8",
+        ts: "2026-07-10T10:00:00.000Z",
+      }),
+      JSON.stringify({
+        seat: "worker",
+        type: "phase_end",
+        model: "claude-opus-4-8",
+        tokensIn: 1_000_000,
+        tokensOut: 1_000_000,
+        tokensCacheRead: 1_000_000,
+        durationMs: 600_000,
+        apiCostUsd: 30.5,
+        ts: "2026-07-10T10:10:00.000Z",
+      }),
+    ].join("\n") + "\n",
+  );
+  const res = collect({ slug: "costed", missionsRoot: missions, repoRoot: root });
+  // worker cost: reported apiCostUsd preferred
+  assert.equal(res.stats.cost.worker.api, 30.5);
+  assert.equal(res.stats.cost.total.api, 30.5);
+  // orchestrator bucket exists, zero until Stage 2
+  assert.equal(res.stats.tokens.orchestrator.total, 0);
+  assert.equal(res.stats.cost.orchestrator.api, null);
+  // durations gain orchestrating + total
+  assert.equal(res.stats.durations.building, 600_000);
+  assert.equal(res.stats.durations.orchestrating, null);
+  assert.equal(res.stats.durations.total, 600_000);
 });
