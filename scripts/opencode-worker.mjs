@@ -260,10 +260,16 @@ export function buildPhaseStartEvent(seat, model) {
  * Build a `phase_end` event with `model` first-class (the legacy `detail`
  * remains for back-compat), the token split when the stream provided it, and
  * the driver-measured wall time as `durationMs`.
+ *
+ * Cost attribution (factory-cost Stage 1c): `apiCostUsd` carries the
+ * provider-priced public-API cost (claude -p's `total_cost_usd`; opencode's
+ * `part.cost`). Cache tokens are first-class so priced seats bill at the cache
+ * tiers. The legacy `costUsd` is mirrored for back-compat with old consumers.
  * @param {string} seat @param {string} model
- * @param {{tokens?: number, tokensIn?: number, tokensOut?: number, tokensReasoning?: number|null, cost?: number, durationMs?: number}} m
+ * @param {{tokens?: number, tokensIn?: number, tokensOut?: number, tokensReasoning?: number|null, tokensCacheRead?: number, tokensCacheWrite?: number, cost?: number, apiCostUsd?: number, durationMs?: number}} m
  */
 export function buildPhaseEndEvent(seat, model, m = {}) {
+  const apiCost = typeof m.apiCostUsd === "number" ? m.apiCostUsd : m.cost ?? 0;
   return {
     seat: metricSeat(seat),
     type: "phase_end",
@@ -274,8 +280,13 @@ export function buildPhaseEndEvent(seat, model, m = {}) {
     tokensOut: m.tokensOut ?? 0,
     // Preserve an explicit null (provider omitted the split) — never coerce to 0.
     tokensReasoning: m.tokensReasoning === undefined ? null : m.tokensReasoning,
+    tokensCacheRead: m.tokensCacheRead ?? 0,
+    tokensCacheWrite: m.tokensCacheWrite ?? 0,
     durationMs: m.durationMs ?? 0,
-    costUsd: m.cost ?? 0,
+    // Public-API-basis cost (real $ for priced seats; comparison figure for flat).
+    apiCostUsd: apiCost,
+    // Legacy mirror — old consumers read costUsd; keep it in sync until removed.
+    costUsd: apiCost,
   };
 }
 

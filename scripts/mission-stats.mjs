@@ -36,6 +36,7 @@ import { fileURLToPath } from "node:url";
 
 import { isMainModule } from "./lib/is-main.mjs";
 import { resolveProject } from "./lib/project.mjs";
+import { apiCost } from "./lib/pricing.mjs";
 
 const DEFAULT_TRUNK = "main";
 
@@ -142,33 +143,127 @@ export function countTestsAdded(diffText) {
   return count;
 }
 
-/**
- * Sum a seat's token usage across its phase_end events. Uses the input/output
- * split when present; otherwise falls back to the legacy `tokens` total.
- * `reasoning` is null unless at least one event reported it (never a fake 0).
- * @param {Array<object>} records @param {string} seat
- * @returns {{ in: number, out: number, reasoning: number|null, total: number }}
- */
-export function seatTokens(records, seat) {
-  const ends = (Array.isArray(records) ? records : []).filter(
+/** A seat's `phase_end` records (where token/cost/time live). */
+function phaseEnds(records, seat) {
+  return (Array.isArray(records) ? records : []).filter(
     (r) => r && r.seat === seat && r.type === "phase_end",
   );
+}
+
+/**
+ * Sum a seat's token usage across its phase_end events. Uses the tier split
+ * (in/out/reasoning/cacheRead/cacheWrite) when present; otherwise falls back to
+ * the legacy `tokens` total. `total` is the billable sum of all tiers;
+ * `reasoning` is null unless at least one event reported it (never a fake 0).
+ * @param {Array<object>} records @param {string} seat
+ * @returns {{ in: number, out: number, reasoning: number|null, cacheRead: number, cacheWrite: number, total: number }}
+ */
+export function seatTokens(records, seat) {
+  const ends = phaseEnds(records, seat);
   let inSum = 0;
   let outSum = 0;
   let reasoningSum = 0;
   let sawReasoning = false;
+  let cacheReadSum = 0;
+  let cacheWriteSum = 0;
   let legacy = 0;
+  let sawSplit = false;
   for (const e of ends) {
-    if (typeof e.tokensIn === "number") inSum += e.tokensIn;
-    if (typeof e.tokensOut === "number") outSum += e.tokensOut;
+    if (typeof e.tokensIn === "number") {
+      inSum += e.tokensIn;
+      sawSplit = true;
+    }
+    if (typeof e.tokensOut === "number") {
+      outSum += e.tokensOut;
+      sawSplit = true;
+    }
     if (typeof e.tokensReasoning === "number") {
       reasoningSum += e.tokensReasoning;
       sawReasoning = true;
     }
+    if (typeof e.tokensCacheRead === "number") {
+      cacheReadSum += e.tokensCacheRead;
+      sawSplit = true;
+    }
+    if (typeof e.tokensCacheWrite === "number") {
+      cacheWriteSum += e.tokensCacheWrite;
+      sawSplit = true;
+    }
     if (typeof e.tokens === "number") legacy += e.tokens;
   }
-  const total = inSum + outSum > 0 ? inSum + outSum : legacy;
-  return { in: inSum, out: outSum, reasoning: sawReasoning ? reasoningSum : null, total };
+  const splitTotal = inSum + outSum + reasoningSum + cacheReadSum + cacheWriteSum;
+  const total = sawSplit && splitTotal > 0 ? splitTotal : legacy;
+  return {
+    in: inSum,
+    out: outSum,
+    reasoning: sawReasoning ? reasoningSum : null,
+    cacheRead: cacheReadSum,
+    cacheWrite: cacheWriteSum,
+    total,
+  };
+}
+
+/**
+ * A seat's public-API-basis cost (USD). Prefers the provider-reported
+ * `apiCostUsd` (claude -p's `total_cost_usd` / opencode's `part.cost` — real $
+ * for Anthropic seats, the Anthropic-equivalent figure for flat-plan seats);
+ * falls back to deriving from the token split × the pricing table. Both yield
+ * `null` for an unmapped model with no report (renders "sem dados", not 0).
+ *
+ * `reported`/`derived` are surfaced separately so the rollup can name the source.
+ * @param {Array<object>} records @param {string} seat
+ * @returns {{ api: number|null, derived: number|null, reported: number|null }}
+ */
+export function seatCost(records, seat) {
+  const ends = phaseEnds(records, seat);
+  let reported = 0;
+  let hasReported = false;
+  for (const e of ends) {
+    if (typeof e.apiCostUsd === "number" && e.apiCostUsd > 0) {
+      reported += e.apiCostUsd;
+      hasReported = true;
+    }
+  }
+  const split = seatTokens(records, seat);
+  const model = seatModel(records, seat);
+  const derived = apiCost(model, split);
+  return {
+    api: hasReported ? reported : derived,
+    derived,
+    reported: hasReported ? reported : null,
+  };
+}
+
+/**
+ * Sum the numeric values, ignoring nulls. Returns null when none are numbers
+ * (so an all-unknown rollup renders "sem dados", not a misleading 0).
+ * @param {Array<number|null|undefined>} values
+ * @returns {number|null}
+ */
+function sumNonNull(values) {
+  let sum = 0;
+  let any = false;
+  for (const v of values) {
+    if (typeof v === "number") {
+      sum += v;
+      any = true;
+    }
+  }
+  return any ? sum : null;
+}
+
+/**
+ * Roll up per-seat cost objects into a total. Each basis sums independently
+ * across seats (nulls dropped); all-null → null.
+ * @param {Array<{api:number|null, derived:number|null, reported:number|null}>} seats
+ * @returns {{api:number|null, derived:number|null, reported:number|null}}
+ */
+function sumCost(seats) {
+  return {
+    api: sumNonNull(seats.map((s) => s.api)),
+    derived: sumNonNull(seats.map((s) => s.derived)),
+    reported: sumNonNull(seats.map((s) => s.reported)),
+  };
 }
 
 /**
@@ -370,13 +465,22 @@ export function collect({ slug, missionsRoot, repoRoot, branch, trunk, project }
     testsAdded: 0,
     baselineChanged: false,
     baselineKeysChanged: [],
-    durations: { building: null, validating: null },
+    durations: { building: null, validating: null, orchestrating: null, total: null },
     tokens: {
-      worker: { in: 0, out: 0, reasoning: null, total: 0 },
-      validator: { in: 0, out: 0, reasoning: null, total: 0 },
+      worker: { in: 0, out: 0, reasoning: null, cacheRead: 0, cacheWrite: 0, total: 0 },
+      validator: { in: 0, out: 0, reasoning: null, cacheRead: 0, cacheWrite: 0, total: 0 },
+      orchestrator: { in: 0, out: 0, reasoning: null, cacheRead: 0, cacheWrite: 0, total: 0 },
       total: 0,
     },
-    models: { worker: null, validator: null },
+    // Public-API-basis cost (factory-cost). Plan-$ is computed at rollup time —
+    // a single mission can't own a fixed slice of the subscription fee.
+    cost: {
+      worker: { api: null, derived: null, reported: null },
+      validator: { api: null, derived: null, reported: null },
+      orchestrator: { api: null, derived: null, reported: null },
+      total: { api: null, derived: null, reported: null },
+    },
+    models: { worker: null, validator: null, orchestrator: null },
     rounds: 0,
     attention: 0,
     escalations: 0,
@@ -404,15 +508,35 @@ export function collect({ slug, missionsRoot, repoRoot, branch, trunk, project }
       }
     }
 
-    // ── disk-derived: tokens, durations, models, attention
+    // ── disk-derived: tokens, cost, durations, models, attention
     const records = readMetricsRecords(missionsRoot, slug);
     stats.tokens.worker = seatTokens(records, "worker");
     stats.tokens.validator = seatTokens(records, "validator");
-    stats.tokens.total = stats.tokens.worker.total + stats.tokens.validator.total;
+    stats.tokens.orchestrator = seatTokens(records, "orchestrator");
+    stats.tokens.total =
+      stats.tokens.worker.total + stats.tokens.validator.total + stats.tokens.orchestrator.total;
+
+    stats.cost.worker = seatCost(records, "worker");
+    stats.cost.validator = seatCost(records, "validator");
+    stats.cost.orchestrator = seatCost(records, "orchestrator");
+    stats.cost.total = sumCost([
+      stats.cost.worker,
+      stats.cost.validator,
+      stats.cost.orchestrator,
+    ]);
+
     stats.durations.building = seatDuration(records, "worker");
     stats.durations.validating = seatDuration(records, "validator");
+    stats.durations.orchestrating = seatDuration(records, "orchestrator");
+    stats.durations.total = sumNonNull([
+      stats.durations.building,
+      stats.durations.validating,
+      stats.durations.orchestrating,
+    ]);
+
     stats.models.worker = seatModel(records, "worker");
     stats.models.validator = seatModel(records, "validator");
+    stats.models.orchestrator = seatModel(records, "orchestrator");
     stats.attention = records.filter(
       (r) => typeof r.type === "string" && ATTENTION_TYPES.has(r.type),
     ).length;
