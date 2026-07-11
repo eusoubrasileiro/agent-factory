@@ -635,6 +635,35 @@ test("aggregate: perMission custo/tempoH null when the latest snapshot has no st
   assert.equal(solo.tempoH, null);
 });
 
+test("aggregate: planFeeUsd 0 → planTotal null (falsy-zero, matches spend.mjs semantics)", () => {
+  const rows = [
+    row("alpha", {
+      ts: "2026-07-01T00:00:00Z",
+      state: "Done",
+      features: "1/1",
+      cost: { api: 5, plan: null },
+      durationH: 1,
+    }),
+  ];
+  const stats = aggregate(rows, { now: "2026-07-08T00:00:00Z", planFeeUsd: 0 });
+  assert.equal(stats.planTotal, null, "zero plan fee → no plan basis");
+  assert.equal(stats.savings, null, "savings null when planTotal null");
+});
+
+test("aggregate: planFeeUsd 72 → planTotal 72 (real fee unchanged)", () => {
+  const rows = [
+    row("alpha", {
+      ts: "2026-07-01T00:00:00Z",
+      state: "Done",
+      features: "1/1",
+      cost: { api: 5, plan: null },
+      durationH: 1,
+    }),
+  ];
+  const stats = aggregate(rows, { now: "2026-07-08T00:00:00Z", planFeeUsd: 72 });
+  assert.equal(stats.planTotal, 72);
+});
+
 // ─── Guard: exports exist ─────────────────────────────────────────────────────
 
 test("exports: snapshotRows, appendSnapshots, readHistory, aggregate are functions", () => {

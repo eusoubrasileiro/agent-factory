@@ -737,8 +737,11 @@ function fmtTokens(n) {
 }
 
 /** Format a nullable USD amount for a stat card: "$12.50", or "sem dados". */
-function fmtUsd(n) {
-  return n == null || Number.isNaN(n) ? "sem dados" : `$${Number(n).toFixed(2)}`;
+export function fmtUsd(n) {
+  if (n == null || Number.isNaN(n)) return "sem dados";
+  const num = Number(n);
+  if (num < 0) return `-$${(-num).toFixed(2)}`;
+  return `$${num.toFixed(2)}`;
 }
 
 /** Format a nullable hour count for a stat card: "1.5h", or "sem dados". */

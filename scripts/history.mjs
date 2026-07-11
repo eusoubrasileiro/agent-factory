@@ -351,7 +351,7 @@ function aggregateScope(rows, missionsDir, planFeeUsd) {
   // planTotal: the whole subscription fee is the period's plan cost (Σ
   // per-mission shares = the fee) — matches spend.mjs, which attributes one
   // fee per scope. Null when the scope has no rows to attribute it to.
-  const planTotal = typeof planFeeUsd === "number" && safe.length > 0 ? planFeeUsd : null;
+  const planTotal = planFeeUsd && safe.length > 0 ? planFeeUsd : null;
   // savings: API − Plan, the ROI gauge (spend.mjs semantics).
   const savings = costTotal !== null && planTotal !== null ? round6(costTotal - planTotal) : null;
 
