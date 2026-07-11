@@ -1,0 +1,4 @@
+{"seat":"worker","type":"phase_start","detail":"external:claude-sonnet-4-6","model":"claude-sonnet-4-6","ts":"2026-07-11T14:28:00.000Z"}
+{"seat":"worker","type":"phase_end","detail":"external:claude-sonnet-4-6","model":"claude-sonnet-4-6","tokens":2260959,"tokensIn":30,"tokensOut":8758,"tokensReasoning":null,"tokensCacheRead":2179885,"tokensCacheWrite":72286,"durationMs":205376,"apiCostUsd":1.2191415,"costUsd":1.2191415,"ts":"2026-07-11T14:31:25.376Z"}
+{"seat":"validator","type":"phase_start","detail":"external:claude-sonnet-4-6","model":"claude-sonnet-4-6","ts":"2026-07-11T14:32:00.000Z"}
+{"seat":"validator","type":"phase_end","detail":"external:claude-sonnet-4-6","model":"claude-sonnet-4-6","tokens":311018,"tokensIn":9,"tokensOut":7056,"tokensReasoning":null,"tokensCacheRead":274861,"tokensCacheWrite":29092,"durationMs":137458,"apiCostUsd":0.3628773,"costUsd":0.3628773,"ts":"2026-07-11T14:34:17.458Z"}
