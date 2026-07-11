@@ -31,12 +31,14 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { isMainModule } from "./lib/is-main.mjs";
 import { resolveProject } from "./lib/project.mjs";
 import { apiCost } from "./lib/pricing.mjs";
+import { encodeTranscriptDir, loadTranscriptUsage } from "./lib/transcript-tokens.mjs";
 
 const DEFAULT_TRUNK = "main";
 
@@ -148,6 +150,42 @@ function phaseEnds(records, seat) {
   return (Array.isArray(records) ? records : []).filter(
     (r) => r && r.seat === seat && r.type === "phase_end",
   );
+}
+
+/** A seat's `phase_start` records — mirrors {@link phaseEnds}. */
+function phaseStarts(records, seat) {
+  return (Array.isArray(records) ? records : []).filter(
+    (r) => r && r.seat === seat && r.type === "phase_start",
+  );
+}
+
+/**
+ * The orchestrator's phase window: the earliest `phase_start` ts to the latest
+ * `phase_end` ts, across all orchestrator phase events in the mission (factory-cost
+ * Stage 2). Used to bound which session-transcript rows attribute to this mission.
+ *
+ * Returns null when either edge is missing/unparseable — an unbounded window would
+ * risk attributing another mission's usage, so we'd rather attribute nothing.
+ * @param {Array<object>} records
+ * @returns {{sinceMs: number, untilMs: number}|null}
+ */
+export function orchestratorWindow(records) {
+  const starts = phaseStarts(records, "orchestrator");
+  const ends = phaseEnds(records, "orchestrator");
+  let sinceMs = null;
+  for (const s of starts) {
+    const t = Date.parse(s.ts);
+    if (Number.isNaN(t)) continue;
+    if (sinceMs === null || t < sinceMs) sinceMs = t;
+  }
+  let untilMs = null;
+  for (const e of ends) {
+    const t = Date.parse(e.ts);
+    if (Number.isNaN(t)) continue;
+    if (untilMs === null || t > untilMs) untilMs = t;
+  }
+  if (sinceMs === null || untilMs === null) return null;
+  return { sinceMs, untilMs };
 }
 
 /**
@@ -357,6 +395,24 @@ function git(repoRoot, args) {
 }
 
 /**
+ * The factory's MAIN worktree root — where the orchestrator's interactive session
+ * actually ran (as opposed to `factoryRoot`, which may be a mission's own agent
+ * worktree). `git worktree list --porcelain` lists the main worktree first, so its
+ * `worktree <path>` line is the primary root. Degrades to `factoryRoot` itself
+ * when git is unavailable (best-effort — never throws).
+ * @param {string} factoryRoot
+ * @returns {string}
+ */
+function primaryWorktreeRoot(factoryRoot) {
+  const out = git(factoryRoot, ["worktree", "list", "--porcelain"]);
+  if (out) {
+    const first = out.split("\n").find((l) => l.startsWith("worktree "));
+    if (first) return first.slice("worktree ".length).trim();
+  }
+  return factoryRoot; // degrade: assume we're already in the main root
+}
+
+/**
  * Resolve the two revisions to diff for a mission.
  *   - live branch: `merge-base <trunk> <branch>` … `<branch>`;
  *   - merged+deleted: merge commit from `log --merges --grep <slug>`, parents
@@ -449,9 +505,27 @@ function readPrMarker(missionsRoot, slug) {
  * TOTAL: never throws; missing inputs yield zeros/nulls. Returns
  * `{ code, stats, path }`.
  *
- * @param {{ slug: string, missionsRoot: string, repoRoot: string, branch?: string, trunk?: string, project?: string }} args
+ * `factoryRoot`/`transcriptRoot`/`orchestratorCwd` feed the Stage 2 orchestrator
+ * transcript attribution (see the "orchestrator transcript attribution" block
+ * below): `factoryRoot` locates the factory's main worktree (via git) when
+ * `orchestratorCwd` isn't given explicitly; `transcriptRoot` defaults to
+ * `~/.claude/projects` and is only overridden by tests.
+ *
+ * @param {{ slug: string, missionsRoot: string, repoRoot: string, branch?: string,
+ *   trunk?: string, project?: string, factoryRoot?: string, transcriptRoot?: string,
+ *   orchestratorCwd?: string }} args
  */
-export function collect({ slug, missionsRoot, repoRoot, branch, trunk, project }) {
+export function collect({
+  slug,
+  missionsRoot,
+  repoRoot,
+  branch,
+  trunk,
+  project,
+  factoryRoot,
+  transcriptRoot,
+  orchestratorCwd,
+}) {
   const now = new Date().toISOString();
   const theBranch = branch || `agent/${slug}`;
   const theTrunk = trunk || DEFAULT_TRUNK;
@@ -513,26 +587,14 @@ export function collect({ slug, missionsRoot, repoRoot, branch, trunk, project }
     stats.tokens.worker = seatTokens(records, "worker");
     stats.tokens.validator = seatTokens(records, "validator");
     stats.tokens.orchestrator = seatTokens(records, "orchestrator");
-    stats.tokens.total =
-      stats.tokens.worker.total + stats.tokens.validator.total + stats.tokens.orchestrator.total;
 
     stats.cost.worker = seatCost(records, "worker");
     stats.cost.validator = seatCost(records, "validator");
     stats.cost.orchestrator = seatCost(records, "orchestrator");
-    stats.cost.total = sumCost([
-      stats.cost.worker,
-      stats.cost.validator,
-      stats.cost.orchestrator,
-    ]);
 
     stats.durations.building = seatDuration(records, "worker");
     stats.durations.validating = seatDuration(records, "validator");
     stats.durations.orchestrating = seatDuration(records, "orchestrator");
-    stats.durations.total = sumNonNull([
-      stats.durations.building,
-      stats.durations.validating,
-      stats.durations.orchestrating,
-    ]);
 
     stats.models.worker = seatModel(records, "worker");
     stats.models.validator = seatModel(records, "validator");
@@ -541,6 +603,48 @@ export function collect({ slug, missionsRoot, repoRoot, branch, trunk, project }
       (r) => typeof r.type === "string" && ATTENTION_TYPES.has(r.type),
     ).length;
     stats.escalations = records.filter((r) => r.type === "escalation").length;
+
+    // ── orchestrator transcript attribution (factory-cost Stage 2) ──────────
+    // The orchestrator (interactive session) emits phase_start/phase_end with no
+    // token usage — its usage lives in the session transcript. Bound the window
+    // to this mission's orchestrator phase events so we never attribute another
+    // mission's (or another day's) usage; missing window/dir/transcript degrades
+    // to the zeros already set above.
+    const win = orchestratorWindow(records);
+    if (win) {
+      const cwd = orchestratorCwd || primaryWorktreeRoot(factoryRoot);
+      const theTranscriptRoot = transcriptRoot || path.join(os.homedir(), ".claude", "projects");
+      const dir = cwd ? path.join(theTranscriptRoot, encodeTranscriptDir(cwd)) : null;
+      const u = dir ? loadTranscriptUsage(dir, win) : null;
+      if (u && u.total > 0) {
+        stats.tokens.orchestrator = {
+          in: u.in,
+          out: u.out,
+          reasoning: u.reasoning,
+          cacheRead: u.cacheRead,
+          cacheWrite: u.cacheWrite,
+          total: u.total,
+        };
+        const derived = apiCost(u.model, stats.tokens.orchestrator);
+        stats.cost.orchestrator = { api: derived, derived, reported: null };
+        stats.models.orchestrator = u.model;
+      }
+      // Duration: prefer the phase-event pairing already computed above; only
+      // fall back to the window length when that pairing found nothing.
+      if (stats.durations.orchestrating == null) {
+        stats.durations.orchestrating = win.untilMs - win.sinceMs;
+      }
+    }
+
+    // ── totals (recomputed AFTER the orchestrator block so they include it)
+    stats.tokens.total =
+      stats.tokens.worker.total + stats.tokens.validator.total + stats.tokens.orchestrator.total;
+    stats.cost.total = sumCost([stats.cost.worker, stats.cost.validator, stats.cost.orchestrator]);
+    stats.durations.total = sumNonNull([
+      stats.durations.building,
+      stats.durations.validating,
+      stats.durations.orchestrating,
+    ]);
 
     stats.rounds = countRounds(missionsRoot, slug);
     stats.pr = readPrMarker(missionsRoot, slug);
@@ -610,6 +714,7 @@ function main() {
     branch,
     trunk,
     project: resolved.id,
+    factoryRoot: resolved.factoryRoot,
   });
   process.stdout.write(
     `mission-stats: ${slug} · LOC +${stats.loc.added}/-${stats.loc.deleted} (${stats.loc.files} files) · ` +

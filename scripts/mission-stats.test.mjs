@@ -19,12 +19,15 @@ import {
   diffBaselineKeys,
   isExcludedPath,
   isTestFile,
+  orchestratorWindow,
   parseNumstat,
   seatCost,
   seatDuration,
   seatModel,
   seatTokens,
 } from "./mission-stats.mjs";
+import { apiCost } from "./lib/pricing.mjs";
+import { encodeTranscriptDir } from "./lib/transcript-tokens.mjs";
 
 // ─── isExcludedPath ─────────────────────────────────────────────────────────
 
@@ -263,6 +266,54 @@ test("seatModel ignores a free-text (non external:) detail note", () => {
   assert.equal(seatModel(records, "worker"), null);
 });
 
+// ─── orchestratorWindow (factory-cost Stage 2) ────────────────────────────────
+
+test("orchestratorWindow spans the earliest start to the latest end", () => {
+  const records = [
+    { seat: "orchestrator", type: "phase_start", ts: "2026-07-10T10:00:00.000Z" },
+    { seat: "worker", type: "phase_start", ts: "2026-07-10T09:00:00.000Z" }, // other seat ignored
+    { seat: "orchestrator", type: "phase_end", ts: "2026-07-10T10:30:00.000Z" },
+  ];
+  assert.deepEqual(orchestratorWindow(records), {
+    sinceMs: Date.parse("2026-07-10T10:00:00.000Z"),
+    untilMs: Date.parse("2026-07-10T10:30:00.000Z"),
+  });
+});
+
+test("orchestratorWindow takes min(starts) and max(ends) across multiple pairs", () => {
+  const records = [
+    { seat: "orchestrator", type: "phase_start", ts: "2026-07-10T11:00:00.000Z" },
+    { seat: "orchestrator", type: "phase_start", ts: "2026-07-10T09:00:00.000Z" },
+    { seat: "orchestrator", type: "phase_end", ts: "2026-07-10T09:30:00.000Z" },
+    { seat: "orchestrator", type: "phase_end", ts: "2026-07-10T12:00:00.000Z" },
+  ];
+  assert.deepEqual(orchestratorWindow(records), {
+    sinceMs: Date.parse("2026-07-10T09:00:00.000Z"),
+    untilMs: Date.parse("2026-07-10T12:00:00.000Z"),
+  });
+});
+
+test("orchestratorWindow returns null when there is no orchestrator start", () => {
+  const records = [{ seat: "orchestrator", type: "phase_end", ts: "2026-07-10T10:30:00.000Z" }];
+  assert.equal(orchestratorWindow(records), null);
+});
+
+test("orchestratorWindow returns null when there is no orchestrator end", () => {
+  const records = [{ seat: "orchestrator", type: "phase_start", ts: "2026-07-10T10:00:00.000Z" }];
+  assert.equal(orchestratorWindow(records), null);
+});
+
+test("orchestratorWindow returns null on no records / malformed ts", () => {
+  assert.equal(orchestratorWindow([]), null);
+  assert.equal(
+    orchestratorWindow([
+      { seat: "orchestrator", type: "phase_start", ts: "not-a-date" },
+      { seat: "orchestrator", type: "phase_end", ts: "not-a-date" },
+    ]),
+    null,
+  );
+});
+
 // ─── diffBaselineKeys ─────────────────────────────────────────────────────────
 
 test("diffBaselineKeys returns the changed/added/removed top-level keys", () => {
@@ -357,4 +408,177 @@ test("collect rolls cost + orchestrator bucket + durations.total into stats.json
   assert.equal(res.stats.durations.building, 600_000);
   assert.equal(res.stats.durations.orchestrating, null);
   assert.equal(res.stats.durations.total, 600_000);
+});
+
+// ─── orchestrator transcript attribution (factory-cost Stage 2) ──────────────
+
+test("collect fills the orchestrator bucket from the session transcript within its phase window", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "mstats-orch-"));
+  const missions = path.join(root, "missions", "wahub");
+  const slugDir = path.join(missions, "orch-filled");
+  mkdirSync(slugDir, { recursive: true });
+  writeFileSync(
+    path.join(slugDir, "metrics.jsonl"),
+    [
+      JSON.stringify({ seat: "orchestrator", type: "phase_start", ts: "2026-07-10T10:00:00.000Z" }),
+      JSON.stringify({
+        seat: "worker",
+        type: "phase_end",
+        model: "claude-opus-4-8",
+        tokensIn: 100,
+        tokensOut: 20,
+        ts: "2026-07-10T10:05:00.000Z",
+      }),
+      JSON.stringify({ seat: "orchestrator", type: "phase_end", ts: "2026-07-10T10:30:00.000Z" }),
+    ].join("\n") + "\n",
+  );
+
+  const orchestratorCwd = "/home/andre/Projects/amiticia/repositories/tools/factory";
+  const transcriptRoot = mkdtempSync(path.join(tmpdir(), "transcript-root-"));
+  const transcriptDir = path.join(transcriptRoot, encodeTranscriptDir(orchestratorCwd));
+  mkdirSync(transcriptDir, { recursive: true });
+  writeFileSync(
+    path.join(transcriptDir, "session-a.jsonl"),
+    [
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-07-10T10:10:00.000Z",
+        message: {
+          model: "claude-opus-4-8",
+          usage: { input_tokens: 1000, output_tokens: 200, cache_read_input_tokens: 300, cache_creation_input_tokens: 40 },
+        },
+      }),
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-07-10T10:20:00.000Z",
+        message: {
+          model: "claude-opus-4-8",
+          usage: { input_tokens: 500, output_tokens: 100 },
+        },
+      }),
+      JSON.stringify({
+        // outside the orchestrator window — must NOT be counted
+        type: "assistant",
+        timestamp: "2026-07-10T11:00:00.000Z",
+        message: { model: "claude-opus-4-8", usage: { input_tokens: 999_999, output_tokens: 999_999 } },
+      }),
+    ].join("\n") + "\n",
+  );
+
+  const res = collect({
+    slug: "orch-filled",
+    missionsRoot: missions,
+    repoRoot: root,
+    factoryRoot: root,
+    transcriptRoot,
+    orchestratorCwd,
+  });
+
+  const expectedIn = 1000 + 500;
+  const expectedOut = 200 + 100;
+  const expectedCacheRead = 300;
+  const expectedCacheWrite = 40;
+  const expectedTotal = expectedIn + expectedOut + expectedCacheRead + expectedCacheWrite;
+
+  assert.equal(res.stats.tokens.orchestrator.total, expectedTotal);
+  assert.equal(res.stats.tokens.orchestrator.in, expectedIn);
+  assert.equal(res.stats.tokens.orchestrator.out, expectedOut);
+  assert.equal(res.stats.tokens.orchestrator.cacheRead, expectedCacheRead);
+  assert.equal(res.stats.tokens.orchestrator.cacheWrite, expectedCacheWrite);
+  assert.equal(res.stats.models.orchestrator, "claude-opus-4-8");
+
+  const expectedCost = apiCost("claude-opus-4-8", res.stats.tokens.orchestrator);
+  assert.ok(typeof expectedCost === "number" && expectedCost > 0);
+  assert.equal(res.stats.cost.orchestrator.api, expectedCost);
+  assert.equal(res.stats.cost.orchestrator.derived, expectedCost);
+  assert.equal(res.stats.cost.orchestrator.reported, null);
+
+  // window length: 10:00 -> 10:30 = 30 minutes (no durationMs on the orchestrator
+  // phase_end, so seatDuration pairs start/end ts — same 30-minute figure).
+  assert.equal(res.stats.durations.orchestrating, 30 * 60 * 1000);
+
+  // totals recomputed to include the orchestrator contribution
+  assert.equal(
+    res.stats.tokens.total,
+    res.stats.tokens.worker.total + res.stats.tokens.validator.total + expectedTotal,
+  );
+  assert.ok(res.stats.cost.total.api >= expectedCost);
+});
+
+test("collect leaves the orchestrator bucket at zero when there is no orchestrator phase window", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "mstats-orch-nowin-"));
+  const missions = path.join(root, "missions", "wahub");
+  const slugDir = path.join(missions, "orch-nowin");
+  mkdirSync(slugDir, { recursive: true });
+  // No orchestrator phase_start/phase_end at all.
+  writeFileSync(
+    path.join(slugDir, "metrics.jsonl"),
+    JSON.stringify({ seat: "worker", type: "phase_end", tokens: 100, model: "glm-5.2" }) + "\n",
+  );
+
+  const orchestratorCwd = "/home/andre/Projects/amiticia/repositories/tools/factory";
+  const transcriptRoot = mkdtempSync(path.join(tmpdir(), "transcript-root-nowin-"));
+  const transcriptDir = path.join(transcriptRoot, encodeTranscriptDir(orchestratorCwd));
+  mkdirSync(transcriptDir, { recursive: true });
+  writeFileSync(
+    path.join(transcriptDir, "session-a.jsonl"),
+    JSON.stringify({
+      type: "assistant",
+      timestamp: "2026-07-10T10:10:00.000Z",
+      message: { model: "claude-opus-4-8", usage: { input_tokens: 1000, output_tokens: 200 } },
+    }) + "\n",
+  );
+
+  const res = collect({
+    slug: "orch-nowin",
+    missionsRoot: missions,
+    repoRoot: root,
+    factoryRoot: root,
+    transcriptRoot,
+    orchestratorCwd,
+  });
+
+  assert.deepEqual(res.stats.tokens.orchestrator, {
+    in: 0,
+    out: 0,
+    reasoning: null,
+    cacheRead: 0,
+    cacheWrite: 0,
+    total: 0,
+  });
+  assert.equal(res.stats.cost.orchestrator.api, null);
+  assert.equal(res.stats.models.orchestrator, null);
+  assert.equal(res.stats.durations.orchestrating, null);
+});
+
+test("collect degrades gracefully when the orchestrator window exists but the transcript dir is missing", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "mstats-orch-nodir-"));
+  const missions = path.join(root, "missions", "wahub");
+  const slugDir = path.join(missions, "orch-nodir");
+  mkdirSync(slugDir, { recursive: true });
+  writeFileSync(
+    path.join(slugDir, "metrics.jsonl"),
+    [
+      JSON.stringify({ seat: "orchestrator", type: "phase_start", ts: "2026-07-10T10:00:00.000Z" }),
+      JSON.stringify({ seat: "orchestrator", type: "phase_end", ts: "2026-07-10T10:30:00.000Z" }),
+    ].join("\n") + "\n",
+  );
+
+  const transcriptRoot = mkdtempSync(path.join(tmpdir(), "transcript-root-missing-"));
+  // Note: no subdirectory created for the orchestratorCwd → dir doesn't exist.
+
+  const res = collect({
+    slug: "orch-nodir",
+    missionsRoot: missions,
+    repoRoot: root,
+    factoryRoot: root,
+    transcriptRoot,
+    orchestratorCwd: "/some/cwd/that/has/no/transcript",
+  });
+
+  assert.equal(res.stats.tokens.orchestrator.total, 0);
+  assert.equal(res.stats.cost.orchestrator.api, null);
+  // durations still degrade to the window length even without transcript usage,
+  // since seatDuration already pairs the phase_start/phase_end ts (same figure).
+  assert.equal(res.stats.durations.orchestrating, 30 * 60 * 1000);
 });
