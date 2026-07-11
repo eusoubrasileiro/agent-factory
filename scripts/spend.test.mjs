@@ -88,6 +88,22 @@ test("fmtUsd: null → em dash, else 2dp with $", () => {
   assert.equal(fmtUsd(61.4), "$61.40");
 });
 
+test("fmtUsd: negative → sign before $ (not $-X.XX)", () => {
+  assert.equal(fmtUsd(-59.5), "-$59.50");
+  assert.equal(fmtUsd(-0.5), "-$0.50");
+});
+
+test("fmtUsd: unchanged for non-negative and null/undefined", () => {
+  assert.equal(fmtUsd(0), "$0.00");
+  assert.equal(fmtUsd(12.3), "$12.30");
+  assert.equal(fmtUsd(null), "—");
+  assert.equal(fmtUsd(undefined), "—");
+});
+
+test("fmtUsd: -0 renders $0.00 (no spurious negative sign)", () => {
+  assert.equal(fmtUsd(-0), "$0.00");
+});
+
 test("fmtTok: compact k/M", () => {
   assert.equal(fmtTok(0), "0");
   assert.equal(fmtTok(1500), "1.5k");

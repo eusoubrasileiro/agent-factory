@@ -25,6 +25,7 @@ import {
   aggregateAgents,
   buildTraceabilityModel,
   collectGitInfo,
+  fmtUsd,
   parseRequirementsLine,
   renderDashboardHtml,
   renderInline,
@@ -637,6 +638,22 @@ test("collectGitInfo: branchPrefix/trunk only affect filtering — trunk missing
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// ─── fmtUsd (feature 01) ──────────────────────────────────────────────────────
+
+test("fmtUsd (board-report): negative → sign before $ (not $-X.XX)", () => {
+  assert.equal(fmtUsd(-59.5), "-$59.50");
+});
+
+test("fmtUsd (board-report): unchanged for non-negative, null, NaN", () => {
+  assert.equal(fmtUsd(0), "$0.00");
+  assert.equal(fmtUsd(null), "sem dados");
+  assert.equal(fmtUsd(NaN), "sem dados");
+});
+
+test("fmtUsd (board-report): -0 renders $0.00 (no spurious negative sign)", () => {
+  assert.equal(fmtUsd(-0), "$0.00");
 });
 
 // Guard: assert the public exports exist with the right arity (helps the next
@@ -1758,9 +1775,8 @@ test("Histórico: fixture history with cost/time fields renders the 5 new stat c
   assert.match(panel, /\$ plano total/);
   assert.match(panel, /\$72\.00/);
   assert.match(panel, /economia \(API − plano\)/);
-  // fmtUsd(n) = `$${n.toFixed(2)}` — for a negative value the sign lands
-  // inside the toFixed output, i.e. "$-59.50" (not "-$59.50").
-  assert.match(panel, /\$-59\.50/);
+  // fmtUsd(-59.5) → "-$59.50" (sign before the $, not inside the formatted number).
+  assert.match(panel, /-\$59\.50/);
   assert.match(panel, />tempo total</);
   assert.match(panel, /1\.5h/);
   assert.match(panel, /tempo\/feature/);

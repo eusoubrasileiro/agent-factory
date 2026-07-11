@@ -143,7 +143,9 @@ export function summarize(list, { planFeeUsd } = {}) {
 
 export function fmtUsd(n) {
   if (n === null || n === undefined) return "—";
-  return `$${Number(n).toFixed(2)}`;
+  const num = Number(n);
+  if (num < 0) return `-$${(-num).toFixed(2)}`;
+  return `$${num.toFixed(2)}`;
 }
 
 export function fmtTok(n) {
