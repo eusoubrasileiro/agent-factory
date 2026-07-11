@@ -132,6 +132,7 @@ test("snapshotRows: without missionsDir, rows carry NO stats fields (back-compat
   assert.equal("tokens" in r, false);
   assert.equal("models" in r, false);
   assert.equal("durationH" in r, false);
+  assert.equal("cost" in r, false);
 });
 
 test("snapshotRows: with missionsDir, reads stats.json → loc/tokens/models/durationH", () => {
@@ -169,6 +170,33 @@ test("snapshotRows: with missionsDir but no stats.json → null stats fields", (
     assert.equal(r.tokens, null);
     assert.equal(r.models, null);
     assert.equal(r.durationH, null);
+    assert.equal(r.cost.api, null);
+    assert.equal(r.cost.plan, null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ─── snapshotRows: cost + orchestrator time (factory-cost-metrics) ────────────
+
+test("snapshotRows: enriches with cost.{api,plan} and orchestrator-inclusive durationH", () => {
+  const dir = makeTmpDir("hist-cost-");
+  try {
+    const slugDir = path.join(dir, "alpha");
+    mkdirSync(slugDir, { recursive: true });
+    writeFileSync(
+      path.join(slugDir, "stats.json"),
+      JSON.stringify({
+        cost: { total: { api: 1.234567, derived: null, reported: null } },
+        durations: { building: 3600000, validating: 1800000, orchestrating: 900000 },
+      }),
+    );
+    const model = { missions: [mission("alpha", { status: "Done" })] };
+    const [r] = snapshotRows(model, "wahub", "2026-07-08T10:00:00Z", dir);
+    assert.equal(r.cost.api, 1.234567);
+    assert.equal(r.cost.plan, null);
+    // (3.6e6 building + 1.8e6 validating + 0.9e6 orchestrating) ms = 6.3e6 ms → /3.6e6 = 1.75 h
+    assert.equal(r.durationH, 1.75);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -503,6 +531,108 @@ test("aggregate: duplicate rows do not inflate missõesConcluídas (slug-deduped
   ];
   const stats = aggregate(rows, { now: "2026-07-08T00:00:00Z" });
   assert.equal(stats.missõesConcluídas, 1, "one unique slug → one concluded");
+});
+
+// ─── aggregate: cost + time rollup (factory-cost-metrics) ─────────────────────
+
+test("aggregate: exposes costTotal/timeTotalH/planTotal/savings/featuresTotal (global + byProject)", () => {
+  const rows = [
+    row("alpha", {
+      project: "wahub",
+      ts: "2026-07-01T00:00:00Z",
+      state: "Done",
+      features: "3/3",
+      cost: { api: 1.5, plan: null },
+      durationH: 2,
+    }),
+    row("beta", {
+      project: "wahub",
+      ts: "2026-07-02T00:00:00Z",
+      state: "Building",
+      features: "1/2",
+      cost: { api: 0.5, plan: null },
+      durationH: 1,
+    }),
+  ];
+  const stats = aggregate(rows, { now: "2026-07-08T00:00:00Z" });
+
+  assert.equal(stats.costTotal, 2);
+  assert.equal(stats.timeTotalH, 3);
+  assert.equal(stats.featuresTotal, 4); // 3 (alpha) + 1 (beta)
+  assert.equal(stats.planTotal, 72); // default z.ai Pro fee
+  assert.equal(stats.savings, -70); // 2 - 72
+
+  assert.ok(stats.byProject.wahub);
+  assert.equal(stats.byProject.wahub.costTotal, 2);
+  assert.equal(stats.byProject.wahub.timeTotalH, 3);
+  assert.equal(stats.byProject.wahub.featuresTotal, 4);
+  assert.equal(stats.byProject.wahub.planTotal, 72);
+  assert.equal(stats.byProject.wahub.savings, -70);
+});
+
+test("aggregate: null cost/durationH never fake a 0 — costTotal/timeTotalH/savings stay null", () => {
+  const rows = [
+    row("alpha", { ts: "2026-07-01T00:00:00Z", state: "Done", features: "1/1" }),
+    row("beta", { ts: "2026-07-02T00:00:00Z", state: "Building", features: "0/1" }),
+  ];
+  const stats = aggregate(rows, { now: "2026-07-08T00:00:00Z" });
+  assert.equal(stats.costTotal, null, "no row carries cost → null, not 0");
+  assert.equal(stats.timeTotalH, null, "no row carries durationH → null, not 0");
+  assert.equal(stats.savings, null, "costTotal null → savings null");
+  assert.equal(stats.featuresTotal, 1, "featuresTotal is still a real count (0/1 + 1/1)");
+  assert.equal(stats.planTotal, 72, "planTotal is independent of cost/time data");
+});
+
+test("aggregate: empty rows → planTotal null (no period to attribute the fee to)", () => {
+  const stats = aggregate([], { now: "2026-07-08T00:00:00Z" });
+  assert.equal(stats.costTotal, null);
+  assert.equal(stats.timeTotalH, null);
+  assert.equal(stats.planTotal, null);
+  assert.equal(stats.savings, null);
+  assert.equal(stats.featuresTotal, 0);
+});
+
+test("aggregate: planFeeUsd override changes planTotal + savings", () => {
+  const rows = [
+    row("alpha", {
+      ts: "2026-07-01T00:00:00Z",
+      state: "Done",
+      features: "1/1",
+      cost: { api: 10, plan: null },
+    }),
+  ];
+  const stats = aggregate(rows, { now: "2026-07-08T00:00:00Z", planFeeUsd: 100 });
+  assert.equal(stats.planTotal, 100);
+  assert.equal(stats.savings, -90); // 10 - 100
+});
+
+test("aggregate: perMission rows carry custo + tempoH from the latest snapshot", () => {
+  const rows = [
+    row("alpha", {
+      ts: "2026-07-01T00:00:00Z",
+      state: "Building",
+      cost: { api: 1, plan: null },
+      durationH: 0.5,
+    }),
+    row("alpha", {
+      ts: "2026-07-05T00:00:00Z",
+      state: "Done",
+      cost: { api: 3.25, plan: null },
+      durationH: 2.75,
+    }),
+  ];
+  const stats = aggregate(rows, { now: "2026-07-08T00:00:00Z" });
+  const alpha = stats.perMission.find((m) => m.slug === "alpha");
+  assert.equal(alpha.custo, 3.25);
+  assert.equal(alpha.tempoH, 2.75);
+});
+
+test("aggregate: perMission custo/tempoH null when the latest snapshot has no stats data", () => {
+  const rows = [row("solo", { ts: "2026-07-01T00:00:00Z", state: "Planning" })];
+  const stats = aggregate(rows, { now: "2026-07-08T00:00:00Z" });
+  const solo = stats.perMission.find((m) => m.slug === "solo");
+  assert.equal(solo.custo, null);
+  assert.equal(solo.tempoH, null);
 });
 
 // ─── Guard: exports exist ─────────────────────────────────────────────────────
