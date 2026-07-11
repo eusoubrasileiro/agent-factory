@@ -318,8 +318,14 @@ than two. Sizing a fan-out is a spend decision, not a throughput one.
   ratify. Tenant A is in coexistence — real users — so this is non-negotiable.
 - **Branches + tags** on `main` are the rollback. Never force-push the Lovable
   repo; keep its build green (the validator checks).
-- Critical files (`bot/**`, `lib/waba.ts`, `prisma/schema.prisma`, …) are never
-  edited unless a plan explicitly names them.
+- Critical files (`bot/**`, `lib/waba.ts`, `backend/prisma/schema.prisma`,
+  `backend/prisma/migrations/**`, …) are never edited unless a plan explicitly
+  names them — and the **external seat cannot edit them at all**: the cage denies
+  `Edit`/`Write` on every glob in `projects/<id>/critical-files.json`, with no
+  per-mission carve-out. A plan naming a critical file therefore assigns that
+  feature to the **orchestrator** seat; dispatching it to a worker yields a
+  silent `exit=0` no-op (D-36). Verify the globs match real paths — a glob that
+  matches nothing is a protection that does not exist (D-37).
 
 ## The seats (default: Claude Code / claude -p)
 - **Orchestrator** = an interactive Claude Code session (you + me). Reads the PRD.
