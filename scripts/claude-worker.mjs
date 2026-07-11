@@ -54,6 +54,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { cageSettingsPath, writeCageSettings } from "./cage-settings.mjs";
 import { isMainModule } from "./lib/is-main.mjs";
@@ -61,7 +62,8 @@ import { resolveProject } from "./lib/project.mjs";
 import { assertKnownProject, DEFAULT_GRACE_MS, killGracefully } from "./lib/worker-common.mjs";
 import { buildPhaseEndEvent, buildPhaseStartEvent, buildSpawnEnv, isWorktreeDir } from "./opencode-worker.mjs";
 
-const __dirname = path.dirname(new URL(".", import.meta.url).pathname);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+export const METRICS_SCRIPT = path.join(__dirname, "metrics.mjs");
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_CREDS_PATH = path.join(homedir(), ".config", "amiticia", "zai.env");
 
@@ -266,7 +268,7 @@ export function parseClaudeResult(out) {
 
 /** Best-effort telemetry. It must never fail a run. */
 function recordMetric(slug, event, project) {
-  const args = [path.join(__dirname, "metrics.mjs"), "record", slug];
+  const args = [METRICS_SCRIPT, "record", slug];
   if (project) args.push("--project", project);
   try {
     spawnSync(process.execPath, args, { input: JSON.stringify(event), stdio: ["pipe", "ignore", "ignore"] });

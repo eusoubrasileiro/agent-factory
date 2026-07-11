@@ -26,6 +26,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   CLAUDE_ENV_KEYS,
+  METRICS_SCRIPT,
   assertExternalEndpoint,
   assertSeatEndpoint,
   buildClaudeEnv,
@@ -366,6 +367,21 @@ test("CLI: --allow-anthropic runs a Sonnet seat end-to-end, caged, no creds need
     rmSync(wt, { recursive: true, force: true });
     rmSync(stub, { recursive: true, force: true });
   }
+});
+
+// ─── __dirname regression: METRICS_SCRIPT must resolve inside scripts/ ───────
+//
+// new URL('.', import.meta.url).pathname returns scripts/ WITH a trailing slash,
+// so path.dirname strips "scripts" and returns the repo root. metrics.mjs lives
+// in scripts/, not the repo root, so every recordMetric call would silently drop
+// telemetry. Fixed to fileURLToPath idiom; this test guards the regression.
+
+test("METRICS_SCRIPT: resolves to a real file inside scripts/", () => {
+  assert.ok(existsSync(METRICS_SCRIPT), "metrics.mjs path must resolve to a real file");
+  assert.ok(
+    METRICS_SCRIPT.endsWith(path.join("scripts", "metrics.mjs")),
+    `metrics.mjs must be resolved inside scripts/, got: ${METRICS_SCRIPT}`,
+  );
 });
 
 test("CLI: without --allow-anthropic, the same invocation still refuses", () => {
