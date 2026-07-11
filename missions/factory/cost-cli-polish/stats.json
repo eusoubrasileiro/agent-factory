@@ -1,0 +1,78 @@
+{
+  "slug": "cost-cli-polish",
+  "generatedAt": "2026-07-11T17:45:20.824Z",
+  "branch": "agent/cost-cli-polish",
+  "mergeBase": "4d4b998e71d08c1d6acd81250628c4162824f98f",
+  "loc": {
+    "added": 2130,
+    "deleted": 66,
+    "files": 20
+  },
+  "testsAdded": 76,
+  "baselineChanged": false,
+  "baselineKeysChanged": [],
+  "durations": {
+    "building": 205376,
+    "validating": 137458,
+    "orchestrating": null,
+    "total": 342834
+  },
+  "tokens": {
+    "worker": {
+      "in": 30,
+      "out": 8758,
+      "reasoning": null,
+      "cacheRead": 2179885,
+      "cacheWrite": 72286,
+      "total": 2260959
+    },
+    "validator": {
+      "in": 9,
+      "out": 7056,
+      "reasoning": null,
+      "cacheRead": 274861,
+      "cacheWrite": 29092,
+      "total": 311018
+    },
+    "orchestrator": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "total": 0
+    },
+    "total": 2571977
+  },
+  "cost": {
+    "worker": {
+      "api": 1.2191415,
+      "derived": 1.056498,
+      "reported": 1.2191415
+    },
+    "validator": {
+      "api": 0.3628773,
+      "derived": 0.29742,
+      "reported": 0.3628773
+    },
+    "orchestrator": {
+      "api": null,
+      "derived": null,
+      "reported": null
+    },
+    "total": {
+      "api": 1.5820188000000002,
+      "derived": 1.353918,
+      "reported": 1.5820188000000002
+    }
+  },
+  "models": {
+    "worker": "claude-sonnet-4-6",
+    "validator": "claude-sonnet-4-6",
+    "orchestrator": null
+  },
+  "rounds": 1,
+  "attention": 0,
+  "escalations": 0,
+  "pr": null
+}
