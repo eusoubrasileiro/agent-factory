@@ -11,6 +11,12 @@
 > **VERIFIED** = traced in code or reproduced (mutations were run on /tmp copies);
 > **REASONED** = from reading; **CC-knowledge** = Claude Code semantics from docs, not
 > filesystem-proven here. Review was strictly read-only; nothing in the repo was changed.
+>
+> **Reconciled 2026-07-11 against main @ `b0150a9`.** Since the review ran: mission
+> `intake-board` MERGED (`ad0f843`) — E4's gate is lifted; finding E1-a was independently
+> found and fixed there (D-31/D-32 — same D-25 doctrine, convergent); the ledger now runs to
+> D-39. D-37 (a deny rule pointing at a nonexistent path is silent fail-open) is new evidence
+> for E3's thesis. Re-verify any file:line against main before building on it.
 
 ---
 
@@ -39,13 +45,11 @@ and *"we cannot slow down"*. Consequences, binding on every mission below:
 Before starting ANY mission here, run `git -C <factory> status --short` and
 `git worktree list` in both repos. At review time:
 
-- **Mission `intake-board` (in progress, another session, Anthropic seats)** owns:
-  `scripts/intake-report.mjs`, `scripts/intake-server.mjs`, `scripts/board-report.mjs`,
-  `scripts/board-report.test.mjs`, `scripts/lib/project.mjs` (`profile.intake[]`),
-  `scripts/project-profile.test.mjs`, `projects/wahub/project.json`, `package.json`
-  (`intake` script), one `decisions.md` line, a RUNBOOK §board note. Its plan:
-  `missions/factory/intake-board/plan-fable5.md` + `brief.md` + `contract.md`.
-  **Missions E4 and any edit to the files above are GATED on intake-board merging to main.**
+- **Mission `intake-board` — MERGED to main (`ad0f843`, 2026-07-09), gate lifted.**
+  `intake-report.mjs`, `intake-server.mjs`, `board-report.mjs`, `lib/project.mjs`
+  (`profile.intake[]`) are now regular engine files. The carve-out discipline stands as a
+  RULE, not a snapshot: this repo hosts concurrent sessions — re-run the two commands above
+  before every mission and treat whatever is dirty/branched as owned.
 - **The wahub repo is entirely out of scope** — 14 active worktrees (Plano A,
   `clients/tenant-a/DESPACHO-2026-07-09.md`) + a paused merge on `agent/merge-tail`.
   Nothing here touches wahub. (The one wahub-side item, dispatch-worktree.sh repointing,
@@ -71,7 +75,7 @@ remember `FACTORY_WORKTREE_MARKER=/.worktrees/` until E4-F1 lands — D-27).
 | E2 | cage-bash-hook | closes the D-26 write bypass + parent-.env + exfil in one layer | none-to-low (verify with control) | ready now |
 | E3 | test-hardening | suite can currently be hollowed silently (deny-rule swap survives) | none | ready now |
 | E5 | docs-truth | coordinators following docs today misroute telemetry + reach for the unproven seat | none | ready now |
-| E4 | profile-completion | onboarding project #3 without engine edits (D-15 finish, D-27 fix) | none | **after intake-board merges** |
+| E4 | profile-completion | onboarding project #3 without engine edits (D-15 finish, D-27 fix) | none | ready now (intake-board merged) |
 | E6 | seat-driver leftovers | features 02/03 of `sonnet-fallback-seat` | none | ready now |
 
 E1/E2/E3/E5 are mutually independent — parallelize across worktrees if seats allow
@@ -90,16 +94,15 @@ lives (RUNBOOK §Measure it). Today both can silently lie. Same defect class as 
 
 | id | Defect | Evidence | Status |
 |----|--------|----------|--------|
-| E1-a | `board-autopublish` ignores rsync exit **and then writes the hash memo**, so a failed publish logs `publicado`, and every later run sees `prevHash === hash` → `sem mudanças` → the VPS stays stale **permanently** for that content state. The `try/catch` around `spawnSync` is dead code (spawnSync doesn't throw on non-zero; ENOENT comes back as `r.error`). The defect is baked into a test: `board-autopublish.test.mjs:528` asserts the memo is written after a failed publish. | `board-autopublish.mjs:453-467` | VERIFIED (coordinator re-checked :448-467) |
+| E1-a | ~~`board-autopublish` ignores rsync exit **and then writes the hash memo**~~ — **FIXED on main** (`ad0f843`, D-32: memo only after a confirmed publish; failed rsync logs and retries). Independently found by the intake-board session. Do NOT re-implement; regression context only. | `board-autopublish.mjs` (main) | FIXED |
 | E1-b | `board-sync`'s `makeBacklog` throws only on `r.error`, never `r.status !== 0`: a failed `task create`/`edit` still emits `slug: X -> Y` and exits 0; a failed `task list` returns empty stdout → `parseTaskList` → `[]` → **every mission gets a duplicate card**. Header contract "0 ok" violated. | `board-sync.mjs:202-209`, consumers :236-263 | VERIFIED |
 | E1-c | `board-import-backlog` builds `existingTitles` from an unchecked `task list` — same duplicate-card path (its `task create` IS checked at :231; the list read defeats the idempotency guard). | `board-import-backlog.mjs:177-184,207` | VERIFIED |
 | E1-d | `mission-stats`: `git()` → null on any failure; a transient `git diff` failure after `resolveRange` succeeded writes an authoritative all-zeros `stats.json`, exit 0 — indistinguishable from "mission changed nothing". This is why the KPI strip is empty today. | `mission-stats.mjs:254-262,388-430` | SUSPECTED (fix defensively) |
 | E1-e | `verdict.mjs`/`metrics.mjs` `readRecords` crash on one corrupt JSONL line (no per-line try/catch), unlike every sibling reader (`history.mjs` pins tolerance at `history.test.mjs:235`). Fail-closed, but a torn line from a crashed append blocks legitimate verdicts. | `verdict.mjs:119-126`, `metrics.mjs:110-117` | VERIFIED |
 | E1-f | Every state change fires autopublish **twice** (`triggerAutopublish()` + the post-commit hook of `autoCommit()`); two concurrent funnels can both pass the hash guard and double-append `history.jsonl` snapshots. | `verdict.mjs:201-217,288`; `ratify.mjs:146-162,197`; append `board-autopublish.mjs:460` | SUSPECTED |
 
-**Fixes:** E1-a: capture `const r = spawnSync(...)`; on `r.status !== 0 || r.error` log the
-real failure to `.publish.log` (`erro publish: ...`) and **do not write the memo** (failed
-publish must retry next run). Fix the baked-in test to assert the memo is NOT written.
+**Fixes:** E1-a: done on main (D-32) — only VERIFY a regression test pins it (memo untouched
+after a stubbed failing publish); add one if missing.
 E1-b/c: `makeBacklog` treats `r.status !== 0` as `r.error` (throw); callers report and exit
 non-zero on sync failure. E1-d: distinguish "git ran, no change" from "git failed" — when
 `resolveRange` succeeded but a diff call returned null, stamp `"partial": true` in
@@ -110,8 +113,8 @@ section — smallest change that serializes; do NOT remove either trigger (the r
 deliberate).
 
 **Contract assertions (write into `missions/factory/publish-funnel-failopen/contract.md`
-BEFORE any code — C3):** (1) a stubbed `board-publish.sh` exiting 1 → `.publish.log` gains an
-`erro` line, memo unchanged, next run re-attempts (does NOT print `sem mudanças`); (2) a
+BEFORE any code — C3):** (1) a regression test for D-32's fix exists on main (stubbed failing
+publish → memo unchanged, next run re-attempts) — verify, add only if missing; (2) a
 stubbed `backlog` CLI exiting 1 on `task list` → `board-sync` exits non-zero and creates
 zero cards; (3) corrupt line in `metrics.jsonl` → `metrics summary` still prints, skips it;
 (4) same for `verdict status`; (5) `stats.json` written after a simulated git failure carries
@@ -194,6 +197,10 @@ the usability control, zero SKIPPED counted as pass.
 **Why:** the suite is mutation-resistant on anchoring, worker guards, and verdict/ratify
 (strengths VERIFIED by running mutations), but **"can the cage be silently hollowed out" is
 untested** — and these are exactly the tests that keep E2's guarantees true over time.
+D-37 landed after this review and proves the thesis live: a deny glob pointing at a
+nonexistent path (wahub's `schema.prisma`) was silent fail-open since day one — so add to
+E3-a's scope: **assert every rendered critical-file glob matches at least one existing path
+in the target repo** (probe-cage static check; skip-with-note when the checkout is absent).
 
 | id | Gap | Evidence | Surviving mutation (VERIFIED unless noted) |
 |----|-----|----------|-------------------------------------------|
@@ -213,7 +220,7 @@ the mutation that motivated it before the fix/pin lands (that IS the TDD red ste
 
 ---
 
-## §4 · Mission E4 — `profile-completion` ⚠ GATED: start only after intake-board merges
+## §4 · Mission E4 — `profile-completion` (gate lifted — intake-board merged `ad0f843`)
 
 **Why (business):** onboarding project #3 (agendazap or the next client) is the factory's
 growth path. The auditor walked tenant-c through a full mission today: it works until exactly
@@ -224,7 +231,7 @@ three seams, all shape-vs-fact leaks the meta test can't see (D-15).
 | E4-a (D-27) | worktree marker is a global env (`FACTORY_WORKTREE_MARKER ?? "/.claude/worktrees/"`) — one product's layout; two projects with different layouts can't run in one session | `opencode-worker.mjs:59,70`, imported by claude-worker | `project.json` gains `"worktreeMarker"`; both drivers read it from the already-resolved profile; delete the env fallback (grep docs for the env var and update) **[coordinator-seat: project.mjs, projects/**]** |
 | E4-b | `deploy/projects.json` is a raw duplicate registry: `board-autopublish.mjs:161-163` + `board-index.mjs` read it directly, so a `projects/`-only project (tenant-c, factory) **never appears on the published board** | VERIFIED | route both through `loadProjects()` (already merges + lets profiles win, `project.mjs:22`); retire `deploy/projects.json` to back-compat only |
 | E4-c | `board-import-backlog` has no `--project` and falls back to wahub's literal PRD path `docs/prd/nexus-build-backlog.md` | `board-import-backlog.mjs:36-37,249` | add `--project` (route through `resolveProject({project})`), delete the fallback — no `prd` in profile ⇒ import nothing |
-| E4-d | shared multi-project board titled "Fábrica Nexus" — product #1's brand on every project's landing page | `board-report.mjs:1192,1199`, `board-index.mjs:112,119` | neutral constant ("AmiticIA Factory") or `board.title` profile field. ⚠ board-report is intake-board territory — this line is WHY the whole mission is gated |
+| E4-d | shared multi-project board titled "Fábrica Nexus" — product #1's brand on every project's landing page | `board-report.mjs:1192,1199`, `board-index.mjs:112,119` | neutral constant ("AmiticIA Factory") or `board.title` profile field — re-check line numbers against main, board-report gained the Intake tab |
 | E4-e | no engine-shipped dispatch template: every product hand-copies a ~200-line `dispatch-worktree.sh` whose layout must silently agree with E4-a's marker; the dummy-env source path is re-hardcoded inside wahub's copy instead of read from `profile.seatEnvPath` | wahub + tenant-c copies; `dispatch-worktree.sh:165-166` header ~14-16 | ship `templates/dispatch-worktree.sh` parameterized by profile (worktree root, marker, seat-env path). Larger; make it the last feature and keep it optional if time-boxed |
 
 Conformance suite already iterates every profile — extend it to pin the new fields
@@ -302,8 +309,7 @@ The D-24/D-25 review discipline, now standing practice: (1) contract.md written 
 coordinator BEFORE code exists; builder never sees it. (2) On handoff, re-run every CLI
 verification yourself — never trust the handoff's pasted output. (3) **Mutation-test every
 guard**: weaken it, a NAMED test goes red, restore. Green-after-weakening = hollow = FAIL.
-(4) `pnpm test` green (~522+; 3 pre-existing reds belong to intake-board's dirty
-`project.mjs` — rebase after it merges, don't "fix" them). (5) Meta test: zero product
+(4) `pnpm test` green on main before AND after. (5) Meta test: zero product
 literals in `scripts/`/`templates/`/`skills/`. (6) One `decisions.md` line per
 hard-to-reverse choice, in Portuguese, coordinator-authored.
 
@@ -332,9 +338,8 @@ hard-to-reverse choice, in Portuguese, coordinator-authored.
 ---
 
 *Full reviewer transcripts (file:line for every claim) are in the session that produced this
-doc; the findings tables above are self-sufficient for execution. Authored on the
-`agent/intake-board` checkout as an untracked file — commit to `main` after that mission
-merges.*
+doc; the findings tables above are self-sufficient for execution. First committed to main in
+the 2026-07-10 cross-machine sync (`455f3ad`); reconciled against `b0150a9` on 2026-07-11.*
 
 ---
 
