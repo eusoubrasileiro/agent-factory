@@ -83,13 +83,28 @@ test("resolveProject: wahub profile exposes gate, criticalFiles, seat.env, valid
   assert.equal(r.profile.trunk, "main");
   assert.equal(r.profile.branchPrefix, "agent/");
 
-  // critical-files.json is a JSON array of 12 glob strings.
+  // critical-files.json is a JSON array of glob strings. Pin by IDENTITY, not
+  // count (E3-a): a count assertion greenlights a silent swap/removal — the exact
+  // failure mode of D-37, where the dead path `prisma/schema.prisma` sat unnoticed
+  // until it was corrected to `backend/prisma/schema.prisma` (+ migrations/**),
+  // which is what took this list 12 -> 13 and broke the old `length === 12` pin.
   assert.ok(Array.isArray(r.profile.criticalFiles));
-  assert.equal(r.profile.criticalFiles.length, 12);
   assert.ok(
     r.profile.criticalFiles.every((g) => typeof g === "string"),
     "every critical file is a glob string",
   );
+  // The security-consequential globs whose silent absence would open a hole.
+  for (const glob of [
+    "backend/src/bot/**",
+    "backend/src/lib/waba.ts",
+    "backend/prisma/schema.prisma",
+    "backend/prisma/migrations/**",
+  ]) {
+    assert.ok(
+      r.profile.criticalFiles.includes(glob),
+      `critical-files must protect ${glob} by identity`,
+    );
+  }
 
   // seat.env + validation.md resolved to ABS paths under projects/wahub/.
   assert.equal(
