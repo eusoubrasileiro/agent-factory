@@ -28,6 +28,11 @@ the machine each time.
 > not exist. Engine missions (`--project factory`, `path: "."`) are unaffected.
 > Set `FACTORY_ROOT` explicitly if you must resolve a product from inside an
 > engine worktree.
+>
+> **And to dispatch an engine seat, set `FACTORY_WORKTREE_MARKER=/.worktrees/`**
+> (interim, until E4-a makes `worktreeMarker` a `project.json` field): the driver's
+> default marker is wahub's `/.claude/worktrees/`, so without the override the seat
+> refuses its own `.worktrees/<slug>` tree (D-27).
 
 ## The loop (per feature/mission)
 

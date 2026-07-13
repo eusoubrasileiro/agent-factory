@@ -41,16 +41,29 @@ serialized, harnesses that do not run in dummy-env worktrees).
 For each assertion in the contract, run its proof on the **local** stack, following
 that playbook. An assertion with no green proof → that assertion FAILS.
 
-### 3a. Optional — run the validator on the external agent seat
-The validator seat may run on an **external agent** (opencode → e.g. GLM 5.2) to
-save Anthropic tokens. A fresh opencode session is genuinely held-out — it never
-saw the worker's context. Give it ONLY `contract.md` + the diff, and have it emit
-through `verdict.mjs` (below):
+### 3a. Optional — run the validator on a held-out agent seat
+The validator seat may run on a **separate, held-out agent** (a fresh session that
+never saw the worker's context). The proven default is a caged **`claude-worker`**
+seat (D-19/D-21: containment demonstrated against Write + recognized shell forms).
+Give it ONLY `contract.md` + the diff, and have it emit through `verdict.mjs`:
+```bash
+node scripts/claude-worker.mjs --dir <worktree> --model claude-sonnet-5 \
+  --project <project> --allow-anthropic --creds /dev/null \
+  --slug <slug> --metric-seat validator \
+  --prompt "You are the held-out validator. Read ONLY missions/<project>/<slug>/contract.md and the diff (git diff <trunk>...HEAD). Prove every assertion on LOCAL, run the project's gate, then emit the verdict via: echo \"\$JSON\" | node scripts/verdict.mjs record <slug> --project <project>."
+```
+(A caged Sonnet seat on the operator's Anthropic session — `--creds /dev/null` forces
+that fallback rather than a stale z.ai base URL. Set `FACTORY_WORKTREE_MARKER` if the
+worktree layout isn't the default.)
+
+**Fallback — opencode/z.ai (only while a flat-rate plan is live):**
 ```bash
 pnpm factory:opencode --dir <worktree> --model zai-coding-plan/glm-5.2 \
   --slug <slug> --metric-seat validator \
-  --prompt "You are the held-out validator. Read ONLY missions/<project>/<slug>/contract.md and the diff (git diff <trunk>...HEAD). Prove every assertion on LOCAL, run the project's gate, then emit the verdict via: echo \"\$JSON\" | node scripts/verdict.mjs record <slug>."
+  --prompt "<same held-out validator prompt as above>"
 ```
+opencode's containment is unproven (D-17), so prefer the caged `claude-worker` seat;
+reach for opencode only to save tokens against a live z.ai plan.
 **A weaker validator model must not be trusted blind:** the orchestrator
 independently re-runs the deterministic gate and confirms the one non-negotiable
 invariant of the mission itself before accepting the verdict. The `verdict.mjs`
@@ -110,10 +123,20 @@ ratify ✋         after N: STOP, escalate to Andre with the persistent red
   machine-checkable (`node scripts/verdict.mjs status <slug>`: exit 0 PASS,
   1 FAIL/none, 2 exhausted).
 
-## 5. Report to Andre
+## 5. Report to Andre, then ratify on his word
 Give Andre a tight verdict: PASS/FAIL, the assertion table with green/red, and —
 if PASS — that the mission is ready for his **ratification → merge → tag →
 upstream**. You never push or deploy; that is Andre's gate.
+
+- A PASS sits at `Needs Human (gate:ratify)` — it is **not** `Done` until the owner
+  ratifies. On his word, close the loop with the recorder, which is the only thing
+  that moves the card to `Done`:
+  ```bash
+  pnpm mission:ratify <slug> --project <project>
+  ```
+  Ratify only after the PASS verdict is recorded (`node scripts/verdict.mjs status
+  <slug> --project <project>` exits 0). This step is the missing half of the loop:
+  `verdict record` (validator) → `mission:ratify` (owner, via you) → `Done`.
 
 ## Rules
 - Fresh context every time — if you reviewed a prior mission, start clean.
