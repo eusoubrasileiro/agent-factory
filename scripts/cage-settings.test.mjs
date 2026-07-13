@@ -15,10 +15,13 @@ import { test } from "node:test";
 
 import {
   auditCageSettings,
+  cageHookPath,
   cageSettingsPath,
   criticalFileRules,
   denyRules,
   loadTemplate,
+  parentEnvRules,
+  renderBashHook,
   renderCageSettings,
   machineSandboxEnabled,
   writeCageSettings,
@@ -37,7 +40,10 @@ test("renderCageSettings: substitutes {{WORKTREE}} into fs-absolute // rules", (
     { permissions: { deny: ["Edit(//{{WORKTREE}}/backend/src/bot/**)"] } },
     WT,
   );
-  assert.deepEqual(denyRules(out), ["Edit(//home/x/.claude/worktrees/demo/backend/src/bot/**)"]);
+  assert.ok(
+    denyRules(out).includes("Edit(//home/x/.claude/worktrees/demo/backend/src/bot/**)"),
+    "the substituted //-anchored rule must be present",
+  );
 });
 
 test("renderCageSettings: strips the _readme prose block", () => {
@@ -48,7 +54,8 @@ test("renderCageSettings: strips the _readme prose block", () => {
 
 test("renderCageSettings: a trailing slash never yields a doubled separator", () => {
   const out = renderCageSettings({ permissions: { deny: ["Edit(//{{WORKTREE}}/a)"] } }, `${WT}/`);
-  assert.deepEqual(denyRules(out), ["Edit(//home/x/.claude/worktrees/demo/a)"]);
+  assert.ok(denyRules(out).includes("Edit(//home/x/.claude/worktrees/demo/a)"));
+  assert.ok(!denyRules(out).some((r) => r.includes("//home/x/.claude/worktrees/demo//")));
 });
 
 test("renderCageSettings: rejects a relative worktree path", () => {
@@ -57,7 +64,7 @@ test("renderCageSettings: rejects a relative worktree path", () => {
 
 test("renderCageSettings: leaves ~/ rules untouched", () => {
   const out = renderCageSettings({ permissions: { deny: ["Read(~/.ssh/**)"] } }, WT);
-  assert.deepEqual(denyRules(out), ["Read(~/.ssh/**)"]);
+  assert.ok(denyRules(out).includes("Read(~/.ssh/**)"));
 });
 
 // ─── criticalFileRules + profile merge (Feature 03) ───────────────────────────
@@ -90,11 +97,14 @@ test("renderCageSettings: merges profile critical files into the base template",
     WT,
     { criticalFiles: ["backend/src/bot/**"] },
   );
-  assert.deepEqual(denyRules(out), [
+  const rules = denyRules(out);
+  for (const r of [
     "Edit(//home/x/.claude/worktrees/demo/keep)",
     "Edit(//home/x/.claude/worktrees/demo/backend/src/bot/**)",
     "Write(//home/x/.claude/worktrees/demo/backend/src/bot/**)",
-  ]);
+  ]) {
+    assert.ok(rules.includes(r), `expected rule present: ${r}`);
+  }
 });
 
 // ─── auditCageSettings ────────────────────────────────────────────────────────
@@ -373,4 +383,63 @@ test("writeCageSettings: writes a Tier A cage on a machine with the sandbox off"
   } finally {
     rmSync(wt, { recursive: true, force: true });
   }
+});
+
+// ─── cage-bash-hook (E2) ──────────────────────────────────────────────────────
+
+test("template self-protects .mcp.json, CLAUDE.md, AGENTS.md by IDENTITY (E2 A7)", () => {
+  const rules = denyRules(renderCageSettings(loadTemplate(), WT));
+  for (const f of [".mcp.json", "CLAUDE.md", "AGENTS.md"]) {
+    assert.ok(
+      rules.includes(`Edit(//home/x/.claude/worktrees/demo/${f})`) &&
+        rules.includes(`Write(//home/x/.claude/worktrees/demo/${f})`),
+      `cage must Edit+Write deny ${f}`,
+    );
+  }
+});
+
+test("template denies network verbs + WebFetch/WebSearch (E2 A4)", () => {
+  const rules = denyRules(renderCageSettings(loadTemplate(), WT));
+  for (const r of ["WebFetch", "WebSearch", "Bash(curl:*)", "Bash(wget:*)", "Bash(nc:*)"]) {
+    assert.ok(rules.includes(r), `cage must deny ${r}`);
+  }
+});
+
+test("renderCageSettings wires the PreToolUse Bash hook (E2 F1)", () => {
+  const out = renderCageSettings(loadTemplate(), WT);
+  const pre = out.hooks?.PreToolUse?.[0];
+  assert.equal(pre?.matcher, "Bash");
+  assert.match(pre?.hooks?.[0]?.command ?? "", /node .*\/\.claude\/cage-bash-hook\.mjs$/);
+});
+
+test("parentEnvRules denies ancestor .env reads, //-anchored (E2 A3)", () => {
+  const rules = parentEnvRules("/home/x/.claude/worktrees/demo");
+  assert.ok(rules.includes("Read(//home/x/.claude/worktrees/.env)"));
+  assert.ok(rules.includes("Read(//home/x/.claude/.env)"));
+  assert.ok(rules.includes("Read(//home/x/.env)"));
+  assert.ok(rules.every((r) => r.startsWith("Read(//")), "every ancestor-env rule is fs-absolute anchored");
+});
+
+test("writeCageSettings writes the rendered hook next to the settings (E2 F1)", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "cage-hook-"));
+  try {
+    writeCageSettings(dir, { project: "factory" });
+    const hookPath = cageHookPath(dir);
+    assert.ok(existsSync(hookPath), "the hook file must exist");
+    const src = readFileSync(hookPath, "utf8");
+    assert.ok(!src.includes("{{WORKTREE}}"), "the hook must be rendered (no placeholder left)");
+    assert.ok(src.includes(dir), "the hook carries the absolute worktree path");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("auditCageSettings: a rendered cage with the hook + ancestor-env denies is clean", () => {
+  assert.deepEqual(auditCageSettings(renderCageSettings(loadTemplate(), WT)), []);
+});
+
+test("renderBashHook substitutes the worktree and stays valid JS (E2 F1)", () => {
+  const src = renderBashHook("/home/x/.claude/worktrees/demo");
+  assert.ok(!src.includes("{{WORKTREE}}"));
+  assert.ok(src.includes('"/home/x/.claude/worktrees/demo"'));
 });
