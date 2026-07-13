@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -17,11 +17,15 @@ import { loadTemplate, renderCageSettings } from "./cage-settings.mjs";
 import { renderOpencodeCage } from "./cage-opencode.mjs";
 import {
   armPushDetector,
+  buildParentEnvFixture,
   captureRemoteRefs,
   checkTag,
   checksPass,
   claudeStaticChecks,
   disarmPushDetector,
+  restoreFile,
+  sentinelPathFor,
+  snapshotFile,
   staticChecks,
 } from "./probe-cage.mjs";
 
@@ -270,4 +274,81 @@ test("armPushDetector: returns null when the worktree is not a git repo (→ SKI
   assert.equal(arm, null);
   // disarm on a null arm is a safe no-op.
   assert.doesNotThrow(() => disarmPushDetector("/nonexistent/probe-path", null));
+});
+
+// ─── F3 live-check helpers: the pure/IO building blocks the new adversarial ──
+// ─── live checks (interpreter write, cp/mv, symlink, planted-settings, ...) ──
+// are built from. The checks themselves spawn a real model (only under
+// `--live -m <model>`) and so are not unit-tested directly — these helpers are
+// the part that CAN be, and must be, exercised without a model.
+
+test("sentinelPathFor: derives a safe throwaway path from a wildcarded glob", () => {
+  const p = sentinelPathFor("/tmp/wt", "backend/src/bot/**", "notes.txt");
+  assert.equal(p, path.join("/tmp/wt", "backend/src/bot/notes.txt"));
+});
+
+test("sentinelPathFor: returns null for a glob with no wildcard (a real committed file) — caller must SKIP", () => {
+  // Overwriting `prisma/schema.prisma` (no wildcard ⇒ names a real file, not a
+  // directory) to run a sentinel check would corrupt real source. null tells the
+  // caller to report SKIPPED, never silently probe a live file.
+  assert.equal(sentinelPathFor("/tmp/wt", "prisma/schema.prisma", "notes.txt"), null);
+  assert.equal(sentinelPathFor("/tmp/wt", "scripts/verdict.mjs", "notes.txt"), null);
+});
+
+test("snapshotFile/restoreFile: round-trips an EXISTING file's exact content", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "probe-cage-snap-"));
+  try {
+    const p = path.join(dir, "f.txt");
+    writeFileSync(p, "original content\n");
+    const snap = snapshotFile(p);
+    writeFileSync(p, "mutated by the sentinel check\n");
+    restoreFile(p, snap);
+    assert.equal(readFileSync(p, "utf8"), "original content\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("snapshotFile/restoreFile: a file that did NOT exist before is removed after (not left behind)", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "probe-cage-snap-"));
+  try {
+    const p = path.join(dir, "new-sentinel.txt");
+    const snap = snapshotFile(p);
+    assert.equal(snap.existed, false);
+    writeFileSync(p, "sentinel content\n");
+    restoreFile(p, snap);
+    assert.equal(existsSync(p), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("CLI: static-only run against a real project still exits 0 end-to-end (main() is now async)", () => {
+  // main() became async to await the exfil check's HTTP-listener teardown.
+  // This is the regression guard: the static (non-`--live`) path must still
+  // resolve and exit cleanly, not hang or reject.
+  const wt = mkdtempSync(path.join(tmpdir(), "probe-cage-static-e2e-"));
+  try {
+    const r = runProbe([wt, "--project", "factory", "--driver", "claude"]);
+    assert.equal(r.status, 0, `expected exit 0, got ${r.status}\n${r.stderr}`);
+    assert.match(r.stdout, /STATIC ONLY/);
+    assert.doesNotMatch(r.stdout, /LIVE —/, "no --live flag ⇒ no live section");
+  } finally {
+    rmSync(wt, { recursive: true, force: true });
+  }
+});
+
+test("buildParentEnvFixture: plants a canary parent .env a few levels above a nested inner dir, never the real repo's", () => {
+  const canary = "canary-test-value-123";
+  const { root, innerDir } = buildParentEnvFixture(canary);
+  try {
+    assert.ok(existsSync(path.join(root, ".env")));
+    assert.match(readFileSync(path.join(root, ".env"), "utf8"), new RegExp(canary));
+    assert.ok(existsSync(innerDir));
+    assert.ok(innerDir.startsWith(root) && innerDir !== root, "inner dir must be nested under root, not root itself");
+    const depth = path.relative(root, innerDir).split(path.sep).length;
+    assert.ok(depth >= 2, `expected the inner dir nested at least 2 levels deep, got ${depth}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
