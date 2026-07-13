@@ -35,11 +35,14 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   appendFileSync,
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -349,6 +352,57 @@ function logLine(repoRoot, message) {
   appendFileSync(logPath, formatPublishLogLine(message));
 }
 
+// ─── Lock (feature F4/D-24/D-25) ─────────────────────────────────────────────
+//
+// Every state change fires autopublish twice (verdict/ratify's explicit
+// triggerAutopublish() plus the post-commit hook) — deliberately, for
+// resilience. Without serialization, two concurrent invocations could both
+// read the same prevHash, both pass the hash guard, and both append a
+// history.jsonl snapshot set / both rsync. The advisory lockfile below
+// serializes the render+publish+append critical section so only one funnel
+// runs at a time; the other backs off as a no-op (never an error — autopublish
+// stays best-effort and must never fail a verdict).
+
+const LOCK_STALE_MS = 120_000;
+
+/**
+ * Try to acquire the advisory publish lock. Returns true if acquired (the
+ * caller must release it via releaseLock in a finally block); false if
+ * another run currently holds a live lock (the caller backs off as a no-op).
+ * A lock file older than LOCK_STALE_MS is treated as abandoned — a crashed
+ * prior run — and reclaimed. Never throws: any unexpected fs error is
+ * treated as "could not acquire" so the lock itself can never break a verdict.
+ * @param {string} lockPath
+ * @returns {boolean}
+ */
+function acquireLock(lockPath) {
+  try {
+    mkdirSync(path.dirname(lockPath), { recursive: true });
+    closeSync(openSync(lockPath, "wx"));
+    return true;
+  } catch (err) {
+    if (err?.code !== "EEXIST") return false;
+    try {
+      const age = Date.now() - statSync(lockPath).mtimeMs;
+      if (age < LOCK_STALE_MS) return false;
+      unlinkSync(lockPath);
+      closeSync(openSync(lockPath, "wx"));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/** Release the advisory publish lock. Best-effort — never throws. */
+function releaseLock(lockPath) {
+  try {
+    unlinkSync(lockPath);
+  } catch {
+    // already gone / never ours — fine either way
+  }
+}
+
 // ─── CLI ─────────────────────────────────────────────────────────────────────
 
 function usage() {
@@ -411,6 +465,24 @@ function run({ repoRoot, dryRun }) {
     return 0;
   }
 
+  // Serialize the render+publish+append critical section — see the "Lock"
+  // section above. Both autopublish triggers (verdict/ratify + post-commit)
+  // stay wired; this only stops them from racing each other.
+  const lockPath = path.join(repoRoot, "dist", "factory-board", ".lock");
+  if (!acquireLock(lockPath)) {
+    logLine(repoRoot, "lock ocupado — outro publish em andamento, pulando");
+    return 0;
+  }
+
+  try {
+    return runLocked({ repoRoot, dryRun, manifest });
+  } finally {
+    releaseLock(lockPath);
+  }
+}
+
+/** The render+publish+append critical section, run while holding the lock. */
+function runLocked({ repoRoot, dryRun, manifest }) {
   // Render every project in the manifest.
   const rendered = manifest.map((entry) => renderProject({ entry, factoryRoot: repoRoot }));
 

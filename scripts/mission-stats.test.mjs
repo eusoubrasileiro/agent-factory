@@ -9,7 +9,8 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -581,4 +582,109 @@ test("collect degrades gracefully when the orchestrator window exists but the tr
   // durations still degrade to the window length even without transcript usage,
   // since seatDuration already pairs the phase_start/phase_end ts (same figure).
   assert.equal(res.stats.durations.orchestrating, 30 * 60 * 1000);
+});
+
+// ─── collect: transient git failure after a resolved range (F3/D-24/D-25) ─────
+// A check that cannot fail must never report success: a `git diff` failure
+// AFTER resolveRange succeeds must not be silently presented as "0 LOC
+// changed" — that's indistinguishable from a mission that truly changed
+// nothing.
+
+/** Build a tiny real git repo with a `main` commit and an `agent/<slug>` branch one commit ahead. */
+function initGitRepoWithBranch(slug) {
+  const root = mkdtempSync(path.join(tmpdir(), "mstats-git-"));
+  const run = (args) => {
+    const r = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+    assert.equal(r.status, 0, `git ${args.join(" ")} failed: ${r.stderr}${r.stdout}`);
+    return r;
+  };
+  run(["init", "-q", "-b", "main"]);
+  run(["config", "user.email", "test@example.com"]);
+  run(["config", "user.name", "Test"]);
+  writeFileSync(path.join(root, "a.txt"), "one\n");
+  run(["add", "."]);
+  run(["commit", "-q", "-m", "init"]);
+  run(["checkout", "-q", "-b", `agent/${slug}`]);
+  writeFileSync(path.join(root, "a.txt"), "one\ntwo\n");
+  run(["add", "."]);
+  run(["commit", "-q", "-m", "change"]);
+  run(["checkout", "-q", "main"]);
+  return root;
+}
+
+/**
+ * A PATH-shimmed `git` that fails only on `git diff ...` (both the
+ * `--numstat` and plain forms mission-stats.mjs runs after `resolveRange`)
+ * and forwards every other subcommand (rev-parse, merge-base, log, show) to
+ * the real binary — so `resolveRange` still succeeds.
+ */
+function makeFailingGitDiffStub() {
+  const realGit = spawnSync("which", ["git"], { encoding: "utf8" }).stdout.trim();
+  const stubDir = mkdtempSync(path.join(tmpdir(), "git-diff-stub-"));
+  const stub = path.join(stubDir, "git");
+  writeFileSync(
+    stub,
+    `#!/usr/bin/env node
+import { spawnSync } from "node:child_process";
+const REAL = ${JSON.stringify(realGit)};
+const args = process.argv.slice(2);
+if (args[0] === "diff") {
+  process.stderr.write("stub: git diff failure\\n");
+  process.exit(1);
+}
+const r = spawnSync(REAL, args, { cwd: process.cwd(), encoding: "utf8" });
+process.stdout.write(r.stdout ?? "");
+process.stderr.write(r.stderr ?? "");
+process.exit(r.status ?? 1);
+`,
+  );
+  chmodSync(stub, 0o755);
+  return { stubDir, stub };
+}
+
+test("collect stamps partial=true and does not report a fake zero LOC when git diff fails post-resolveRange (F3)", () => {
+  const repoRoot = initGitRepoWithBranch("git-fail-mission");
+  const missions = path.join(repoRoot, "missions", "wahub");
+  mkdirSync(path.join(missions, "git-fail-mission"), { recursive: true });
+  const { stubDir, stub } = makeFailingGitDiffStub();
+  const savedPath = process.env.PATH;
+  try {
+    process.env.PATH = `${stubDir}:${savedPath}`;
+    const res = collect({
+      slug: "git-fail-mission",
+      missionsRoot: missions,
+      repoRoot,
+    });
+    assert.equal(res.code, 0, "collect stays soft-fail (exit 0) even on a git failure");
+    assert.equal(res.stats.partial, true);
+    assert.notDeepEqual(
+      res.stats.loc,
+      { added: 0, deleted: 0, files: 0 },
+      "a git failure must not be presented as an authoritative zero diff",
+    );
+    assert.equal(res.stats.loc, null);
+    assert.equal(res.stats.testsAdded, null);
+  } finally {
+    process.env.PATH = savedPath;
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(stubDir, { recursive: true, force: true });
+  }
+});
+
+test("collect does NOT set partial on the normal all-clean happy path", () => {
+  const repoRoot = initGitRepoWithBranch("clean-mission");
+  const missions = path.join(repoRoot, "missions", "wahub");
+  mkdirSync(path.join(missions, "clean-mission"), { recursive: true });
+  try {
+    const res = collect({
+      slug: "clean-mission",
+      missionsRoot: missions,
+      repoRoot,
+    });
+    assert.equal(res.code, 0);
+    assert.ok(!res.stats.partial, `partial should be falsy on the happy path, got ${res.stats.partial}`);
+    assert.deepEqual(res.stats.loc, { added: 1, deleted: 0, files: 1 });
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
 });
