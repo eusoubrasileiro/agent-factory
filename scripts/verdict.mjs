@@ -119,10 +119,17 @@ function missionExists(root, slug) {
 function readRecords(root, slug) {
   const p = logPath(root, slug);
   if (!existsSync(p)) return [];
-  return readFileSync(p, "utf8")
-    .split("\n")
-    .filter((line) => line.trim().length > 0)
-    .map((line) => JSON.parse(line));
+  const records = [];
+  for (const line of readFileSync(p, "utf8").split("\n")) {
+    if (line.trim().length === 0) continue;
+    try {
+      records.push(JSON.parse(line));
+    } catch {
+      // skip corrupt line, never throw — a torn append from a crashed writer must
+      // not block a legitimate `verdict status` (house style, cf. history.mjs).
+    }
+  }
+  return records;
 }
 
 // ─── Board sync hook (soft-fail, M-07) ─────────────────────────────────────────
