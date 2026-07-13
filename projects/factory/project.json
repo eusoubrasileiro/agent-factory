@@ -5,6 +5,7 @@
   "prd": null,
   "trunk": "main",
   "branchPrefix": "agent/",
+  "worktreeMarker": "/.worktrees/",
   "gate": ["pnpm test"],
   "dispatch": "git worktree add .worktrees/{slug} -b agent/{slug}"
 }

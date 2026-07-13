@@ -56,7 +56,7 @@ import { opencodeCagePath, writeOpencodeCage } from "./cage-opencode.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 min — a full TDD feature can take a while
-const WORKTREE_MARKER = process.env.FACTORY_WORKTREE_MARKER ?? "/.claude/worktrees/";
+const DEFAULT_WORKTREE_MARKER = "/.claude/worktrees/";
 
 // ─── Pure core (unit-tested) ─────────────────────────────────────────────────
 
@@ -64,12 +64,16 @@ const WORKTREE_MARKER = process.env.FACTORY_WORKTREE_MARKER ?? "/.claude/worktre
  * Is `dir` an isolated dispatched worktree? The factory materializes those
  * under `.claude/worktrees/<slug>/` (see scripts/dispatch-worktree.sh). We
  * confine the external agent to one so it can never mutate the main tree.
+ * The marker is a per-project FACT from the profile (`project.json → worktreeMarker`,
+ * default `/.claude/worktrees/`), not an engine constant (D-27) — pass the resolved
+ * profile's marker; the default keeps back-compat for callers that don't.
  * @param {string} dir — already absolute
+ * @param {string} [marker] — the profile's worktree marker
  * @returns {boolean}
  */
-export function isWorktreeDir(dir) {
+export function isWorktreeDir(dir, marker = DEFAULT_WORKTREE_MARKER) {
   const norm = dir.split(path.sep).join("/");
-  return norm.includes(WORKTREE_MARKER);
+  return norm.includes(marker);
 }
 
 /**
@@ -403,7 +407,8 @@ async function main() {
   }
 
   opts.dir = path.resolve(opts.dir);
-  if (!isWorktreeDir(opts.dir) && !opts.allowAnyDir) {
+  const worktreeMarker = resolveProject({ project: opts.project }).profile.worktreeMarker;
+  if (!isWorktreeDir(opts.dir, worktreeMarker) && !opts.allowAnyDir) {
     process.stderr.write(
       `refusing: --dir is not an isolated worktree (${opts.dir}).\n` +
         "Route external agents to a dispatched .claude/worktrees/<slug>/ tree, " +
