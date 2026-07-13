@@ -18,8 +18,8 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -31,6 +31,7 @@ import {
   assertSeatEndpoint,
   buildClaudeEnv,
   loadSeatCredentials,
+  makeSeatConfigDir,
   parseClaudeResult,
 } from "./claude-worker.mjs";
 
@@ -337,6 +338,59 @@ test("buildClaudeEnv: with no seat creds, no ANTHROPIC_* reaches the child (OAut
   assert.equal(env.HOME, "/home/a", "HOME must survive — it is where the OAuth credentials live");
 });
 
+// ─── CLAUDE_CONFIG_DIR isolation (F2) ────────────────────────────────────────
+//
+// Today `claude -p` inherits the operator's own `~/.claude` config (via HOME,
+// which the allowlist must keep for OAuth to work). Operator user-settings could
+// layer permissions into the seat and widen the cage from outside the rendered
+// `--settings` file. A dedicated, throwaway CLAUDE_CONFIG_DIR under the worktree
+// closes that: only the cage governs the seat.
+
+test("makeSeatConfigDir: creates a dir under <worktree>/.claude, not the operator's ~/.claude", () => {
+  const wt = mkdtempSync(path.join(tmpdir(), "seat-config-"));
+  try {
+    const dir = makeSeatConfigDir(wt);
+    assert.ok(existsSync(dir), "the config dir must actually be created");
+    assert.ok(dir.startsWith(path.join(wt, ".claude")), `expected under ${wt}/.claude, got ${dir}`);
+    assert.notEqual(dir, path.join(homedir(), ".claude"), "must never be the operator's own config dir");
+  } finally {
+    rmSync(wt, { recursive: true, force: true });
+  }
+});
+
+test("makeSeatConfigDir: a fresh, unique dir every call — no state survives between spawns", () => {
+  const wt = mkdtempSync(path.join(tmpdir(), "seat-config-"));
+  try {
+    const first = makeSeatConfigDir(wt);
+    const second = makeSeatConfigDir(wt);
+    assert.notEqual(first, second, "each spawn must get its own fresh directory");
+    assert.ok(existsSync(first));
+    assert.ok(existsSync(second));
+  } finally {
+    rmSync(wt, { recursive: true, force: true });
+  }
+});
+
+test("buildClaudeEnv: with a worktree dir, sets CLAUDE_CONFIG_DIR under it (not ~/.claude)", () => {
+  const wt = mkdtempSync(path.join(tmpdir(), "seat-config-"));
+  try {
+    const env = buildClaudeEnv({ PATH: "/usr/bin", HOME: "/home/a" }, { ANTHROPIC_AUTH_TOKEN: "tok" }, wt);
+    assert.ok(env.CLAUDE_CONFIG_DIR, "CLAUDE_CONFIG_DIR must be set when a worktree dir is given");
+    assert.ok(
+      env.CLAUDE_CONFIG_DIR.startsWith(path.join(wt, ".claude")),
+      `expected under ${wt}/.claude, got ${env.CLAUDE_CONFIG_DIR}`,
+    );
+    assert.notEqual(env.CLAUDE_CONFIG_DIR, path.join(homedir(), ".claude"));
+  } finally {
+    rmSync(wt, { recursive: true, force: true });
+  }
+});
+
+test("buildClaudeEnv: without a worktree dir, CLAUDE_CONFIG_DIR is left unset (back-compat)", () => {
+  const env = buildClaudeEnv({ PATH: "/usr/bin" }, { ANTHROPIC_AUTH_TOKEN: "tok" });
+  assert.ok(!("CLAUDE_CONFIG_DIR" in env));
+});
+
 // ─── full spawn path, with a stubbed `claude` binary (costs nothing) ─────────
 
 /** Put a fake `claude` on PATH that prints one result event. */
@@ -363,6 +417,39 @@ test("CLI: --allow-anthropic runs a Sonnet seat end-to-end, caged, no creds need
     assert.match(r.stdout, /session=sess-1/);
     // The cage is still installed — an opt-in seat is not an uncaged seat.
     assert.ok(existsSync(path.join(wt, ".claude", "settings.external.json")), "cage must be written");
+  } finally {
+    rmSync(wt, { recursive: true, force: true });
+    rmSync(stub, { recursive: true, force: true });
+  }
+});
+
+/** Put a fake `claude` on PATH that dumps its env to `envDumpPath`, then prints one result event. */
+function stubClaudeCapturingEnv(resultJson, envDumpPath) {
+  const dir = mkdtempSync(path.join(tmpdir(), "stub-claude-env-"));
+  const bin = path.join(dir, "claude");
+  writeFileSync(bin, `#!/bin/sh\nenv > "${envDumpPath}"\ncat <<'JSON'\n${resultJson}\nJSON\n`, { mode: 0o755 });
+  return dir;
+}
+
+test("CLI: the spawned seat's env carries an isolated CLAUDE_CONFIG_DIR, not the operator's ~/.claude", () => {
+  const wt = mkdtempSync(path.join(tmpdir(), "cw-configdir-"));
+  const envDump = path.join(wt, "env-dump.txt");
+  const stub = stubClaudeCapturingEnv(
+    JSON.stringify({ type: "result", is_error: false, session_id: "sess-cd", usage: { input_tokens: 1, output_tokens: 1 } }),
+    envDump,
+  );
+  try {
+    const r = runCli(
+      ["--dir", wt, "--allow-any-dir", "--model", "sonnet", "--project", "factory", "--prompt", "hi", "--allow-anthropic", "--creds", "/nonexistent"],
+      { PATH: `${stub}:${process.env.PATH}` },
+    );
+    assert.equal(r.status, 0, `expected success, got ${r.status}\n${r.stderr}`);
+    const dumped = readFileSync(envDump, "utf8");
+    const line = dumped.split("\n").find((l) => l.startsWith("CLAUDE_CONFIG_DIR="));
+    assert.ok(line, "the spawned process must receive CLAUDE_CONFIG_DIR");
+    const value = line.slice("CLAUDE_CONFIG_DIR=".length);
+    assert.ok(value.startsWith(path.join(wt, ".claude")), `expected under ${wt}/.claude, got ${value}`);
+    assert.notEqual(value, path.join(homedir(), ".claude"));
   } finally {
     rmSync(wt, { recursive: true, force: true });
     rmSync(stub, { recursive: true, force: true });

@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { extractSecrets, findLeaks, loadDummyValues, parseEnv } from "./probe-secrets.mjs";
+import { extractSecrets, findLeaks, findTreeLeaks, loadDummyValues, parseEnv, walkTreeFiles } from "./probe-secrets.mjs";
 
 const PARENT_ENV = [
   "# a comment",
@@ -97,6 +97,93 @@ test("findLeaks ignores non-secret config the seat and parent share on purpose",
   const secrets = extractSecrets(PARENT_ENV, 12);
   const files = [{ file: ".env", text: "BASE_URL=http://localhost:3000" }];
   assert.deepEqual(findLeaks(files, secrets, DUMMY_VALUES, 12), []);
+});
+
+// ─── whole-tree scan: a leak is a leak wherever it lands, not just in .env* ──
+//
+// The original scan only looked at files named `.env*` directly under the
+// worktree root. A secret copied into a nested scratch file (`docs/notes.txt`,
+// `sub/deep/notes.txt`) walked right past it. `findTreeLeaks` catches both a
+// dotenv-shaped `KEY=value` assignment (key attributed, same as `findLeaks`)
+// AND a bare substring embed (key is `null` — the value appeared, but not as a
+// recognizable assignment).
+
+test("findTreeLeaks: catches a parent secret embedded in a plain (non-KEY=VALUE) file", () => {
+  const secret = "eyJQTEFDRUhPTERFUgOiJIUzI1NiJ9.super-real-nested-leak-value";
+  const files = [{ file: path.join("sub", "deep", "notes.txt"), text: `remember to rotate: ${secret}\n` }];
+  const hits = findTreeLeaks(files, [secret], [], 12);
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].file, path.join("sub", "deep", "notes.txt"));
+  assert.equal(hits[0].key, null, "a plain-text embed has no KEY=VALUE — key is null");
+  assert.equal(hits[0].secret, secret);
+});
+
+test("findTreeLeaks: still attributes the key for a dotenv-shaped assignment (parity with findLeaks)", () => {
+  const secret = "eyJQTEFDRUhPTERFUgOiJIUzI1NiJ9.super-real-role-key";
+  const files = [{ file: ".env", text: `SUPABASE_SERVICE_ROLE_KEY=${secret}\n` }];
+  const hits = findTreeLeaks(files, [secret], [], 12);
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].key, "SUPABASE_SERVICE_ROLE_KEY");
+});
+
+test("findTreeLeaks: does not double-count a value caught by both passes", () => {
+  const secret = "eyJQTEFDRUhPTERFUgOiJIUzI1NiJ9.super-real-role-key";
+  const files = [{ file: ".env", text: `KEY=${secret}\nsome other line mentions ${secret} again\n` }];
+  const hits = findTreeLeaks(files, [secret], [], 12);
+  assert.equal(hits.length, 1, "one file, one secret value — one hit, not two");
+});
+
+test("findTreeLeaks: dummy values are still subtracted", () => {
+  const shared = "http://localhost:3000/shared-config-value-longer-than-12";
+  const files = [{ file: "notes.txt", text: `see ${shared} for details\n` }];
+  assert.deepEqual(findTreeLeaks(files, [shared], [shared], 12), []);
+});
+
+test("walkTreeFiles: recursively collects every file, relative-pathed to the root", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "probe-tree-"));
+  try {
+    mkdirSync(path.join(root, "sub", "deep"), { recursive: true });
+    writeFileSync(path.join(root, "top.txt"), "top\n");
+    writeFileSync(path.join(root, "sub", "deep", "notes.txt"), "deep\n");
+    const files = walkTreeFiles(root);
+    const names = files.map((f) => f.file).sort();
+    assert.deepEqual(names, [path.join("sub", "deep", "notes.txt"), "top.txt"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("walkTreeFiles: skips .git and node_modules — noise and history, not seat-carried secrets", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "probe-tree-skip-"));
+  try {
+    mkdirSync(path.join(root, ".git", "objects"), { recursive: true });
+    mkdirSync(path.join(root, "node_modules", "pkg"), { recursive: true });
+    writeFileSync(path.join(root, ".git", "objects", "blob"), "should not be scanned\n");
+    writeFileSync(path.join(root, "node_modules", "pkg", "index.js"), "should not be scanned\n");
+    writeFileSync(path.join(root, "real.txt"), "clean file\n");
+    const files = walkTreeFiles(root);
+    assert.ok(files.every((f) => !f.file.startsWith(".git") && !f.file.startsWith("node_modules")));
+    assert.deepEqual(files.map((f) => f.file), ["real.txt"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("CLI: a leak planted in a nested non-.env file is still caught (whole-tree scan)", () => {
+  const parent = mkdtempSync(path.join(tmpdir(), "probe-cli-tree-parent-"));
+  const seat = mkdtempSync(path.join(tmpdir(), "probe-cli-tree-seat-"));
+  try {
+    const secret = "eyJQTEFDRUhPTERFUgOiJIUzI1NiJ9.this-leaked-into-a-plain-note";
+    writeFileSync(path.join(parent, ".env"), `SUPABASE_SERVICE_ROLE_KEY=${secret}\n`);
+    mkdirSync(path.join(seat, "docs"), { recursive: true });
+    writeFileSync(path.join(seat, "docs", "notes.txt"), `oops, pasted the key: ${secret}\n`);
+    const r = runProbe([seat, "--parent", parent]);
+    assert.equal(r.status, 1, "a leak into a non-.env file must still be caught");
+    assert.match(r.stderr, /LEAK: 1 real parent-secret value/);
+    assert.match(r.stderr, /notes\.txt/);
+  } finally {
+    for (const d of [parent, seat]) rmSync(d, { recursive: true, force: true });
+  }
 });
 
 // ─── loadDummyValues: the loader, not just the pure core ─────────────────────
