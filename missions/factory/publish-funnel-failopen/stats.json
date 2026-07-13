@@ -1,0 +1,79 @@
+{
+  "slug": "publish-funnel-failopen",
+  "generatedAt": "2026-07-13T20:29:53.407Z",
+  "branch": "agent/publish-funnel-failopen",
+  "mergeBase": "0c71eb491714d6f5d7b3b87f5ee1278684615996",
+  "loc": {
+    "added": 0,
+    "deleted": 0,
+    "files": 0
+  },
+  "testsAdded": 0,
+  "baselineChanged": false,
+  "baselineKeysChanged": [],
+  "durations": {
+    "building": 961420,
+    "validating": null,
+    "orchestrating": null,
+    "total": 961420
+  },
+  "tokens": {
+    "worker": {
+      "in": 176,
+      "out": 59685,
+      "reasoning": null,
+      "cacheRead": 11166419,
+      "cacheWrite": 176350,
+      "total": 11402630
+    },
+    "validator": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "total": 0
+    },
+    "orchestrator": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "total": 0
+    },
+    "total": 11402630
+  },
+  "cost": {
+    "worker": {
+      "api": 5.3038287,
+      "derived": 4.907041,
+      "reported": 5.3038287
+    },
+    "validator": {
+      "api": null,
+      "derived": null,
+      "reported": null
+    },
+    "orchestrator": {
+      "api": null,
+      "derived": null,
+      "reported": null
+    },
+    "total": {
+      "api": 5.3038287,
+      "derived": 4.907041,
+      "reported": 5.3038287
+    }
+  },
+  "models": {
+    "worker": "claude-sonnet-5",
+    "validator": null,
+    "orchestrator": null
+  },
+  "rounds": 1,
+  "attention": 0,
+  "escalations": 0,
+  "pr": null,
+  "partial": false
+}
