@@ -13,7 +13,8 @@
     "board:autopublish": "node scripts/board-autopublish.mjs",
     "intake": "node scripts/intake-server.mjs",
     "mission:ratify": "node scripts/ratify.mjs",
-    "factory:opencode": "node scripts/opencode-worker.mjs"
+    "factory:opencode": "node scripts/opencode-worker.mjs",
+    "spend": "node scripts/spend.mjs"
   },
   "engines": {
     "node": ">=20"

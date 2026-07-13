@@ -989,6 +989,19 @@ function fmtTokens(n) {
   return String(n);
 }
 
+/** Format a nullable USD amount for a stat card: "$12.50", or "sem dados". */
+export function fmtUsd(n) {
+  if (n == null || Number.isNaN(n)) return "sem dados";
+  const num = Number(n);
+  if (num < 0) return `-$${(-num).toFixed(2)}`;
+  return `$${num.toFixed(2)}`;
+}
+
+/** Format a nullable hour count for a stat card: "1.5h", or "sem dados". */
+function fmtHours(h) {
+  return h == null || Number.isNaN(h) ? "sem dados" : `${Number(h).toFixed(1)}h`;
+}
+
 /** Total wall-clock hours from a stats `durations` object, or null. */
 function statsDurationH(durations) {
   if (!durations || typeof durations !== "object") return null;
@@ -1008,11 +1021,13 @@ function statsDurationH(durations) {
  *   - passPrimeiraRate: fraction that PASSed validation on round 1 (0..1)
  *   - rondasMedia: mean validate rounds
  *   - tokensPorFeature: Σ tokens.total / Σ features (null when no features)
+ *   - custoPorFeature: Σ stats.cost.total.api / Σ features (null when no
+ *     features OR no mission had a numeric cost — never a fake 0)
  *   - escalations: Σ escalations
  *   - tokensTotal: Σ tokens.total
  *
  * @param {Array<object>} missions — board model missions (with optional `stats`)
- * @returns {Array<{ model: string, missoes: number, passPrimeiraRate: number|null, rondasMedia: number|null, tokensPorFeature: number|null, escalations: number, tokensTotal: number }>}
+ * @returns {Array<{ model: string, missoes: number, passPrimeiraRate: number|null, rondasMedia: number|null, tokensPorFeature: number|null, custoPorFeature: number|null, escalations: number, tokensTotal: number }>}
  */
 export function aggregateAgents(missions) {
   const safe = Array.isArray(missions) ? missions : [];
@@ -1032,6 +1047,8 @@ export function aggregateAgents(missions) {
     let tokensSum = 0;
     let featuresSum = 0;
     let escalations = 0;
+    let costSum = 0;
+    let sawCost = false;
     for (const m of ms) {
       const rounds = typeof m.stats?.rounds === "number" ? m.stats.rounds : null;
       const passed = m.lastVerdict?.verdict === "PASS";
@@ -1043,6 +1060,10 @@ export function aggregateAgents(missions) {
       if (typeof m.stats?.tokens?.total === "number") tokensSum += m.stats.tokens.total;
       if (typeof m.features === "number") featuresSum += m.features;
       if (typeof m.stats?.escalations === "number") escalations += m.stats.escalations;
+      if (typeof m.stats?.cost?.total?.api === "number") {
+        costSum += m.stats.cost.total.api;
+        sawCost = true;
+      }
     }
     rows.push({
       model,
@@ -1050,6 +1071,7 @@ export function aggregateAgents(missions) {
       passPrimeiraRate: ms.length > 0 ? passFirst / ms.length : null,
       rondasMedia: roundsCount > 0 ? roundsSum / roundsCount : null,
       tokensPorFeature: featuresSum > 0 ? tokensSum / featuresSum : null,
+      custoPorFeature: sawCost && featuresSum > 0 ? costSum / featuresSum : null,
       escalations,
       tokensTotal: tokensSum,
     });
@@ -1089,6 +1111,13 @@ function renderHistoryTab(history) {
   const tokensTotal =
     h.tokensTotal !== null && h.tokensTotal !== undefined ? String(h.tokensTotal) : "sem dados";
   const atençãoPorFeature = fmtStat(h.atençãoPorFeature);
+  const custoTotal = fmtUsd(h.costTotal);
+  const planoTotal = fmtUsd(h.planTotal);
+  const economia = fmtUsd(h.savings);
+  const tempoTotal = fmtHours(h.timeTotalH);
+  const tempoPorFeature =
+    typeof h.timeTotalH === "number" && h.featuresTotal > 0 ? h.timeTotalH / h.featuresTotal : null;
+  const tempoPorFeatureFmt = fmtHours(tempoPorFeature);
 
   const tableBody = h.perMission
     .map((m) => {
@@ -1102,6 +1131,8 @@ function renderHistoryTab(history) {
           <td><span class="badge badge-status ${statusClass(m.estadoAtual)}">${esc(m.estadoAtual || "—")}</span></td>
           <td>${esc(leadTime)}</td>
           <td>${esc(m.rondas)}</td>
+          <td>${esc(fmtUsd(m.custo))}</td>
+          <td>${esc(fmtHours(m.tempoH))}</td>
           <td>${verdict}</td>
           <td>${esc(data)}</td>
         </tr>`;
@@ -1135,9 +1166,29 @@ function renderHistoryTab(history) {
         <div class="stat-value${atençãoPorFeature === "sem dados" ? " sem-dados" : ""}">${esc(atençãoPorFeature)}</div>
         <div class="stat-label">atenção-por-feature</div>
       </div>
+      <div class="stat-card">
+        <div class="stat-value${custoTotal === "sem dados" ? " sem-dados" : ""}">${esc(custoTotal)}</div>
+        <div class="stat-label">$ API total</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value${planoTotal === "sem dados" ? " sem-dados" : ""}">${esc(planoTotal)}</div>
+        <div class="stat-label">$ plano total</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value${economia === "sem dados" ? " sem-dados" : ""}">${esc(economia)}</div>
+        <div class="stat-label">economia (API − plano)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value${tempoTotal === "sem dados" ? " sem-dados" : ""}">${esc(tempoTotal)}</div>
+        <div class="stat-label">tempo total</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value${tempoPorFeatureFmt === "sem dados" ? " sem-dados" : ""}">${esc(tempoPorFeatureFmt)}</div>
+        <div class="stat-label">tempo/feature</div>
+      </div>
     </div>
       <table>
-        <thead><tr><th>Missão</th><th>Estado atual</th><th>Lead time</th><th>Rondas</th><th>Último verdict</th><th>Data</th></tr></thead>
+        <thead><tr><th>Missão</th><th>Estado atual</th><th>Lead time</th><th>Rondas</th><th>$</th><th>Tempo</th><th>Último verdict</th><th>Data</th></tr></thead>
         <tbody>
 ${tableBody}
         </tbody>
@@ -1170,13 +1221,14 @@ function renderAgentsTab(missions) {
           <td>${esc(fmtPct(a.passPrimeiraRate))}</td>
           <td>${esc(fmtStat(a.rondasMedia))}</td>
           <td>${esc(a.tokensPorFeature === null ? "—" : fmtTokens(Math.round(a.tokensPorFeature)))}</td>
+          <td>${esc(fmtUsd(a.custoPorFeature))}</td>
           <td>${esc(a.escalations)}</td>
         </tr>`;
     })
     .join("\n");
   return `  <section id="tab-agentes" class="tab-panel" role="tabpanel" hidden>
       <table>
-        <thead><tr><th>Modelo</th><th>Missões</th><th>PASS de 1ª</th><th>Rondas médias</th><th>Tokens/feature</th><th>Escalações</th></tr></thead>
+        <thead><tr><th>Modelo</th><th>Missões</th><th>PASS de 1ª</th><th>Rondas médias</th><th>Tokens/feature</th><th>$/feature</th><th>Escalações</th></tr></thead>
         <tbody>
 ${rows}
         </tbody>

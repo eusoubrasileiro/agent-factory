@@ -54,6 +54,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { cageSettingsPath, writeCageSettings } from "./cage-settings.mjs";
 import { isMainModule } from "./lib/is-main.mjs";
@@ -61,7 +62,8 @@ import { resolveProject } from "./lib/project.mjs";
 import { assertKnownProject, DEFAULT_GRACE_MS, killGracefully } from "./lib/worker-common.mjs";
 import { buildPhaseEndEvent, buildPhaseStartEvent, buildSpawnEnv, isWorktreeDir } from "./opencode-worker.mjs";
 
-const __dirname = path.dirname(new URL(".", import.meta.url).pathname);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+export const METRICS_SCRIPT = path.join(__dirname, "metrics.mjs");
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_CREDS_PATH = path.join(homedir(), ".config", "amiticia", "zai.env");
 
@@ -207,14 +209,25 @@ export function buildClaudeEnv(sourceEnv, creds = {}) {
  * Parse `claude -p --output-format json` output.
  *
  * Accepts a bare result object or a stream of JSON lines (we take the `result` event).
- * `total_cost_usd` is deliberately DROPPED: on a flat z.ai plan it is priced at
- * Anthropic rates and is fiction (D-13). Compare seats by tokens/feature.
- * `permission_denials` is likewise ignored — it is `[]` even when a deny fires (D-11d).
+ * `total_cost_usd` is captured as `apiCostUsd` (D-XX overturns D-13): it is the
+ * public-API-basis cost — real $ for Anthropic seats, the Anthropic-equivalent
+ * comparison figure for flat-plan seats. Never mistaken for cash on the flat plan.
+ * Cache tokens are surfaced first-class (cache read/write bill at their own tiers).
+ * `permission_denials` is ignored — it is `[]` even when a deny fires (D-11d).
  *
- * @param {string} out @returns {{tokens:number, tokensIn:number, tokensOut:number, sessionID:string|null, sawFinish:boolean}}
+ * @param {string} out @returns {{tokens:number, tokensIn:number, tokensOut:number, tokensCacheRead:number, tokensCacheWrite:number, apiCostUsd:number, sessionID:string|null, sawFinish:boolean}}
  */
 export function parseClaudeResult(out) {
-  const empty = { tokens: 0, tokensIn: 0, tokensOut: 0, sessionID: null, sawFinish: false };
+  const empty = {
+    tokens: 0,
+    tokensIn: 0,
+    tokensOut: 0,
+    tokensCacheRead: 0,
+    tokensCacheWrite: 0,
+    apiCostUsd: 0,
+    sessionID: null,
+    sawFinish: false,
+  };
   if (typeof out !== "string" || out.trim().length === 0) return empty;
 
   let result = null;
@@ -237,11 +250,15 @@ export function parseClaudeResult(out) {
   const tokensOut = Number(u.output_tokens ?? 0);
   const cacheRead = Number(u.cache_read_input_tokens ?? 0);
   const cacheWrite = Number(u.cache_creation_input_tokens ?? 0);
+  const apiCostUsd = Number(result.total_cost_usd ?? 0);
 
   return {
     tokens: tokensIn + tokensOut + cacheRead + cacheWrite,
     tokensIn,
     tokensOut,
+    tokensCacheRead: cacheRead,
+    tokensCacheWrite: cacheWrite,
+    apiCostUsd,
     sessionID: typeof result.session_id === "string" ? result.session_id : null,
     sawFinish: result.is_error !== true && result.type === "result",
   };
@@ -251,7 +268,7 @@ export function parseClaudeResult(out) {
 
 /** Best-effort telemetry. It must never fail a run. */
 function recordMetric(slug, event, project) {
-  const args = [path.join(__dirname, "metrics.mjs"), "record", slug];
+  const args = [METRICS_SCRIPT, "record", slug];
   if (project) args.push("--project", project);
   try {
     spawnSync(process.execPath, args, { input: JSON.stringify(event), stdio: ["pipe", "ignore", "ignore"] });
@@ -411,6 +428,9 @@ async function main() {
         tokens: parsed.tokens,
         tokensIn: parsed.tokensIn,
         tokensOut: parsed.tokensOut,
+        tokensCacheRead: parsed.tokensCacheRead,
+        tokensCacheWrite: parsed.tokensCacheWrite,
+        apiCostUsd: parsed.apiCostUsd,
         durationMs: wallMs,
       }),
       opts.project,
@@ -418,10 +438,12 @@ async function main() {
   }
   if (opts.jsonOut) writeFileSync(opts.jsonOut, `${res.stdout}\n`);
 
-  // Never print the token; never print costUsd (D-13).
+  // Never print the token. apiCost$ is the public-API-basis cost (D-XX) — real $
+  // for Anthropic seats, the Anthropic-equivalent comparison figure for the flat plan.
   process.stdout.write(
     `claude-worker: model=${opts.model} session=${parsed.sessionID ?? "-"} ` +
-      `tokens=${parsed.tokens} wallMs=${wallMs} timedOut=${res.timedOut} exit=${res.exitCode}\n`,
+      `tokens=${parsed.tokens} apiCost=$${parsed.apiCostUsd.toFixed(4)} wallMs=${wallMs} ` +
+      `timedOut=${res.timedOut} exit=${res.exitCode}\n`,
   );
   if (res.stderr.trim()) process.stderr.write(`${res.stderr.trim()}\n`);
 

@@ -25,6 +25,7 @@ import {
   aggregateAgents,
   buildTraceabilityModel,
   collectGitInfo,
+  fmtUsd,
   parseRequirementsLine,
   renderDashboardHtml,
   renderInline,
@@ -2015,4 +2016,178 @@ test("renderIntakeTab: a row with no backlog renders the 'não despachado' badge
     1,
     "only the uncited row gets the badge",
   );
+});
+
+// ─── fmtUsd (feature 01) ──────────────────────────────────────────────────────
+
+test("fmtUsd (board-report): negative → sign before $ (not $-X.XX)", () => {
+  assert.equal(fmtUsd(-59.5), "-$59.50");
+});
+
+test("fmtUsd (board-report): unchanged for non-negative, null, NaN", () => {
+  assert.equal(fmtUsd(0), "$0.00");
+  assert.equal(fmtUsd(null), "sem dados");
+  assert.equal(fmtUsd(NaN), "sem dados");
+});
+
+test("fmtUsd (board-report): -0 renders $0.00 (no spurious negative sign)", () => {
+  assert.equal(fmtUsd(-0), "$0.00");
+});
+
+
+// ─── Cost metrics (factory cost-metrics) ───────────────────────────────────
+//
+// Histórico gains 5 new stat cards ($ API total, $ plano total, economia,
+// tempo total, tempo/feature) and 2 new per-mission table columns ($, Tempo).
+// aggregateAgents gains `custoPorFeature`; the Agentes table gains a
+// "$/feature" column. Missing $/tempo data must render "sem dados" — NEVER a
+// fake "$0.00"/"0h".
+
+test("Histórico: fixture history with cost/time fields renders the 5 new stat cards + $/Tempo table columns", () => {
+  const history = {
+    missõesConcluídas: 1,
+    missõesPorSemana: 1,
+    leadTimeMediano: 1,
+    rondasMédia: 1,
+    tokensTotal: 100,
+    atençãoPorFeature: 0.5,
+    costTotal: 12.5,
+    planTotal: 72,
+    savings: -59.5,
+    timeTotalH: 1.5,
+    featuresTotal: 3,
+    byProject: {},
+    perMission: [
+      {
+        slug: "alpha",
+        project: "wahub",
+        estadoAtual: "Done",
+        leadTime: 1,
+        rondas: 1,
+        últimoVerdict: "PASS",
+        data: "2026-07-01T00:00:00Z",
+        custo: 12.5,
+        tempoH: 1.5,
+      },
+    ],
+  };
+  const html = renderDashboardHtml({ ...EMPTY_MODEL, history });
+  const panel = html.slice(html.indexOf("<!--hist-start-->"), html.indexOf("<!--hist-end-->"));
+
+  // New stat cards.
+  assert.match(panel, /\$ API total/);
+  assert.match(panel, /\$12\.50/);
+  assert.match(panel, /\$ plano total/);
+  assert.match(panel, /\$72\.00/);
+  assert.match(panel, /economia \(API − plano\)/);
+  // fmtUsd(-59.5) → "-$59.50" (sign before the $, not inside the formatted number).
+  assert.match(panel, /-\$59\.50/);
+  assert.match(panel, />tempo total</);
+  assert.match(panel, /1\.5h/);
+  assert.match(panel, /tempo\/feature/);
+  // tempoPorFeature = 1.5 / 3 = 0.5h
+  assert.match(panel, /0\.5h/);
+
+  // Per-mission table $/Tempo columns.
+  assert.match(panel, /<th>\$<\/th>/);
+  assert.match(panel, /<th>Tempo<\/th>/);
+  assert.match(panel, /\$12\.50/);
+  assert.match(panel, /1\.5h/);
+});
+
+test("Histórico: null cost/time fields render 'sem dados' with the sem-dados class (never fake $0.00/0h)", () => {
+  const history = {
+    missõesConcluídas: 1,
+    missõesPorSemana: null,
+    leadTimeMediano: null,
+    rondasMédia: 0,
+    tokensTotal: null,
+    atençãoPorFeature: null,
+    costTotal: null,
+    planTotal: null,
+    savings: null,
+    timeTotalH: null,
+    featuresTotal: 0,
+    byProject: {},
+    perMission: [
+      {
+        slug: "solo",
+        project: "wahub",
+        estadoAtual: "Done",
+        leadTime: null,
+        rondas: 0,
+        últimoVerdict: "PASS",
+        data: null,
+        custo: null,
+        tempoH: null,
+      },
+    ],
+  };
+  const html = renderDashboardHtml({ ...EMPTY_MODEL, history });
+  const panel = html.slice(html.indexOf("<!--hist-start-->"), html.indexOf("<!--hist-end-->"));
+
+  assert.doesNotMatch(panel, /\$0\.00/, "never render a fake $0.00 for missing cost");
+  assert.doesNotMatch(panel, />0h</, "never render a fake 0h for missing time");
+  // Every new card's value carries the sem-dados class when null.
+  const semDadosValueCount = (panel.match(/stat-value sem-dados">sem dados</g) || []).length;
+  assert.ok(
+    semDadosValueCount >= 5,
+    `expected >=5 sem-dados stat-values (cost total, plan total, savings, time total, time/feature); got ${semDadosValueCount}`,
+  );
+});
+
+test("aggregateAgents: custoPorFeature = Σ api cost / Σ features; null when no numeric cost was seen", () => {
+  const missions = [
+    missionWithStats(
+      "a",
+      {
+        models: { worker: "glm-5.2" },
+        cost: { total: { api: 3 } },
+      },
+      { features: 3 },
+    ),
+    missionWithStats(
+      "b",
+      {
+        models: { worker: "glm-5.2" },
+        cost: { total: { api: 6 } },
+      },
+      { features: 3 },
+    ),
+    missionWithStats(
+      "c",
+      {
+        models: { worker: "claude" },
+        cost: { total: { api: null } },
+      },
+      { features: 2 },
+    ),
+  ];
+  const agents = aggregateAgents(missions);
+  const glm = agents.find((x) => x.model === "glm-5.2");
+  const claude = agents.find((x) => x.model === "claude");
+  assert.equal(glm.custoPorFeature, 1.5); // (3 + 6) / (3 + 3)
+  assert.equal(claude.custoPorFeature, null, "no numeric cost seen → null, not 0");
+});
+
+test("renderAgentsTab (via renderDashboardHtml): Agentes table gets a '$/feature' column, 'sem dados' when cost is null", () => {
+  const model = {
+    generatedAt: "2026-07-08T00:00:00.000Z",
+    requirements: [],
+    orphanBranches: [],
+    missions: [
+      missionWithStats("a", {
+        models: { worker: "glm-5.2" },
+        cost: { total: { api: null } },
+        tokens: { total: 600 },
+        rounds: 1,
+        escalations: 0,
+      }),
+    ],
+  };
+  const html = renderDashboardHtml(model);
+  const start = html.indexOf('id="tab-agentes"');
+  const panel = html.slice(start, start + 2000);
+  assert.match(panel, /\$\/feature/);
+  assert.match(panel, /sem dados/);
 });
