@@ -326,9 +326,11 @@ test("dry-run: no history snapshots appended", () => {
   }
 });
 
-// ─── CLI: missing projects.json (spec test 4) ───────────────────────────────
+// ─── CLI: no projects at all (spec test 4) ───────────────────────────────────
+// E4-b: the project list now comes from loadProjects() (profiles + deploy manifest);
+// a fixture with neither projects/ nor deploy/projects.json → nothing to publish.
 
-test("missing projects.json: exit 0 and exactly one publish.log line", () => {
+test("no projects found: exit 0 and exactly one publish.log line", () => {
   const root = mkdtempSync(path.join(tmpdir(), "autopublish-nomanifest-"));
   try {
     const r = runCli(root);
@@ -338,7 +340,7 @@ test("missing projects.json: exit 0 and exactly one publish.log line", () => {
     const log = readFileSync(logPath, "utf8");
     const lines = log.split("\n").filter((l) => l.length > 0);
     assert.equal(lines.length, 1, `expected exactly one log line, got: ${log}`);
-    assert.match(log, /projects\.json|manifest|não encontrado/i);
+    assert.match(log, /nenhum projeto|nada a publicar|projects\.json/i);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
