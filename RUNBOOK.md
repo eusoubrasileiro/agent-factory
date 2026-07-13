@@ -115,17 +115,33 @@ node scripts/probe-cage.mjs <worktree> --project <id> --live -m glm-5.2    # liv
 ```
 
 **Read this before trusting it.** The static probe proves our renderer. Only `--live` proves
-the driver honours the deny, and it asserts on file hashes and git refs — never on
-`permission_denials`, which returns `[]` even when a deny fires. The live probe has not yet
-run against either driver (D-17).
+the driver honours the deny, and it asserts on file hashes, git refs, and a local exfil
+listener — never on `permission_denials`, which returns `[]` even when a deny fires. In
+order, `--live` now runs: a mandatory **usability control** (a normal command must still
+execute — a cage that blocks it FAILS regardless of every deny below); the original
+edit+push adversarial check; a `python3 -c` write-side interpreter sentinel (D-26); a
+parent-`.env` reachability check (canary fixture, never the real `.env`); a local-listener
+exfil check (`curl`/`wget`); `cp`/`mv` over a Critical File; editing through a symlink to a
+Critical File; and a planted-local-`settings.json` bypass attempt. `probe-secrets.mjs` scans
+the WHOLE worktree tree (not just `.env*` names) for an exact leaked parent-secret value. The
+live probe has not yet been run against either driver end-to-end (D-17) — that is the next
+step, not something this handoff claims.
 
 **The OS sandbox is OFF here, and that is a machine fact, not a choice.** Claude Code's
 sandbox cannot initialise on this kernel (`write /proc/self/setgroups`), identically with
 AppArmor's userns restriction on and off (D-18). `sandbox.enabled` is read from
 `~/.config/amiticia/factory-machine.json`; absent → off. What the cage does give you is the
-Edit/Write deny on Critical Files, which is a **real** boundary. What it does not give you:
-an `Edit` deny does not stop `python3 -c "open('.env').read()"`. Secrets are contained by the
-dummy `.env` in the worktree, not by a deny rule.
+Edit/Write deny on Critical Files, which is a **real** boundary, PLUS a `PreToolUse(Bash)`
+hook (`cage-bash-hook.mjs`, rendered fresh per spawn) that reads the raw command string and
+blocks interpreter one-liners (`python3 -c`/`node -e`/etc.), network/exfil verbs, `.env`
+references, and parent-directory traversal — closing the write-side interpreter hole (D-26)
+that a plain `Edit`/`Write` deny cannot see. Whether it holds under a real model is exactly
+what the live checks above settle empirically; a green static run proves only that the
+renderer emitted the rule, never that the driver obeys it.
+
+The seat's own Claude config is isolated too: `claude-worker.mjs` sets `CLAUDE_CONFIG_DIR` to
+a throwaway directory under the worktree (fresh per spawn), so the operator's own `~/.claude`
+user-settings can never layer permissions onto the seat from outside the rendered cage.
 
 ## Onboarding a project (~1 hour, no engine edits)
 
