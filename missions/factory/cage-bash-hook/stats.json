@@ -1,0 +1,79 @@
+{
+  "slug": "cage-bash-hook",
+  "generatedAt": "2026-07-13T21:09:17.628Z",
+  "branch": "agent/cage-bash-hook",
+  "mergeBase": "2b8ef4dbc63d80bea02caac078ff45bfb50fc862",
+  "loc": {
+    "added": 0,
+    "deleted": 0,
+    "files": 0
+  },
+  "testsAdded": 0,
+  "baselineChanged": false,
+  "baselineKeysChanged": [],
+  "durations": {
+    "building": 1202148,
+    "validating": null,
+    "orchestrating": null,
+    "total": 1202148
+  },
+  "tokens": {
+    "worker": {
+      "in": 9344,
+      "out": 99619,
+      "reasoning": null,
+      "cacheRead": 17471317,
+      "cacheWrite": 226147,
+      "total": 17806427
+    },
+    "validator": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "total": 0
+    },
+    "orchestrator": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "total": 0
+    },
+    "total": 17806427
+  },
+  "cost": {
+    "worker": {
+      "api": 8.120594099999998,
+      "derived": 7.611763,
+      "reported": 8.120594099999998
+    },
+    "validator": {
+      "api": null,
+      "derived": null,
+      "reported": null
+    },
+    "orchestrator": {
+      "api": null,
+      "derived": null,
+      "reported": null
+    },
+    "total": {
+      "api": 8.120594099999998,
+      "derived": 7.611763,
+      "reported": 8.120594099999998
+    }
+  },
+  "models": {
+    "worker": "claude-sonnet-5",
+    "validator": null,
+    "orchestrator": null
+  },
+  "rounds": 1,
+  "attention": 0,
+  "escalations": 0,
+  "pr": null,
+  "partial": false
+}
