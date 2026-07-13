@@ -1,8 +1,8 @@
 {
-  "slug": "factory-profiles",
-  "generatedAt": "2026-07-13T21:53:05.109Z",
-  "branch": "agent/factory-profiles",
-  "mergeBase": "bc51d3098cd41403f621bb368bdefa98810179e9",
+  "slug": "factory-cage-usable",
+  "generatedAt": "2026-07-13T21:53:05.063Z",
+  "branch": "agent/factory-cage-usable",
+  "mergeBase": "bbd367d4484fcc236a6ff92395a232200be44c32",
   "loc": {
     "added": 0,
     "deleted": 0,
@@ -12,19 +12,19 @@
   "baselineChanged": false,
   "baselineKeysChanged": [],
   "durations": {
-    "building": 3267212,
+    "building": null,
     "validating": null,
     "orchestrating": null,
-    "total": 3267212
+    "total": null
   },
   "tokens": {
     "worker": {
-      "in": 177204,
-      "out": 35014,
-      "reasoning": 28957,
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
       "cacheRead": 0,
       "cacheWrite": 0,
-      "total": 241175
+      "total": 0
     },
     "validator": {
       "in": 0,
@@ -42,7 +42,7 @@
       "cacheWrite": 0,
       "total": 0
     },
-    "total": 241175
+    "total": 0
   },
   "cost": {
     "worker": {
@@ -71,7 +71,7 @@
     "validator": null,
     "orchestrator": null
   },
-  "rounds": 1,
+  "rounds": 0,
   "attention": 1,
   "escalations": 0,
   "pr": null,

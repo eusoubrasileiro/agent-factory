@@ -1,14 +1,14 @@
 {
   "slug": "cage-bash-hook",
-  "generatedAt": "2026-07-13T21:09:17.751Z",
+  "generatedAt": "2026-07-13T21:53:04.899Z",
   "branch": "agent/cage-bash-hook",
-  "mergeBase": "2b8ef4dbc63d80bea02caac078ff45bfb50fc862",
+  "mergeBase": "2703807cc975394234c7440c74c09072ee56a9b3",
   "loc": {
-    "added": 0,
-    "deleted": 0,
-    "files": 0
+    "added": 812,
+    "deleted": 97,
+    "files": 9
   },
-  "testsAdded": 0,
+  "testsAdded": 18,
   "baselineChanged": false,
   "baselineKeysChanged": [],
   "durations": {

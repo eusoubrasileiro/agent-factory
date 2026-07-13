@@ -1,8 +1,8 @@
 {
-  "slug": "factory-profiles",
-  "generatedAt": "2026-07-13T21:53:05.109Z",
-  "branch": "agent/factory-profiles",
-  "mergeBase": "bc51d3098cd41403f621bb368bdefa98810179e9",
+  "slug": "intake-board",
+  "generatedAt": "2026-07-13T21:53:05.156Z",
+  "branch": "agent/intake-board",
+  "mergeBase": "ad0f843747b7110aa3e5263e6b71c5f3b16d79a5",
   "loc": {
     "added": 0,
     "deleted": 0,
@@ -12,19 +12,19 @@
   "baselineChanged": false,
   "baselineKeysChanged": [],
   "durations": {
-    "building": 3267212,
+    "building": null,
     "validating": null,
     "orchestrating": null,
-    "total": 3267212
+    "total": null
   },
   "tokens": {
     "worker": {
-      "in": 177204,
-      "out": 35014,
-      "reasoning": 28957,
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
       "cacheRead": 0,
       "cacheWrite": 0,
-      "total": 241175
+      "total": 0
     },
     "validator": {
       "in": 0,
@@ -42,7 +42,7 @@
       "cacheWrite": 0,
       "total": 0
     },
-    "total": 241175
+    "total": 0
   },
   "cost": {
     "worker": {
@@ -67,12 +67,12 @@
     }
   },
   "models": {
-    "worker": "zai-coding-plan/glm-5.2",
+    "worker": null,
     "validator": null,
     "orchestrator": null
   },
-  "rounds": 1,
-  "attention": 1,
+  "rounds": 0,
+  "attention": 0,
   "escalations": 0,
   "pr": null,
   "partial": false

@@ -1,14 +1,14 @@
 {
   "slug": "cost-cli-polish",
-  "generatedAt": "2026-07-11T17:45:20.824Z",
+  "generatedAt": "2026-07-13T21:53:04.959Z",
   "branch": "agent/cost-cli-polish",
-  "mergeBase": "4d4b998e71d08c1d6acd81250628c4162824f98f",
+  "mergeBase": "74b937974ce1dc93ac7c84c59726fed6054f4828",
   "loc": {
-    "added": 2130,
-    "deleted": 66,
-    "files": 20
+    "added": 2161,
+    "deleted": 2884,
+    "files": 37
   },
-  "testsAdded": 76,
+  "testsAdded": 77,
   "baselineChanged": false,
   "baselineKeysChanged": [],
   "durations": {
@@ -74,5 +74,6 @@
   "rounds": 1,
   "attention": 0,
   "escalations": 0,
-  "pr": null
+  "pr": null,
+  "partial": false
 }
