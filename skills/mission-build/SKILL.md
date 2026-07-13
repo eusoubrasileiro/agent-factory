@@ -13,7 +13,10 @@ description: WORKER driver of the AmiticIA factory. Implement an approved missio
 
 You drive the **worker** seat. Workers implement; they do not plan and they do not
 judge their own work. Precondition: `missions/<project>/<slug>/contract.md` exists
-and Andre approved the plan. If not, stop and route to `/mission-plan`.
+**and** the approval marker `missions/<project>/<slug>/APPROVED` (written by
+`/mission-plan`'s approval gate) is present. A `contract.md` with no `APPROVED` marker
+means the plan was drafted but the owner never cleared it — stop and route to
+`/mission-plan`, do not build.
 
 ## 1. Order the features
 - Read `plan.md`. Build a dependency order. Features with no dependency on each
@@ -31,7 +34,7 @@ and Andre approved the plan. If not, stop and route to `/mission-plan`.
   It creates the branch `<branchPrefix><slug>` and, for a product repo, usually
   allocates unique ports and a scratch DB too. All worker work happens there —
   never in the main tree, never on the trunk branch.
-- Run `pnpm board:sync <slug>` so the card tracks into `Building`.
+- Run `pnpm board:sync <slug> --project <project>` so the card tracks into `Building`.
 
 ## 3. Run each worker with CLEAN CONTEXT
 For feature `NN`, spawn a worker (an `Agent`/`claude -p`, Sonnet is the default
@@ -135,7 +138,7 @@ worktree; that is what contains them, not the deny rule.
 - When all features are committed green locally, the mission branch is ready for
   `/mission-validate <slug>`. Summarize for Andre: features done, any
   `unmet_knowledge` collected, and that it is awaiting validation.
-- Run `pnpm board:sync <slug>` so the card tracks into `Validating`.
+- Run `pnpm board:sync <slug> --project <project>` so the card tracks into `Validating`.
 
 ## 6. Fix rounds — keep the PR timeline honest
 Only when `missions/<project>/<slug>/PR` exists (the projection opened a draft PR;

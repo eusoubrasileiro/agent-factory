@@ -61,7 +61,7 @@ product truth, you now know the decisions this feature forces. Extract them:
   E2E command, MCP probe or UI driver proves each kind of claim for this project.
   Every assertion also carries the house-standard gate (`project.json → gate[]`).
 - The worker will NOT see these run. You own "done", not the worker.
-- Once `brief.md` + `contract.md` both exist, `pnpm board:sync <slug>` reflects
+- Once `brief.md` + `contract.md` both exist, `pnpm board:sync <slug> --project <project>` reflects
   the card as `Needs Human (gate:approve-plan)` — the board, not you, tells Andre
   a plan is waiting on him.
 
@@ -80,7 +80,7 @@ product truth, you now know the decisions this feature forces. Extract them:
 - On his approval, the mission is cleared for `/mission-build`. If a real,
   hard-to-reverse trade-off was decided, append one line to `factory/decisions.md`.
 - On approval, write the one-line marker `missions/<project>/<slug>/APPROVED`
-  (content: `approved <YYYY-MM-DD>`) and run `pnpm board:sync <slug>` — the card
+  (content: `approved <YYYY-MM-DD>`) and run `pnpm board:sync <slug> --project <project>` — the card
   moves to `Building`'s precondition state.
 
 ## Rules
