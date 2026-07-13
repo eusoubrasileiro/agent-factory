@@ -216,11 +216,20 @@ export function auditCageSettings(settings) {
     }
   }
 
+  // Path-scoped tools that must carry an anchored target. Bash/WebFetch/WebSearch
+  // are NOT path-scoped (a Bash pattern is a command glob, not a filesystem path),
+  // so they are never flagged. The anchor check used to cover only Edit|Write|Read
+  // by name (E3-e): a mis-anchored rule under any OTHER file tool
+  // (e.g. `NotebookEdit(/bad/path)`, single-leading-slash = anchored to the settings
+  // file's own dir, not the fs root) sailed through. Match ANY `Tool(target)` and
+  // exempt only the known non-path tools.
+  const NON_PATH_TOOLS = new Set(["Bash", "WebFetch", "WebSearch"]);
   for (const rule of denyRules(settings)) {
     if (rule.includes("{{")) problems.push(`unsubstituted placeholder: ${rule}`);
-    const m = rule.match(/^(Edit|Write|Read)\((.*)\)$/);
-    if (!m) continue;
-    const target = m[2];
+    const m = rule.match(/^(\w+)\((.*)\)$/);
+    if (!m) continue; // a bare tool deny (e.g. "WebFetch") has no path to anchor
+    const [, tool, target] = m;
+    if (NON_PATH_TOOLS.has(tool)) continue;
     const anchored = target.startsWith("//") || target.startsWith("~/") || target.startsWith("./");
     if (!anchored) problems.push(`mis-anchored rule (use //abs, ~/ or ./): ${rule}`);
   }
