@@ -1367,7 +1367,10 @@ function main() {
     ? path.resolve(history)
     : path.join(resolved.factoryRoot, "history.jsonl");
 
-  if (!existsSync(prdPath)) {
+  // A profile-only project (E4-b) legitimately has no PRD — it renders its missions
+  // with an empty requirements catalog. Only a PRD that was resolved but is MISSING
+  // on disk is an error (a real typo), never the absence of one.
+  if (prdPath && !existsSync(prdPath)) {
     process.stderr.write(`board-report: PRD não encontrado: ${prdPath}\n`);
     return 1;
   }
