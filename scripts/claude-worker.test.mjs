@@ -484,3 +484,22 @@ test("CLI: without --allow-anthropic, the same invocation still refuses", () => 
     rmSync(stub, { recursive: true, force: true });
   }
 });
+
+// ─── F2 auth-preservation regression (coordinator fix) ────────────────────────
+// Isolating CLAUDE_CONFIG_DIR must NOT strand an Anthropic-session seat at
+// "Not logged in": the operator's OAuth (.credentials.json) is seeded into the
+// isolated dir, while settings.json (the permission-widening vector) is not.
+test("makeSeatConfigDir: seeds the operator's OAuth credentials, never settings.json", () => {
+  const opCreds = path.join(homedir(), ".claude", ".credentials.json");
+  const dir = mkdtempSync(path.join(tmpdir(), "seat-cfg-auth-"));
+  try {
+    const cfg = makeSeatConfigDir(dir);
+    if (existsSync(opCreds)) {
+      assert.ok(existsSync(path.join(cfg, ".credentials.json")), "OAuth must be seeded so the seat authenticates");
+    }
+    // The permission-widening vector must NOT be copied in.
+    assert.ok(!existsSync(path.join(cfg, "settings.json")), "operator settings.json must never leak into the seat config");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

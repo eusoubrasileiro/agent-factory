@@ -51,7 +51,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -201,7 +201,17 @@ export function assertSeatEndpoint(creds, opts = {}) {
 export function makeSeatConfigDir(dirAbs) {
   const claudeDir = path.join(dirAbs, ".claude");
   mkdirSync(claudeDir, { recursive: true });
-  return mkdtempSync(path.join(claudeDir, "seat-config-"));
+  const seatConfig = mkdtempSync(path.join(claudeDir, "seat-config-"));
+  // Seed ONLY the operator's OAuth credentials so the seat authenticates on the
+  // operator's plan — WITHOUT copying settings.json/.claude.json, which is the
+  // permission-widening vector this isolation exists to shut out. A z.ai seat
+  // carries ANTHROPIC_AUTH_TOKEN in its env and needs neither; an Anthropic-session
+  // seat (empty creds → operator OAuth) would hit "Not logged in" without this.
+  const operatorCreds = path.join(homedir(), ".claude", ".credentials.json");
+  if (existsSync(operatorCreds)) {
+    copyFileSync(operatorCreds, path.join(seatConfig, ".credentials.json"));
+  }
+  return seatConfig;
 }
 
 /**
