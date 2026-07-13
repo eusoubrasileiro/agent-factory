@@ -443,3 +443,25 @@ test("renderBashHook substitutes the worktree and stays valid JS (E2 F1)", () =>
   assert.ok(!src.includes("{{WORKTREE}}"));
   assert.ok(src.includes('"/home/x/.claude/worktrees/demo"'));
 });
+
+// ─── E3-e: audit anchor-check covers ANY path-scoped tool, not just Edit/Write/Read ──
+test("auditCageSettings: a mis-anchored rule under a NON-Edit/Write/Read tool is flagged (E3-e)", () => {
+  const problems = auditCageSettings({
+    sandbox: SANE_SANDBOX,
+    permissions: { deny: ["NotebookEdit(/bad/single/slash)"] },
+  });
+  assert.ok(
+    problems.some((p) => /mis-anchored/.test(p)),
+    "a single-leading-slash path under any file tool must be caught, not just Edit|Write|Read",
+  );
+});
+
+test("auditCageSettings: a well-anchored rule under a novel tool passes (E3-e)", () => {
+  assert.deepEqual(
+    auditCageSettings({
+      sandbox: SANE_SANDBOX,
+      permissions: { deny: ["NotebookEdit(//abs/ok)", "Bash(anything:*)", "WebFetch"] },
+    }),
+    [],
+  );
+});
