@@ -214,6 +214,52 @@ export function makeSeatConfigDir(dirAbs) {
   return seatConfig;
 }
 
+/** Anthropic model ALIASES — resolved by the CLI through ANTHROPIC_DEFAULT_*_MODEL. */
+const ANTHROPIC_ALIASES = new Set(["sonnet", "opus", "haiku"]);
+
+/**
+ * Feature 02 — the alias trap. `--model sonnet|opus|haiku` is an ALIAS the CLI
+ * resolves through `ANTHROPIC_DEFAULT_<TIER>_MODEL`. On a z.ai base URL that env
+ * points the alias at `glm-5.2`, so the seat runs GLM while the operator believes
+ * they ran Sonnet. Refuse before spawn when an alias meets a non-Anthropic endpoint;
+ * a full model id (`claude-sonnet-5`, `glm-5.2`) is unambiguous and always allowed.
+ * @param {string} model @param {Record<string,string>} creds
+ */
+export function assertNoAliasTrap(model, creds) {
+  if (!ANTHROPIC_ALIASES.has(model)) return;
+  const base = creds?.ANTHROPIC_BASE_URL;
+  if (!base) return; // no base URL → the CLI's own Anthropic default → the alias is honest
+  let host = "";
+  try {
+    host = new URL(base).hostname.toLowerCase();
+  } catch {
+    return; // a malformed base URL is caught elsewhere
+  }
+  if (host === "anthropic.com" || host.endsWith(".anthropic.com")) return;
+  throw new Error(
+    `refusing to spawn: --model "${model}" is an Anthropic alias but ANTHROPIC_BASE_URL is ${host} ` +
+      `(non-Anthropic). The alias resolves through ANTHROPIC_DEFAULT_${model.toUpperCase()}_MODEL, which ` +
+      `z.ai maps to glm-5.2 — you would run GLM believing you ran ${model}. Pass a full model id ` +
+      `(e.g. claude-sonnet-5) instead.`,
+  );
+}
+
+/**
+ * Feature 03 — z.ai rate-limit detection. A z.ai 429 (`code 1308`) means the run
+ * hit the flat plan's rolling window. Return `{reset}` (a timestamp if the body
+ * carried one) so the driver can exit 3 with an actionable message — never
+ * auto-failover, spend is the owner's call (D-20). null = not rate-limited.
+ * @param {string} stdout @param {string} stderr @returns {{reset: string|null}|null}
+ */
+export function detectRateLimit(stdout, stderr) {
+  const blob = `${stdout ?? ""}\n${stderr ?? ""}`;
+  const looksRateLimited =
+    /\bcode\b[^0-9]{0,8}1308\b/.test(blob) || /\b1308\b/.test(blob) || /rate[_\s-]?limit/i.test(blob);
+  if (!looksRateLimited) return null;
+  const m = blob.match(/reset[^0-9]{0,12}(\d{4}-\d\d-\d\dT[\d:.]+Z?|\d{10,13})/i);
+  return { reset: m ? m[1] : null };
+}
+
 /**
  * Child env = the same tight allowlist the opencode seat uses, PLUS the seat's own
  * ANTHROPIC_* credentials. The credentials are set on the built object rather than
@@ -420,6 +466,7 @@ async function main() {
   const creds = loadSeatCredentials(opts.creds ?? DEFAULT_CREDS_PATH);
   try {
     assertSeatEndpoint(creds, { allowAnthropic: opts.allowAnthropic });
+    assertNoAliasTrap(opts.model, creds); // Feature 02: alias × non-Anthropic endpoint
   } catch (err) {
     process.stderr.write(`claude-worker: ${err.message}\n`);
     return 2;
@@ -480,6 +527,18 @@ async function main() {
       `timedOut=${res.timedOut} exit=${res.exitCode}\n`,
   );
   if (res.stderr.trim()) process.stderr.write(`${res.stderr.trim()}\n`);
+
+  // Feature 03: z.ai rate-limit → exit 3 with an actionable message, no auto-failover (D-20).
+  const rl = detectRateLimit(res.stdout, res.stderr);
+  if (rl) {
+    process.stderr.write(
+      `claude-worker: RATE LIMITED — z.ai 429 (code 1308)${rl.reset ? `, resets ${rl.reset}` : ""}. ` +
+        "No auto-failover (spend is your call). Ready-to-paste Anthropic fallback:\n" +
+        `  node scripts/claude-worker.mjs --dir ${opts.dir} --model claude-sonnet-5 ` +
+        `--project ${opts.project} --allow-anthropic --creds /dev/null --prompt-file <brief>\n`,
+    );
+    return 3;
+  }
 
   if (res.exitCode !== 0 || !parsed.sawFinish) return 1;
   return 0;

@@ -28,8 +28,10 @@ import {
   CLAUDE_ENV_KEYS,
   METRICS_SCRIPT,
   assertExternalEndpoint,
+  assertNoAliasTrap,
   assertSeatEndpoint,
   buildClaudeEnv,
+  detectRateLimit,
   loadSeatCredentials,
   makeSeatConfigDir,
   parseClaudeResult,
@@ -527,4 +529,35 @@ test("CLI: a broken cage refuses to spawn uncaged (exit 2), unless --allow-uncag
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+// ─── E6-F02: the alias trap (sonnet|opus|haiku × non-Anthropic endpoint) ──────
+test("assertNoAliasTrap: an Anthropic alias on a z.ai base URL is refused (F02)", () => {
+  assert.throws(
+    () => assertNoAliasTrap("sonnet", { ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic" }),
+    /alias.*z\.ai maps to glm-5\.2|would run GLM/,
+  );
+  assert.throws(() => assertNoAliasTrap("opus", { ANTHROPIC_BASE_URL: "https://api.z.ai/x" }), /alias/);
+});
+
+test("assertNoAliasTrap: an alias on a real Anthropic endpoint (or no base URL) is allowed (F02)", () => {
+  assert.doesNotThrow(() => assertNoAliasTrap("sonnet", { ANTHROPIC_BASE_URL: "https://api.anthropic.com" }));
+  assert.doesNotThrow(() => assertNoAliasTrap("sonnet", {})); // no base URL → CLI's own default
+});
+
+test("assertNoAliasTrap: a full model id is unambiguous and always allowed (F02)", () => {
+  assert.doesNotThrow(() => assertNoAliasTrap("claude-sonnet-5", { ANTHROPIC_BASE_URL: "https://api.z.ai/x" }));
+  assert.doesNotThrow(() => assertNoAliasTrap("glm-5.2", { ANTHROPIC_BASE_URL: "https://api.z.ai/x" }));
+});
+
+// ─── E6-F03: z.ai rate-limit detection (429 / code 1308) ──────────────────────
+test("detectRateLimit: a z.ai 429 / code 1308 result is detected, with reset when present (F03)", () => {
+  const out = JSON.stringify({ is_error: true, result: "rate_limit_error", error: { code: 1308, reset: "2026-07-13T18:00:00Z" } });
+  const rl = detectRateLimit(out, "");
+  assert.ok(rl, "1308 must be detected");
+  assert.equal(rl.reset, "2026-07-13T18:00:00Z");
+});
+
+test("detectRateLimit: a clean successful result is not flagged (F03)", () => {
+  assert.equal(detectRateLimit(JSON.stringify({ is_error: false, result: "OK", total_cost_usd: 0.1 }), ""), null);
 });
