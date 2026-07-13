@@ -51,7 +51,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -188,20 +188,43 @@ export function assertSeatEndpoint(creds, opts = {}) {
 }
 
 /**
+ * A throwaway `CLAUDE_CONFIG_DIR` for the seat, isolated from the operator's own
+ * `~/.claude`. Without this, `claude -p` resolves its config from the operator's
+ * environment (HOME must stay in the allowlist for OAuth to work) — including
+ * any operator user-settings, which could layer permissions on top of the cage
+ * this driver renders and widen it from outside `--settings`. Created fresh
+ * (mkdtemp suffix) on every call, under the worktree it governs, so no earlier
+ * spawn's state carries into a new one.
+ * @param {string} dirAbs — the worktree root
+ * @returns {string}
+ */
+export function makeSeatConfigDir(dirAbs) {
+  const claudeDir = path.join(dirAbs, ".claude");
+  mkdirSync(claudeDir, { recursive: true });
+  return mkdtempSync(path.join(claudeDir, "seat-config-"));
+}
+
+/**
  * Child env = the same tight allowlist the opencode seat uses, PLUS the seat's own
  * ANTHROPIC_* credentials. The credentials are set on the built object rather than
  * added to `SPAWN_ENV_ALLOWLIST`, because the allowlist filters the COORDINATOR's env
  * — and the coordinator's own `ANTHROPIC_*` vars (its Anthropic session) must never
  * reach the seat and silently redirect it back to Anthropic.
  *
- * @param {NodeJS.ProcessEnv} sourceEnv @param {Record<string,string>} creds
+ * `dirAbs`, when given, isolates `CLAUDE_CONFIG_DIR` under it (see
+ * `makeSeatConfigDir`) so only the rendered cage — not any operator config —
+ * governs the seat. Omitted (e.g. by callers that only care about the secret
+ * allowlist) leaves `CLAUDE_CONFIG_DIR` unset.
+ *
+ * @param {NodeJS.ProcessEnv} sourceEnv @param {Record<string,string>} creds @param {string} [dirAbs]
  */
-export function buildClaudeEnv(sourceEnv, creds = {}) {
+export function buildClaudeEnv(sourceEnv, creds = {}, dirAbs) {
   const env = buildSpawnEnv(sourceEnv);
   for (const k of CLAUDE_ENV_KEYS) delete env[k]; // belt: the allowlist should never have carried these
   for (const k of CLAUDE_ENV_KEYS) {
     if (creds[k] !== undefined) env[k] = creds[k];
   }
+  if (dirAbs) env.CLAUDE_CONFIG_DIR = makeSeatConfigDir(dirAbs);
   return env;
 }
 
@@ -413,7 +436,7 @@ async function main() {
     );
   }
 
-  const env = buildClaudeEnv(process.env, creds);
+  const env = buildClaudeEnv(process.env, creds, dirAbs);
 
   if (opts.slug) recordMetric(opts.slug, buildPhaseStartEvent(opts.metricSeat, opts.model), opts.project);
   const started = Date.now();

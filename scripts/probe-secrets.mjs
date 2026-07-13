@@ -6,11 +6,13 @@
  * The W1 containment guarantee (`dispatch-worktree.sh --seat external`) is that
  * an external seat's `.env*` files contain only dummy values. This probe proves
  * that empirically: it reads the parent tree's real `.env`, extracts every value
- * longer than `--min-len` (default 12) chars, and checks whether any of the
- * seat's secret env files (`.env`, `.env.test`, `.env.smoke` — committed
- * `*.example` templates are skipped) assign that exact value to a key. A single
- * match ⇒ a real secret leaked into the seat. Values the seat legitimately
- * carries (the dummy template's own values) are subtracted first.
+ * longer than `--min-len` (default 12) chars, and scans the WHOLE worktree tree
+ * (every file, not just names starting with `.env` — a secret pasted into a
+ * scratch `notes.txt` is still a leak) for that exact value: assigned via
+ * `KEY=value` (key attributed) or embedded anywhere else in the file's text
+ * (key is `null`). A single match ⇒ a real secret leaked into the seat. Values
+ * the seat legitimately carries (the dummy template's own values) are
+ * subtracted first.
  *
  * It is a coordinator tool aimed at EXTERNAL worktrees. Pointed at a normal
  * (claude) worktree it will (correctly) report hits, because those symlink the
@@ -120,6 +122,38 @@ export function findLeaks(
   return hits;
 }
 
+/**
+ * Find real parent secrets that leaked ANYWHERE in a worktree tree — not just
+ * files named `.env*`. A leak copied into a plain scratch file (`notes.txt`, a
+ * log, a doc) is still a leak, and the old `.env*`-only scan walked right past
+ * it. Two passes per file: first `findLeaks`'s dotenv `KEY=value` detection
+ * (key attributed), then — for every real secret NOT already caught that way —
+ * a plain substring search of the raw text (key is `null`: the value appeared,
+ * but not as a recognizable assignment). A value caught by both passes is
+ * reported once, not twice.
+ *
+ * @param {{ file: string, text: string }[]} files
+ * @param {string[]} parentSecrets — values from the parent's real .env
+ * @param {string[]} [dummyValues] — known-safe values the seat is meant to carry
+ * @param {number} [minLen]
+ * @returns {{ file: string, key: string|null, secret: string }[]}
+ */
+export function findTreeLeaks(files, parentSecrets, dummyValues = [], minLen = DEFAULT_MIN_LEN) {
+  const dummy = new Set(dummyValues);
+  const real = [...new Set(parentSecrets.filter((v) => v.length > minLen && !dummy.has(v)))];
+  const hits = [];
+  for (const { file, text } of files) {
+    const assigned = findLeaks([{ file, text }], real, [], minLen);
+    hits.push(...assigned);
+    const assignedValues = new Set(assigned.map((h) => h.secret));
+    for (const secret of real) {
+      if (assignedValues.has(secret)) continue;
+      if (text.includes(secret)) hits.push({ file, key: null, secret });
+    }
+  }
+  return hits;
+}
+
 // ─── IO shell ────────────────────────────────────────────────────────────────
 
 /** Resolve the parent (main-worktree) root for a dispatched worktree. */
@@ -136,22 +170,41 @@ function resolveParentRoot(worktreeDir) {
   return path.resolve(worktreeDir, "..", "..", "..");
 }
 
+/** Directories never worth scanning: history/noise, not seat-carried secrets. */
+const SKIP_DIRS = new Set([".git", "node_modules"]);
+
 /**
- * Read the secret-carrying `.env*` files directly under `dir` (following
- * symlinks). Committed public templates (`*.example`) are skipped — they hold no
- * real secret and are identical in every checkout.
+ * Recursively collect `{ file, text }` for every regular file under `rootDir`,
+ * `file` relative to `rootDir`. Skips `.git` and `node_modules` (history and
+ * third-party code, not something the seat itself wrote). An unreadable entry
+ * (dangling symlink, permission error) is skipped — nothing to leak from it.
+ * @param {string} rootDir
+ * @returns {{ file: string, text: string }[]}
  */
-function readEnvFiles(dir) {
+export function walkTreeFiles(rootDir) {
   const out = [];
-  for (const name of readdirSync(dir)) {
-    if (!name.startsWith(".env") || name.includes(".example")) continue;
-    const full = path.join(dir, name);
+  const walk = (dir) => {
+    let entries;
     try {
-      out.push({ file: name, text: readFileSync(full, "utf8") });
+      entries = readdirSync(dir, { withFileTypes: true });
     } catch {
-      // unreadable (dangling symlink etc.) — nothing to leak from it
+      return;
     }
-  }
+    for (const ent of entries) {
+      if (SKIP_DIRS.has(ent.name)) continue;
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        walk(full);
+      } else if (ent.isFile()) {
+        try {
+          out.push({ file: path.relative(rootDir, full), text: readFileSync(full, "utf8") });
+        } catch {
+          // unreadable / dangling symlink — nothing to leak from it
+        }
+      }
+    }
+  };
+  walk(rootDir);
   return out;
 }
 
@@ -236,8 +289,8 @@ function main() {
 
   const secrets = extractSecrets(readFileSync(parentEnv, "utf8"), minLen);
   const dummyValues = loadDummyValues(project);
-  const worktreeFiles = readEnvFiles(worktreeDir);
-  const hits = findLeaks(worktreeFiles, secrets, dummyValues, minLen);
+  const worktreeFiles = walkTreeFiles(worktreeDir);
+  const hits = findTreeLeaks(worktreeFiles, secrets, dummyValues, minLen);
 
   if (hits.length > 0) {
     process.stderr.write(
@@ -245,13 +298,14 @@ function main() {
     );
     for (const { file, key, secret } of hits) {
       // Never echo the full secret — show the key + a short prefix only.
-      process.stderr.write(`  ${file}: ${key} = parent secret "${secret.slice(0, 6)}…"\n`);
+      const keyLabel = key ?? "(embedded, no KEY=VALUE)";
+      process.stderr.write(`  ${file}: ${keyLabel} = parent secret "${secret.slice(0, 6)}…"\n`);
     }
     return 1;
   }
 
   process.stdout.write(
-    `clean: 0 of ${secrets.length} parent secret(s) leaked across ${worktreeFiles.length} secret env file(s) in ${worktreeDir}\n`,
+    `clean: 0 of ${secrets.length} parent secret(s) leaked across ${worktreeFiles.length} file(s) scanned in ${worktreeDir}\n`,
   );
   return 0;
 }
