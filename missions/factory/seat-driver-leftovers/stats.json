@@ -1,0 +1,79 @@
+{
+  "slug": "seat-driver-leftovers",
+  "generatedAt": "2026-07-13T21:30:40.483Z",
+  "branch": "agent/seat-driver-leftovers",
+  "mergeBase": null,
+  "loc": {
+    "added": 0,
+    "deleted": 0,
+    "files": 0
+  },
+  "testsAdded": 0,
+  "baselineChanged": false,
+  "baselineKeysChanged": [],
+  "durations": {
+    "building": null,
+    "validating": null,
+    "orchestrating": null,
+    "total": null
+  },
+  "tokens": {
+    "worker": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "total": 0
+    },
+    "validator": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "total": 0
+    },
+    "orchestrator": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "total": 0
+    },
+    "total": 0
+  },
+  "cost": {
+    "worker": {
+      "api": null,
+      "derived": null,
+      "reported": null
+    },
+    "validator": {
+      "api": null,
+      "derived": null,
+      "reported": null
+    },
+    "orchestrator": {
+      "api": null,
+      "derived": null,
+      "reported": null
+    },
+    "total": {
+      "api": null,
+      "derived": null,
+      "reported": null
+    }
+  },
+  "models": {
+    "worker": null,
+    "validator": null,
+    "orchestrator": null
+  },
+  "rounds": 1,
+  "attention": 0,
+  "escalations": 0,
+  "pr": null,
+  "partial": false
+}
