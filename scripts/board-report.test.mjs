@@ -2191,3 +2191,13 @@ test("renderAgentsTab (via renderDashboardHtml): Agentes table gets a '$/feature
   assert.match(panel, /\$\/feature/);
   assert.match(panel, /sem dados/);
 });
+
+// ─── E4-b: a profile-only project (no PRD) renders its missions, never errors ──
+test("board-report CLI: a prd-less project renders missions with 0 requirements (E4-b)", () => {
+  const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), "board-report.mjs");
+  const out = path.join(mkdtempSync(path.join(tmpdir(), "brd-noprd-")), "b.html");
+  const r = spawnSync(process.execPath, [CLI, "--project", "factory", "--out", out], { encoding: "utf8" });
+  assert.equal(r.status, 0, `prd-less render must succeed: ${r.stderr}`);
+  assert.match(r.stdout, /0 requisitos, \d+ missões/);
+  assert.ok(existsSync(out), "the board html must be written");
+});
