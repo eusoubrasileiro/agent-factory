@@ -32,9 +32,8 @@ import { isMainModule } from "./lib/is-main.mjs";
 import { resolveProject } from "./lib/project.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// Backlog import operates on the PRODUCT repo (its PRD, backlog dep, backlog/).
-const PRODUCT = resolveProject();
-const DEFAULT_DOC = PRODUCT.prdPath || path.join(PRODUCT.repoRoot, "docs", "prd", "nexus-build-backlog.md");
+// Backlog import operates on the PRODUCT repo (its PRD, backlog dep, backlog/),
+// resolved from --project at run time (E4-c) — no hardcoded product PRD path.
 
 /** The one header shared by the four feature-body tables. */
 const HEADER = ["ID", "Recurso", "Porquê / fonte", "Prova", "Risco", "Situação"];
@@ -167,15 +166,19 @@ export function buildCard(row) {
 
 // ─── Backlog CLI (effects) ─────────────────────────────────────────────────
 
-function resolveBacklogBin() {
+function resolveBacklogBin(repoRoot) {
   if (process.env.BACKLOG_BIN) return process.env.BACKLOG_BIN;
-  const local = path.join(PRODUCT.repoRoot, "node_modules", ".bin", "backlog");
-  if (existsSync(local)) return local;
+  // The repo being operated on first; then the factory's own node_modules (the
+  // backlog CLI is an engine dev-dep and a product repo may not carry it); then PATH.
+  const factoryLocal = path.join(path.resolve(__dirname, ".."), "node_modules", ".bin", "backlog");
+  for (const cand of [path.join(repoRoot, "node_modules", ".bin", "backlog"), factoryLocal]) {
+    if (existsSync(cand)) return cand;
+  }
   return "backlog";
 }
 
 function makeBacklog(repoRoot) {
-  const bin = resolveBacklogBin();
+  const bin = resolveBacklogBin(repoRoot);
   return (args) => {
     const r = spawnSync(bin, args, { cwd: repoRoot, encoding: "utf8" });
     if (r.error) throw r.error;
@@ -253,7 +256,8 @@ function importRows(docPath, repoRoot, emit) {
 
 function usage() {
   process.stderr.write(
-    "Usage:\n" + "  node scripts/factory/board-import-backlog.mjs [--doc <path>] [--repo <path>]\n",
+    "Usage:\n" +
+      "  node scripts/factory/board-import-backlog.mjs [--project <id>] [--doc <path>] [--repo <path>]\n",
   );
 }
 
@@ -261,23 +265,34 @@ function parseArgs(argv) {
   const args = argv.slice(2);
   let doc;
   let repo;
+  let project;
   const positional = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--doc") doc = args[++i];
     else if (args[i] === "--repo") repo = args[++i];
+    else if (args[i] === "--project") project = args[++i];
     else positional.push(args[i]);
   }
-  return { doc, repo, positional };
+  return { doc, repo, project, positional };
 }
 
 function main() {
-  const { doc, repo, positional } = parseArgs(process.argv);
+  const { doc, repo, project, positional } = parseArgs(process.argv);
   if (positional.length > 0) {
     usage();
     return 2;
   }
-  const docPath = doc ? path.resolve(doc) : DEFAULT_DOC;
-  const repoRoot = repo ? path.resolve(repo) : PRODUCT.repoRoot;
+  const product = resolveProject({ project });
+  // E4-c: the source doc is the profile's PRD — no hardcoded product fallback. A profile
+  // with no `prd` (and no explicit --doc) imports nothing rather than another product's PRD.
+  const docPath = doc ? path.resolve(doc) : product.prdPath;
+  if (!docPath) {
+    process.stdout.write(
+      `project "${product.id}" declares no PRD (project.json → prd) and no --doc given — nothing to import\n`,
+    );
+    return 0;
+  }
+  const repoRoot = repo ? path.resolve(repo) : product.repoRoot;
 
   if (!existsSync(path.join(repoRoot, "backlog"))) {
     process.stdout.write(`no backlog/ under ${repoRoot} — nothing to import into\n`);

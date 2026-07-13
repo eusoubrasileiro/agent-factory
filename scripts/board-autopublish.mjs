@@ -52,7 +52,7 @@ import { renderRootIndex, renderScrumbanRedirect } from "./board-index.mjs";
 import { deriveMissionState } from "./board-sync.mjs";
 import { appendSnapshots, snapshotRows } from "./history.mjs";
 import { isMainModule } from "./lib/is-main.mjs";
-import { resolveProject } from "./lib/project.mjs";
+import { loadProjects, resolveProject } from "./lib/project.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -153,18 +153,6 @@ export function formatPublishLogLine(message, ts = new Date().toISOString()) {
 }
 
 // ─── Manifest ────────────────────────────────────────────────────────────────
-
-/**
- * Read the projects manifest. Missing file → null (soft no-op). Malformed
- * JSON → throws (caught by the soft-fail wrapper in main).
- * @param {string} repoRoot
- * @returns {Array<{id: string, name?: string, repo?: string, prd?: string}> | null}
- */
-function readManifest(repoRoot) {
-  const p = path.join(repoRoot, "deploy", "projects.json");
-  if (!existsSync(p)) return null;
-  return JSON.parse(readFileSync(p, "utf8"));
-}
 
 // ─── Rendering (effects) ─────────────────────────────────────────────────────
 
@@ -459,9 +447,12 @@ function main(argv) {
  * @returns {number}
  */
 function run({ repoRoot, dryRun }) {
-  const manifest = readManifest(repoRoot);
-  if (manifest === null) {
-    logLine(repoRoot, "projects.json não encontrado, nada a publicar");
+  // E4-b: the board projects come from loadProjects() (profiles + deploy back-compat),
+  // not a raw deploy/projects.json read — so a projects/-only project (one with a
+  // profile but no deploy-manifest row) appears on the board instead of being invisible.
+  const manifest = loadProjects(repoRoot);
+  if (manifest.length === 0) {
+    logLine(repoRoot, "nenhum projeto encontrado, nada a publicar");
     return 0;
   }
 

@@ -109,14 +109,14 @@ export function renderRootIndex(projects, stats = {}) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Fábrica Nexus — projetos</title>
+  <title>AmiticIA Factory — projetos</title>
   <style>
 ${ROOT_STYLES}
   </style>
 </head>
 <body>
   <header class="site">
-    <h1>Fábrica Nexus — projetos</h1>
+    <h1>AmiticIA Factory — projetos</h1>
   </header>
   <main>
     <div class="cards">

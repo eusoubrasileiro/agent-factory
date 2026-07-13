@@ -781,7 +781,7 @@ test("renderDashboardHtml: emits a complete <!doctype html> document with inline
 
 test("renderDashboardHtml: header title + tab bar (Requisitos default, Missões)", () => {
   const html = renderDashboardHtml(EMPTY_MODEL);
-  assert.match(html, /Fábrica Nexus — rastreabilidade/);
+  assert.match(html, /AmiticIA Factory — rastreabilidade/);
   assert.match(html, /Requisitos/);
   assert.match(html, /Missões/);
   // Requisitos panel must NOT carry the `hidden` attribute (default tab).

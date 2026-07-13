@@ -1278,14 +1278,14 @@ export function renderDashboardHtml(model) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Fábrica Nexus — rastreabilidade</title>
+  <title>AmiticIA Factory — rastreabilidade</title>
   <style>
 ${renderStyles()}
   </style>
 </head>
 <body>
   <header class="site">
-    <h1>Fábrica Nexus — rastreabilidade</h1>
+    <h1>AmiticIA Factory — rastreabilidade</h1>
     <nav class="tabs" role="tablist">
       <button type="button" role="tab" data-tab="requisitos" aria-selected="true">Requisitos</button>
       <button type="button" role="tab" data-tab="missoes" aria-selected="false">Missões</button>
