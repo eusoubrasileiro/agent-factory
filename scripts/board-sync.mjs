@@ -204,6 +204,11 @@ function makeBacklog(repoRoot) {
   return (args) => {
     const r = spawnSync(bin, args, { cwd: repoRoot, encoding: "utf8" });
     if (r.error) throw r.error;
+    if (r.status !== 0) {
+      throw new Error(
+        `backlog ${args.join(" ")} exited ${r.status}: ${r.stderr || r.stdout}`,
+      );
+    }
     return r;
   };
 }
