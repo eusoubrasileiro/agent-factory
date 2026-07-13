@@ -11,7 +11,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -212,6 +212,33 @@ test("CLI record: stays quiet when the mission dir already exists", () => {
     const r = runMetrics(["record", "known-slug", "--dir", missions], root);
     assert.equal(r.status, 0);
     assert.doesNotMatch(r.stderr, /creating a new mission dir/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ─── E1-e: corrupt-line tolerance (publish-funnel-failopen) ───────────────────
+// A torn append from a crashed writer must be skipped, never crash `metrics
+// summary` (the KPI meter). Mutation gate: restore the bare `.map(JSON.parse)`
+// in readRecords and this test goes red.
+test("cmdSummary: a corrupt JSONL line is skipped, never crashes the summary (E1-e)", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "metrics-corrupt-"));
+  try {
+    const missions = path.join(root, "missions");
+    const slug = "torn-slug";
+    mkdirSync(path.join(missions, slug), { recursive: true });
+    writeFileSync(
+      path.join(missions, slug, "metrics.jsonl"),
+      '{"seat":"worker","type":"phase_start","detail":"x"}\n' +
+        '{"seat":"worker","type":"phase_en\n' + // torn line, crashed mid-write
+        '{"seat":"worker","type":"phase_end","detail":"y"}\n',
+    );
+    const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "metrics.mjs");
+    const r = spawnSync(process.execPath, [script, "summary", slug, "--dir", missions], {
+      encoding: "utf8",
+    });
+    assert.equal(r.status, 0, `summary must not crash on a torn line: ${r.stderr}`);
+    assert.match(r.stdout, /torn-slug: 2 event\(s\)/); // both valid records counted, corrupt skipped
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

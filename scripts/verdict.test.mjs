@@ -9,7 +9,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -246,6 +246,24 @@ test("status exits 2 when 3 rounds all FAIL (exhausted)", () => {
     const r = runCli(root, ["status", SLUG]);
     assert.equal(r.status, 2);
     assert.match(r.stdout, /EXHAUSTED|3\/3/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ─── E1-e: corrupt-line tolerance (publish-funnel-failopen) ───────────────────
+// A torn append from a crashed writer must be skipped, never crash `verdict
+// status`. Mutation gate: restore the bare `.map(JSON.parse)` in readRecords and
+// this test goes red.
+test("cmdStatus: a corrupt line in validate.log is skipped, never crashes status (E1-e)", () => {
+  const root = makeRoot();
+  try {
+    assert.equal(record(root, passVerdict(1)).status, 0);
+    const logp = path.join(root, SLUG, "validate.log");
+    appendFileSync(logp, `{"slug":"${SLUG}","round":2,"verdict":"PA\n`); // torn line
+    const r = runCli(root, ["status", SLUG]);
+    assert.equal(r.status, 0, `status must not crash on a torn line: ${r.stderr}`);
+    assert.match(r.stdout, new RegExp(`${SLUG}: 1/\\d+ rounds · last=PASS`));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
