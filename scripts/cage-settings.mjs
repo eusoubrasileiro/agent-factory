@@ -114,6 +114,27 @@ export function parentEnvRules(worktreeAbs) {
   return rules;
 }
 
+/**
+ * Critical-file globs that match NOTHING in the target repo (D-37 defense). A deny
+ * rule pointing at a path that does not exist is silent fail-open: it renders, audits
+ * clean (anchoring is fine), and protects nothing — exactly how a product's
+ * mis-typed `prisma/schema.prisma` (real path under `backend/`) sat open since day
+ * one (D-37). For each glob, the prefix up to the first wildcard must exist as a file or dir.
+ * @param {string[]} globs @param {string} repoRoot @returns {string[]} the dead globs
+ */
+export function unmatchedCriticalGlobs(globs = [], repoRoot) {
+  if (!Array.isArray(globs) || typeof repoRoot !== "string") return [];
+  const dead = [];
+  for (const g of globs) {
+    if (typeof g !== "string" || g.length === 0) continue;
+    const starIdx = g.search(/[*?[]/);
+    const prefix = starIdx === -1 ? g : g.slice(0, starIdx).replace(/\/[^/]*$/, "");
+    const probe = prefix.length === 0 ? repoRoot : path.join(repoRoot, prefix);
+    if (!existsSync(probe)) dead.push(g);
+  }
+  return dead;
+}
+
 /** Where the rendered PreToolUse Bash hook lands inside a worktree. */
 export function cageHookPath(worktreeAbs) {
   return path.join(worktreeAbs, ".claude", "cage-bash-hook.mjs");

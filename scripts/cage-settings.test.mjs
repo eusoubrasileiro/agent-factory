@@ -24,8 +24,13 @@ import {
   renderBashHook,
   renderCageSettings,
   machineSandboxEnabled,
+  unmatchedCriticalGlobs,
   writeCageSettings,
 } from "./cage-settings.mjs";
+import { fileURLToPath } from "node:url";
+import { loadProjects, resolveProject } from "./lib/project.mjs";
+
+const FACTORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const WT = "/home/x/.claude/worktrees/demo";
 
@@ -464,4 +469,48 @@ test("auditCageSettings: a well-anchored rule under a novel tool passes (E3-e)",
     }),
     [],
   );
+});
+
+// ─── E3 fs-existence: a critical glob that matches no real path is fail-open (D-37) ──
+test("unmatchedCriticalGlobs: a glob whose prefix does not exist is reported dead (D-37)", () => {
+  const dead = unmatchedCriticalGlobs(
+    ["backend/prisma/schema.prisma", "prisma/schema.prisma", "backend/src/bot/**", "nope/**"],
+    FACTORY_ROOT,
+  );
+  // Against the FACTORY repo: none of these product paths exist, so all are "dead"
+  // here — the point is the mechanism flags a non-existent prefix, proven below
+  // against each profile's OWN repo where the real ones DO exist.
+  assert.ok(dead.includes("prisma/schema.prisma"), "the D-37 dead path must be flagged");
+  assert.ok(dead.includes("nope/**"), "a nonexistent wildcard prefix must be flagged");
+});
+
+test("unmatchedCriticalGlobs: the factory profile's own critical globs all exist (D-37 guard)", () => {
+  const dead = unmatchedCriticalGlobs(
+    resolveProject({ project: "factory" }, FACTORY_ROOT).profile.criticalFiles,
+    FACTORY_ROOT,
+  );
+  assert.deepEqual(dead, [], `factory critical globs must all resolve to a real path: dead=${dead}`);
+});
+
+test("EVERY profile's critical globs match a real path in its repo (D-37, all profiles)", () => {
+  for (const proj of loadProjects(FACTORY_ROOT)) {
+    const resolved = resolveProject({ project: proj.id }, FACTORY_ROOT);
+    const repoRoot = resolved.profile.repoRoot ?? resolved.repoRoot;
+    if (!repoRoot || !existsSync(repoRoot)) continue; // product checkout absent — skip, never false-pass
+    const dead = unmatchedCriticalGlobs(resolved.profile.criticalFiles ?? [], repoRoot);
+    assert.deepEqual(dead, [], `project "${proj.id}" has dead critical globs (D-37): ${dead}`);
+  }
+});
+
+// ─── E3-d: a run installs a FRESH audited cage (decoupled from the Sonnet e2e) ──
+test("writeCageSettings: the written cage file, re-read from disk, passes its own audit (E3-d)", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "cage-fresh-"));
+  try {
+    const p = writeCageSettings(dir, { project: "factory" });
+    const onDisk = JSON.parse(readFileSync(p, "utf8"));
+    assert.deepEqual(auditCageSettings(onDisk), [], "a freshly written cage must audit clean on re-read");
+    assert.ok(onDisk.permissions.deny.length > 0, "the fresh cage must carry Critical-File rules");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

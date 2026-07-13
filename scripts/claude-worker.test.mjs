@@ -18,7 +18,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -501,5 +501,30 @@ test("makeSeatConfigDir: seeds the operator's OAuth credentials, never settings.
     assert.ok(!existsSync(path.join(cfg, "settings.json")), "operator settings.json must never leak into the seat config");
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ─── E3-b: the "refuse to spawn uncaged" guard is actually exercised ───────────
+// A broken cage (writeCageSettings throws) must halt the spawn unless
+// --allow-uncaged. Mutation: `if (!opts.allowUncaged)` -> `if (false)` makes a
+// broken cage spawn the seat uncaged and silent — this test goes red.
+test("CLI: a broken cage refuses to spawn uncaged (exit 2), unless --allow-uncaged (E3-b)", () => {
+  const base = mkdtempSync(path.join(tmpdir(), "uncaged-"));
+  const wt = path.join(base, ".worktrees", "slug");
+  mkdirSync(wt, { recursive: true });
+  writeFileSync(path.join(wt, ".claude"), "x"); // .claude is a FILE -> writeCageSettings throws
+  const prompt = path.join(base, "p.txt");
+  writeFileSync(prompt, "print hi");
+  try {
+    const r = runCli(
+      ["--dir", wt, "--model", "claude-sonnet-5", "--project", "factory", "--allow-anthropic",
+       "--creds", "/dev/null", "--prompt-file", prompt],
+      { FACTORY_WORKTREE_MARKER: "/.worktrees/" },
+    );
+    assert.equal(r.status, 2, "a broken cage must refuse");
+    assert.match(r.stderr, /CAGE NOT INSTALLED/);
+    assert.match(r.stderr, /refusing to spawn uncaged/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
   }
 });
