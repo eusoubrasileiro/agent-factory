@@ -179,6 +179,11 @@ function makeBacklog(repoRoot) {
   return (args) => {
     const r = spawnSync(bin, args, { cwd: repoRoot, encoding: "utf8" });
     if (r.error) throw r.error;
+    if (r.status !== 0) {
+      throw new Error(
+        `backlog ${args.join(" ")} exited ${r.status}: ${r.stderr || r.stdout}`,
+      );
+    }
     return r;
   };
 }
@@ -203,9 +208,14 @@ function importRows(docPath, repoRoot, emit) {
 
   const rows = parseBacklogTables(markdown);
   const backlog = makeBacklog(repoRoot);
-  const existingTitles = new Set(
-    parseTaskList(backlog(["task", "list", "--plain"]).stdout).map((c) => c.title),
-  );
+  let existingTitles;
+  try {
+    existingTitles = new Set(
+      parseTaskList(backlog(["task", "list", "--plain"]).stdout).map((c) => c.title),
+    );
+  } catch (err) {
+    return { error: `cannot read existing cards: ${err?.message ?? err}` };
+  }
 
   let created = 0;
   let skipped = 0;
@@ -217,19 +227,20 @@ function importRows(docPath, repoRoot, emit) {
       continue;
     }
 
-    const r = backlog([
-      "task",
-      "create",
-      card.title,
-      "-s",
-      card.status,
-      "-l",
-      card.labels.join(","),
-      "-d",
-      card.description,
-    ]);
-    if (r.status !== 0) {
-      return { error: `failed to create "${card.title}": ${r.stderr || r.stdout}` };
+    try {
+      backlog([
+        "task",
+        "create",
+        card.title,
+        "-s",
+        card.status,
+        "-l",
+        card.labels.join(","),
+        "-d",
+        card.description,
+      ]);
+    } catch (err) {
+      return { error: `failed to create "${card.title}": ${err?.message ?? err}` };
     }
     created++;
     emit(`created ${card.title} -> ${card.status}`);

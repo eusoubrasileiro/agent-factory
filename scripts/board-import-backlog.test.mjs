@@ -13,7 +13,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -260,6 +260,54 @@ test("import creates 18 cards from the fixture doc, spot-checked statuses + labe
     assert.ok(a1Labels.includes("risk:low"));
   } finally {
     rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+/**
+ * A `BACKLOG_BIN` stub that forwards every call to the real `backlog` binary
+ * (via `REAL_BACKLOG_BIN`) except `task list`, which it fails — simulating a
+ * transient backlog CLI failure (F2/D-24/D-25: a check that cannot fail must
+ * never report success).
+ */
+function makeFailingListStub() {
+  const stubDir = mkdtempSync(path.join(tmpdir(), "backlog-stub-"));
+  const stub = path.join(stubDir, "backlog-stub.mjs");
+  writeFileSync(
+    stub,
+    `#!/usr/bin/env node
+import { spawnSync } from "node:child_process";
+const REAL = process.env.REAL_BACKLOG_BIN;
+const args = process.argv.slice(2);
+if (args[0] === "task" && args[1] === "list") {
+  process.stderr.write("stub: task list failure\\n");
+  process.exit(1);
+}
+const r = spawnSync(REAL, args, { encoding: "utf8" });
+process.stdout.write(r.stdout ?? "");
+process.stderr.write(r.stderr ?? "");
+process.exit(r.status ?? 1);
+`,
+  );
+  chmodSync(stub, 0o755);
+  return { stubDir, stub };
+}
+
+test("import aborts (non-zero exit) and creates ZERO cards when `task list` fails (F2)", () => {
+  const repo = initRepo();
+  const docPath = path.join(repo, "fixture-backlog.md");
+  writeFileSync(docPath, FIXTURE_DOC);
+  const { stubDir, stub } = makeFailingListStub();
+  try {
+    const r = spawnSync(
+      process.execPath,
+      [IMPORTER, "--doc", docPath, "--repo", repo],
+      { encoding: "utf8", env: { ...process.env, BACKLOG_BIN: stub, REAL_BACKLOG_BIN: BIN } },
+    );
+    assert.notEqual(r.status, 0, `import should exit non-zero: stdout=${r.stdout} stderr=${r.stderr}`);
+    assert.equal(cards(repo).length, 0, "no card should be created after a failed task list");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(stubDir, { recursive: true, force: true });
   }
 });
 

@@ -18,8 +18,16 @@
  */
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -236,6 +244,22 @@ function makeFixtureRoot(prefix = "autopublish-") {
 function runCli(root, args = []) {
   return spawnSync(process.execPath, [CLI, "--repo", root, ...args], {
     encoding: "utf8",
+  });
+}
+
+/** Async (non-blocking) CLI run — for genuinely racing two invocations at once. */
+function runCliAsync(root, args = []) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [CLI, "--repo", root, ...args]);
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d) => {
+      stdout += d;
+    });
+    child.stderr.on("data", (d) => {
+      stderr += d;
+    });
+    child.on("close", (status) => resolve({ status, stdout, stderr }));
   });
 }
 
@@ -619,4 +643,87 @@ test("publish guard: source pins the rsync preconditions and the status check", 
   const failIdx = src.indexOf("rsync falhou");
   const memoIdx = src.indexOf("writeFileSync(memoPath, hash);", failIdx);
   assert.ok(failIdx > 0 && memoIdx > failIdx, "the failure branch returns before the memo write");
+});
+
+// ─── Lock: serialize the render+publish+append critical section (F4/D-24/D-25) ─
+//
+// Every state change fires autopublish twice (verdict/ratify's explicit
+// triggerAutopublish() plus the post-commit hook). Both triggers are kept —
+// the redundancy is deliberate — but two concurrent funnels racing the same
+// repoRoot could both pass the (pre-fix) hash guard and double-append
+// history.jsonl snapshots. An advisory `dist/factory-board/.lock` (O_EXCL)
+// serializes the critical section; a lock older than 120s is treated as
+// abandoned (a crashed prior run) and reclaimed.
+
+test("lock: a live (fresh) lock file makes the run back off — no render side effects (F4)", () => {
+  const root = makeFixtureRoot("autopublish-lock-live-");
+  makeMission(root, "demo", { "brief.md": "**Requirements:** A1\n" });
+  const lockDir = path.join(root, "dist", "factory-board");
+  mkdirSync(lockDir, { recursive: true });
+  const lockPath = path.join(lockDir, ".lock");
+  writeFileSync(lockPath, "");
+  try {
+    const r = runCli(root);
+    assert.equal(r.status, 0, `exit 0; stderr=${r.stderr}`);
+    assert.equal(
+      existsSync(path.join(root, "history.jsonl")),
+      false,
+      "a backed-off run must not append history",
+    );
+    assert.equal(
+      existsSync(path.join(lockDir, ".hash")),
+      false,
+      "a backed-off run must not write the hash memo",
+    );
+    assert.ok(existsSync(lockPath), "the other holder's live lock must be left alone");
+    const log = readFileSync(path.join(root, ".publish.log"), "utf8");
+    assert.match(log, /lock/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("lock: a stale (>120s) lock file is reclaimed and the run proceeds normally (F4)", () => {
+  const root = makeFixtureRoot("autopublish-lock-stale-");
+  makeMission(root, "demo", { "brief.md": "**Requirements:** A1\n" });
+  const lockDir = path.join(root, "dist", "factory-board");
+  mkdirSync(lockDir, { recursive: true });
+  const lockPath = path.join(lockDir, ".lock");
+  writeFileSync(lockPath, "");
+  const old = new Date(Date.now() - 130_000);
+  utimesSync(lockPath, old, old);
+  try {
+    const r = runCli(root);
+    assert.equal(r.status, 0, `exit 0; stderr=${r.stderr}`);
+    assert.ok(
+      existsSync(path.join(root, "history.jsonl")),
+      "a stale lock must be reclaimed and the run must publish normally",
+    );
+    assert.equal(existsSync(lockPath), false, "the lock is released after a successful run");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("lock: two concurrent autopublish runs append exactly ONE history snapshot set (F4)", async () => {
+  const root = makeFixtureRoot("autopublish-lock-race-");
+  makeMission(root, "demo", { "brief.md": "**Requirements:** A1\n" });
+  try {
+    const [r1, r2] = await Promise.all([runCliAsync(root), runCliAsync(root)]);
+    assert.equal(r1.status, 0, `run1 exit 0: ${r1.stderr}`);
+    assert.equal(r2.status, 0, `run2 exit 0: ${r2.stderr}`);
+    const history = readMaybe(path.join(root, "history.jsonl")) ?? "";
+    const rows = history
+      .split("\n")
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l))
+      .filter((row) => row.slug === "demo");
+    assert.equal(
+      rows.length,
+      1,
+      `expected exactly one demo snapshot row, got ${rows.length}: ${JSON.stringify(rows)}`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

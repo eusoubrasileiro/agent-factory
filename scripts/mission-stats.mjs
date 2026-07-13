@@ -559,6 +559,9 @@ export function collect({
     attention: 0,
     escalations: 0,
     pr: null,
+    // Set true only when resolveRange succeeded but a required `git` call
+    // afterward failed — never on the normal "nothing to diff yet" path.
+    partial: false,
   };
 
   try {
@@ -567,9 +570,19 @@ export function collect({
     if (range) {
       stats.mergeBase = range.mergeBase;
       const numstat = git(repoRoot, ["diff", "--numstat", `${range.from}..${range.to}`]);
-      stats.loc = parseNumstat(numstat);
+      if (numstat === null) {
+        stats.partial = true;
+        stats.loc = null;
+      } else {
+        stats.loc = parseNumstat(numstat);
+      }
       const diff = git(repoRoot, ["diff", `${range.from}..${range.to}`]);
-      stats.testsAdded = countTestsAdded(diff);
+      if (diff === null) {
+        stats.partial = true;
+        stats.testsAdded = null;
+      } else {
+        stats.testsAdded = countTestsAdded(diff);
+      }
       // baseline delta: was quality-baseline.json in the diff's file list?
       const changed =
         typeof numstat === "string" &&
