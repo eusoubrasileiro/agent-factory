@@ -408,7 +408,8 @@ async function main() {
     process.stderr.write(`claude-worker: worktree not found: ${dirAbs}\n`);
     return 2;
   }
-  if (!opts.allowAnyDir && !isWorktreeDir(dirAbs)) {
+  const worktreeMarker = resolveProject({ project: opts.project }).profile.worktreeMarker;
+  if (!opts.allowAnyDir && !isWorktreeDir(dirAbs, worktreeMarker)) {
     process.stderr.write(
       "claude-worker: refusing to run outside a dispatched worktree. Pass --allow-any-dir to override.\n",
     );

@@ -145,6 +145,10 @@ function buildProfile(entry, factoryRoot) {
   const trunk = typeof entry.trunk === "string" ? entry.trunk : "main";
   const branchPrefix =
     typeof entry.branchPrefix === "string" ? entry.branchPrefix : "agent/";
+  // The worktree layout is a project FACT (D-27/D-15), not an engine constant: the
+  // driver used to hardcode one product's `/.claude/worktrees/` and reject other layouts.
+  const worktreeMarker =
+    typeof entry.worktreeMarker === "string" ? entry.worktreeMarker : "/.claude/worktrees/";
 
   // critical-files.json is a JSON array of globs; missing/corrupt → [].
   let criticalFiles = [];
@@ -178,7 +182,7 @@ function buildProfile(entry, factoryRoot) {
       }));
   }
 
-  return { gate, trunk, branchPrefix, criticalFiles, seatEnvPath, validationPath, intake };
+  return { gate, trunk, branchPrefix, worktreeMarker, criticalFiles, seatEnvPath, validationPath, intake };
 }
 
 /**

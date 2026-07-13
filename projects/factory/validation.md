@@ -33,9 +33,8 @@ never to a `skills/` file.
   the `pnpm test` globs is silently never run — check the globs when adding one.
 - Isolation for engine missions is a plain git worktree under `.worktrees/` (the
   wahub `dispatch-worktree.sh` is a wahub tool and does not apply here).
-- **Dispatching an engine seat requires `FACTORY_WORKTREE_MARKER=/.worktrees/`**
-  (interim, until E4-a makes `worktreeMarker` a `project.json` field): the driver's
-  default marker is wahub's `/.claude/worktrees/`, so without the override
-  `claude-worker`/`opencode-worker` refuse their own `.worktrees/<slug>` tree (D-27).
+- **The engine-seat worktree layout is a profile fact** (E4-a, closes D-27):
+  `projects/factory/project.json` declares `"worktreeMarker": "/.worktrees/"`, and both
+  drivers read it from the resolved profile — no `FACTORY_WORKTREE_MARKER` env needed.
   Engine missions also carry a lighter dossier — `contract.md` + `HANDOFF.md`, no
   `features/` tree — so the plan/build templates are not mandatory for them.

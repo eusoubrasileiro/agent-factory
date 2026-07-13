@@ -46,6 +46,7 @@ function assertDefaultProfile(actual) {
     gate: [],
     trunk: "main",
     branchPrefix: "agent/",
+    worktreeMarker: "/.claude/worktrees/",
     criticalFiles: [],
     seatEnvPath: null,
     validationPath: null,
@@ -248,6 +249,21 @@ test("resolveProject: dir and repo overrides still win over the manifest", () =>
     // prdPath is null because the entry has no prd; profile still synthesized.
     assert.equal(r.prdPath, null);
     assert.ok(r.profile, "profile present even when overrides are used");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ─── E4-a: worktreeMarker is a profile FACT, not an engine constant (D-27) ─────
+test("resolveProject: worktreeMarker comes from project.json (factory = /.worktrees/)", () => {
+  assert.equal(resolveProject({ project: "factory" }).profile.worktreeMarker, "/.worktrees/");
+});
+
+test("resolveProject: worktreeMarker defaults to /.claude/worktrees/ when absent", () => {
+  const root = makeTmpDir("proj-wtmarker-");
+  try {
+    writeProject(root, "nomark", { id: "nomark", name: "NoMark", path: "." });
+    assert.equal(resolveProject({ project: "nomark" }, root).profile.worktreeMarker, "/.claude/worktrees/");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
