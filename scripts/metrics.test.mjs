@@ -114,6 +114,44 @@ test("validateEvent rejects a non-number durationMs", () => {
   assert.match(r.reason, /durationMs must be a number/);
 });
 
+// ─── Cost attribution: cache tokens + api-basis cost (factory-cost Stage 1b) ───
+
+test("validateEvent accepts a numeric tokensCacheRead", () => {
+  assert.deepEqual(validateEvent({ seat: "worker", type: "phase_end", tokensCacheRead: 19000 }), {
+    ok: true,
+  });
+});
+
+test("validateEvent rejects a non-number tokensCacheRead", () => {
+  const r = validateEvent({ seat: "worker", type: "phase_end", tokensCacheRead: "19000" });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /tokensCacheRead must be a number/);
+});
+
+test("validateEvent accepts a numeric tokensCacheWrite", () => {
+  assert.deepEqual(validateEvent({ seat: "worker", type: "phase_end", tokensCacheWrite: 0 }), {
+    ok: true,
+  });
+});
+
+test("validateEvent rejects a non-number tokensCacheWrite", () => {
+  const r = validateEvent({ seat: "worker", type: "phase_end", tokensCacheWrite: [] });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /tokensCacheWrite must be a number/);
+});
+
+test("validateEvent accepts a numeric apiCostUsd (the un-dropped public-API cost)", () => {
+  assert.deepEqual(validateEvent({ seat: "worker", type: "phase_end", apiCostUsd: 0.42 }), {
+    ok: true,
+  });
+});
+
+test("validateEvent rejects a non-number apiCostUsd", () => {
+  const r = validateEvent({ seat: "worker", type: "phase_end", apiCostUsd: "0.42" });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /apiCostUsd must be a number/);
+});
+
 // ─── F1: a fully-populated modern phase_end still validates ─────────────────────
 
 test("validateEvent accepts a fully-populated modern phase_end event", () => {
@@ -121,14 +159,17 @@ test("validateEvent accepts a fully-populated modern phase_end event", () => {
     validateEvent({
       seat: "worker",
       type: "phase_end",
-      detail: "external:zai-coding-plan/glm-5.2",
-      model: "zai-coding-plan/glm-5.2",
+      detail: "external:claude-opus-4-8",
+      model: "claude-opus-4-8",
       tokens: 1336911,
-      tokensIn: 1300000,
-      tokensOut: 36911,
-      tokensReasoning: null,
+      tokensIn: 60477,
+      tokensOut: 11881,
+      tokensReasoning: 10238,
+      tokensCacheRead: 19008,
+      tokensCacheWrite: 0,
       durationMs: 820000,
       costUsd: 0,
+      apiCostUsd: 0.4231,
     }),
     { ok: true },
   );

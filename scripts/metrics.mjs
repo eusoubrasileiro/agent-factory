@@ -91,6 +91,21 @@ export function validateEvent(obj) {
       return { ok: false, reason: "tokensReasoning must be a number or null when present" };
     }
   }
+  // Cache tokens (factory-cost Stage 1b): prompt-cache read/write are billed at
+  // their own tiers (≈0.1× and ≈1.25× input), distinct from base input. Kept
+  // first-class so cost attribution is accurate; legacy `tokens` folded them in.
+  if (obj.tokensCacheRead !== undefined && typeof obj.tokensCacheRead !== "number") {
+    return { ok: false, reason: "tokensCacheRead must be a number when present" };
+  }
+  if (obj.tokensCacheWrite !== undefined && typeof obj.tokensCacheWrite !== "number") {
+    return { ok: false, reason: "tokensCacheWrite must be a number when present" };
+  }
+  // apiCostUsd: the public-API-basis cost (Anthropic-priced `total_cost_usd`
+  // from claude -p). Real $ for Anthropic seats; the "equivalent" comparison
+  // figure for flat-plan seats. Distinct from legacy `costUsd` (always 0).
+  if (obj.apiCostUsd !== undefined && typeof obj.apiCostUsd !== "number") {
+    return { ok: false, reason: "apiCostUsd must be a number when present" };
+  }
   if (obj.durationMs !== undefined && typeof obj.durationMs !== "number") {
     return { ok: false, reason: "durationMs must be a number when present" };
   }
