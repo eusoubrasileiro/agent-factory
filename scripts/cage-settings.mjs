@@ -39,6 +39,7 @@ import { resolveProject } from "./lib/project.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATE_PATH = path.join(__dirname, "..", "templates", "settings-external.json");
+const HOOK_TEMPLATE_PATH = path.join(__dirname, "..", "templates", "cage-bash-hook.mjs");
 
 /** Machine-local answer to "can the OS sandbox actually run here?" (D-18). */
 export const MACHINE_CONFIG_PATH = path.join(homedir(), ".config", "amiticia", "factory-machine.json");
@@ -94,6 +95,45 @@ export function criticalFileRules(globs = []) {
 }
 
 /**
+ * Ancestor `.env` Read denies (cage-bash-hook F1). A dispatched worktree lives N
+ * levels under a repo whose root may hold the real `.env`; the built-in Read tool
+ * can reach it by absolute/relative path. Deny `.env` + `.env.*` reads for the three
+ * nearest ancestor dirs — layout-agnostic defense-in-depth that complements the
+ * PreToolUse hook (which blocks the shell/interpreter path to the same secret).
+ * @param {string} worktreeAbs @returns {string[]}
+ */
+export function parentEnvRules(worktreeAbs) {
+  const rules = [];
+  let dir = path.normalize(worktreeAbs).replace(/\/+$/, "");
+  for (let i = 0; i < 3; i++) {
+    dir = path.dirname(dir);
+    if (!dir || dir === "/" || dir === "." || dir === path.dirname(dir)) break;
+    const anchor = dir.replace(/^\//, "");
+    rules.push(`Read(//${anchor}/.env)`, `Read(//${anchor}/.env.*)`);
+  }
+  return rules;
+}
+
+/** Where the rendered PreToolUse Bash hook lands inside a worktree. */
+export function cageHookPath(worktreeAbs) {
+  return path.join(worktreeAbs, ".claude", "cage-bash-hook.mjs");
+}
+
+/** Render the Bash hook script with {{WORKTREE}} substituted. */
+export function renderBashHook(worktreeAbs, templatePath = HOOK_TEMPLATE_PATH) {
+  const anchor = path.normalize(worktreeAbs).replace(/\/+$/, "");
+  return readFileSync(templatePath, "utf8").replaceAll("{{WORKTREE}}", anchor);
+}
+
+/** The `hooks.PreToolUse` block wiring the Bash hook. */
+function bashHookConfig(worktreeAbs) {
+  const hookAbs = cageHookPath(path.normalize(worktreeAbs).replace(/\/+$/, ""));
+  return {
+    PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: `node ${hookAbs}` }] }],
+  };
+}
+
+/**
  * Substitute `{{WORKTREE}}` and drop the `_readme` block (Claude Code parses the
  * settings with a strict schema; the prose belongs to the human reading the
  * template, not to the CLI).
@@ -115,12 +155,15 @@ export function renderCageSettings(template, worktreeAbs, opts = {}) {
     throw new Error(`worktree must be an absolute path, got: ${worktreeAbs}`);
   }
   const { criticalFiles = [], sandboxEnabled = machineSandboxEnabled() } = opts || {};
-  const extra = criticalFileRules(criticalFiles);
-  let merged = extra.length === 0
-    ? template
-    : { ...template, permissions: { ...template.permissions, deny: [...(template.permissions?.deny ?? []), ...extra] } };
+  const extra = [...criticalFileRules(criticalFiles), ...parentEnvRules(worktreeAbs)];
+  let merged = {
+    ...template,
+    permissions: { ...template.permissions, deny: [...(template.permissions?.deny ?? []), ...extra] },
+  };
   // The template states the intent; the machine states what is possible (D-18).
   merged = { ...merged, sandbox: { ...merged.sandbox, enabled: sandboxEnabled === true } };
+  // The PreToolUse Bash hook — the one layer interpreter-wrapping cannot evade (D-26).
+  merged = { ...merged, hooks: bashHookConfig(worktreeAbs) };
   // `//` + a path that already starts with `/` would double the separator.
   const anchor = path.normalize(worktreeAbs).replace(/\/+$/, "").replace(/^\//, "");
   const walk = (node) => {
@@ -230,6 +273,9 @@ export function writeCageSettings(worktreeAbs, opts = {}) {
   const out = cageSettingsPath(worktreeAbs);
   mkdirSync(path.dirname(out), { recursive: true });
   writeFileSync(out, `${JSON.stringify(settings, null, 2)}\n`);
+  // The PreToolUse hook the settings reference — rendered fresh so a seat cannot
+  // carry a weakened copy forward (same discipline as the settings themselves).
+  writeFileSync(cageHookPath(worktreeAbs), renderBashHook(worktreeAbs));
   return out;
 }
 

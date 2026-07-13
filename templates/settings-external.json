@@ -36,17 +36,31 @@
     "deny": [
       "Edit(//{{WORKTREE}}/.claude/settings*.json)",
       "Write(//{{WORKTREE}}/.claude/settings*.json)",
+      "Edit(//{{WORKTREE}}/.mcp.json)",
+      "Write(//{{WORKTREE}}/.mcp.json)",
+      "Edit(//{{WORKTREE}}/CLAUDE.md)",
+      "Write(//{{WORKTREE}}/CLAUDE.md)",
+      "Edit(//{{WORKTREE}}/AGENTS.md)",
+      "Write(//{{WORKTREE}}/AGENTS.md)",
 
       "Read(//{{WORKTREE}}/.env)",
       "Read(//{{WORKTREE}}/.env.*)",
       "Read(~/.config/amiticia/**)",
       "Read(~/.ssh/**)",
 
+      "WebFetch",
+      "WebSearch",
+
       "Bash(git push:*)",
       "Bash(git push *)",
       "Bash(* push)",
       "Bash(sh:*)",
-      "Bash(bash -c:*)"
+      "Bash(bash -c:*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Bash(nc:*)",
+      "Bash(ncat:*)",
+      "Bash(scp:*)"
     ]
   }
 }
