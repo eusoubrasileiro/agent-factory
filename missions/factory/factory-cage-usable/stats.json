@@ -1,0 +1,79 @@
+{
+  "slug": "factory-cage-usable",
+  "generatedAt": "2026-07-13T21:53:05.063Z",
+  "branch": "agent/factory-cage-usable",
+  "mergeBase": "bbd367d4484fcc236a6ff92395a232200be44c32",
+  "loc": {
+    "added": 0,
+    "deleted": 0,
+    "files": 0
+  },
+  "testsAdded": 0,
+  "baselineChanged": false,
+  "baselineKeysChanged": [],
+  "durations": {
+    "building": null,
+    "validating": null,
+    "orchestrating": null,
+    "total": null
+  },
+  "tokens": {
+    "worker": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "total": 0
+    },
+    "validator": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "total": 0
+    },
+    "orchestrator": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "total": 0
+    },
+    "total": 0
+  },
+  "cost": {
+    "worker": {
+      "api": null,
+      "derived": null,
+      "reported": null
+    },
+    "validator": {
+      "api": null,
+      "derived": null,
+      "reported": null
+    },
+    "orchestrator": {
+      "api": null,
+      "derived": null,
+      "reported": null
+    },
+    "total": {
+      "api": null,
+      "derived": null,
+      "reported": null
+    }
+  },
+  "models": {
+    "worker": "zai-coding-plan/glm-5.2",
+    "validator": null,
+    "orchestrator": null
+  },
+  "rounds": 0,
+  "attention": 1,
+  "escalations": 0,
+  "pr": null,
+  "partial": false
+}

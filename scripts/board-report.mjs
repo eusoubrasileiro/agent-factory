@@ -684,7 +684,7 @@ footer.site { padding: 1rem 2rem; border-top: 1px solid var(--border); color: va
 `;
 }
 
-function renderScript() {
+function renderScript(defaultTab = "requisitos") {
   return `
 (function () {
   function activate(tab) {
@@ -710,6 +710,9 @@ function renderScript() {
       }
     });
   });
+  // Land on the most useful tab: a project with no requirements (no PRD) opens on
+  // Missões, not an empty Requisitos panel.
+  activate('${defaultTab}');
 })();
 `;
 }
@@ -1249,6 +1252,10 @@ ${rows}
 export function renderDashboardHtml(model) {
   const safe = model && typeof model === "object" ? model : {};
   const reqs = Array.isArray(safe.requirements) ? safe.requirements : [];
+  // Land on the most useful tab. A project with no requirements (no PRD, e.g. the
+  // engine itself) opens on Missões instead of an empty Requisitos panel.
+  const defaultTab = reqs.length === 0 ? "missoes" : "requisitos";
+  const sel = (tab) => (tab === defaultTab ? "true" : "false");
   const missions = Array.isArray(safe.missions) ? safe.missions : [];
   const orphans = Array.isArray(safe.orphanBranches) ? safe.orphanBranches : [];
   const intake = Array.isArray(safe.intake) ? safe.intake : [];
@@ -1287,10 +1294,10 @@ ${renderStyles()}
   <header class="site">
     <h1>AmiticIA Factory — rastreabilidade</h1>
     <nav class="tabs" role="tablist">
-      <button type="button" role="tab" data-tab="requisitos" aria-selected="true">Requisitos</button>
-      <button type="button" role="tab" data-tab="missoes" aria-selected="false">Missões</button>
-      <button type="button" role="tab" data-tab="agentes" aria-selected="false">Agentes</button>
-      <button type="button" role="tab" data-tab="historico" aria-selected="false">Histórico</button>${intakeTabButton}
+      <button type="button" role="tab" data-tab="requisitos" aria-selected="${sel("requisitos")}">Requisitos</button>
+      <button type="button" role="tab" data-tab="missoes" aria-selected="${sel("missoes")}">Missões</button>
+      <button type="button" role="tab" data-tab="agentes" aria-selected="${sel("agentes")}">Agentes</button>
+      <button type="button" role="tab" data-tab="historico" aria-selected="${sel("historico")}">Histórico</button>${intakeTabButton}
     </nav>
   </header>
   <main>
@@ -1306,7 +1313,7 @@ ${renderIntakeTab(intake)}
   <script type="application/json" id="model">${modelJson}</script>
   <script type="application/json" id="history">${historyJson}</script>
   <script>
-${renderScript()}
+${renderScript(defaultTab)}
   </script>
 </body>
 </html>

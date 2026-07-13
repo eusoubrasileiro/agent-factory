@@ -2201,3 +2201,19 @@ test("board-report CLI: a prd-less project renders missions with 0 requirements 
   assert.match(r.stdout, /0 requisitos, \d+ missões/);
   assert.ok(existsSync(out), "the board html must be written");
 });
+
+// ─── prd-less boards land on the Missões tab, not an empty Requisitos panel ────
+test("renderDashboardHtml: a board with 0 requirements defaults to the Missões tab", () => {
+  const html = renderDashboardHtml({ ...EMPTY_MODEL, requirements: [], missions: [] });
+  assert.match(html, /data-tab="missoes" aria-selected="true"/);
+  assert.match(html, /data-tab="requisitos" aria-selected="false"/);
+  assert.match(html, /activate\('missoes'\)/, "the init script activates missoes on load");
+});
+
+test("renderDashboardHtml: a board WITH requirements keeps Requisitos as the default tab", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    requirements: [{ id: "R1", recurso: "x", risco: "low", situacao: "todo", missionSlug: null, liveStatus: "" }],
+  });
+  assert.match(html, /data-tab="requisitos" aria-selected="true"/);
+});

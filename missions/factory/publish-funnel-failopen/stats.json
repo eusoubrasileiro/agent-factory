@@ -1,14 +1,14 @@
 {
   "slug": "publish-funnel-failopen",
-  "generatedAt": "2026-07-13T20:30:04.558Z",
+  "generatedAt": "2026-07-13T21:53:05.289Z",
   "branch": "agent/publish-funnel-failopen",
-  "mergeBase": "0c71eb491714d6f5d7b3b87f5ee1278684615996",
+  "mergeBase": "b1fbfaf4b87aa64f6ec6f2805a2b29b6c63d6bef",
   "loc": {
-    "added": 0,
-    "deleted": 0,
-    "files": 0
+    "added": 455,
+    "deleted": 87,
+    "files": 15
   },
-  "testsAdded": 0,
+  "testsAdded": 7,
   "baselineChanged": false,
   "baselineKeysChanged": [],
   "durations": {
