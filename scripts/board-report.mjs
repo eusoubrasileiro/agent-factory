@@ -1428,12 +1428,25 @@ const AGENTES_TERMS = [
  * @returns {string}
  */
 function renderAgentsTab(missions) {
+  const all = Array.isArray(missions) ? missions : [];
   const agents = aggregateAgents(missions);
+  // agentes-evidence A1/A2: the denominator is always visible. N (missions that
+  // contributed a worker model, derived from the SAME aggregate — never a separate
+  // recount that could drift) of M total; X have no model data. Evidence that hides
+  // its own coverage is not evidence.
+  const contributing = agents.reduce((sum, a) => sum + a.missoes, 0);
+  const total = all.length;
+  const semStats = total - contributing;
+  const coverage = `    <p class="muted cobertura">dados de ${esc(contributing)} de ${esc(total)} ${total === 1 ? "missão" : "missões"}${semStats > 0 ? ` (${esc(semStats)} sem stats de modelo)` : ""}</p>`;
+  // agentes-evidence C1: per-project boards aggregate per-project missions (the
+  // post-scoping truth) — say so, once, near the numbers.
+  const escopo = `    <p class="muted escopo">Só missões deste projeto.</p>`;
   // F4a/A2+A3 — headers + legenda from the one column vocabulary constant.
   const headCells = AGENTES_TERMS.map((t) => `<th title="${esc(t.def)}">${esc(t.label)}</th>`).join("");
   const legenda = renderLegenda(AGENTES_TERMS);
   if (agents.length === 0) {
     return `  <section id="tab-agentes" class="tab-panel" role="tabpanel" hidden>
+${coverage}
     <p class="muted">sem dados de agentes ainda</p>
 ${legenda}
   </section>`;
@@ -1453,12 +1466,14 @@ ${legenda}
     })
     .join("\n");
   return `  <section id="tab-agentes" class="tab-panel" role="tabpanel" hidden>
+${coverage}
       <table>
         <thead><tr>${headCells}</tr></thead>
         <tbody>
 ${rows}
         </tbody>
       </table>
+${escopo}
 ${legenda}
   </section>`;
 }

@@ -2615,3 +2615,54 @@ test("C1 model: RATIFIED marker ⇒ mission.ratified true; absent ⇒ false", ()
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// ─── agentes-evidence (M7): the coverage denominator + scope note ─────────────
+// The Agentes table silently aggregated whatever fraction of missions had a
+// worker model, presenting 40%-coverage as the whole story. Evidence must show
+// its denominator. Coverage is derived from the same aggregate (no drift).
+
+test("agentes-evidence: coverage line shows N of M missions + how many lack model data", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      { slug: "a", status: "Done", requirements: [], features: 2, handoffs: 2, lastVerdict: { verdict: "PASS", round: 1 }, branch: null, stats: { models: { worker: "glm-5.2" }, rounds: 1, tokens: { total: 100 } } },
+      { slug: "b", status: "Done", requirements: [], features: 1, handoffs: 1, lastVerdict: null, branch: null, stats: { models: { worker: "glm-5.2" } } },
+      { slug: "c", status: "Building", requirements: [], features: 1, handoffs: 0, lastVerdict: null, branch: null }, // no stats/model
+    ],
+  });
+  assert.match(html, /dados de 2 de 3 missões \(1 sem stats de modelo\)/);
+});
+
+test("agentes-evidence: zero-coverage still names the denominator, not a bare empty state", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      { slug: "x", status: "Building", requirements: [], features: 1, handoffs: 0, lastVerdict: null, branch: null },
+    ],
+  });
+  assert.match(html, /dados de 0 de 1 missão \(1 sem stats de modelo\)/);
+  assert.match(html, /sem dados de agentes ainda/);
+});
+
+test("agentes-evidence: scope note states per-project aggregation when the table renders", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      { slug: "a", status: "Done", requirements: [], features: 1, handoffs: 1, lastVerdict: null, branch: null, stats: { models: { worker: "glm-5.2" } } },
+    ],
+  });
+  assert.match(html, /Só missões deste projeto\./);
+});
+
+test("agentes-evidence: no fake zeros — a model with no cost/token data renders '—', never 0", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      { slug: "a", status: "Done", requirements: [], features: 0, handoffs: 0, lastVerdict: null, branch: null, stats: { models: { worker: "glm-5.2" } } },
+    ],
+  });
+  // the model row exists (missions ran) but $/feature + tokens/feature are '—'
+  assert.match(html, /glm-5\.2/);
+  const agentesPanel = html.slice(html.indexOf('id="tab-agentes"'));
+  assert.match(agentesPanel, /—/);
+});
