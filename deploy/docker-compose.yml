@@ -23,11 +23,22 @@ services:
       - network_public
     labels:
       - traefik.enable=true
-      - traefik.http.routers.factory.rule=Host(`factory.example.com`)
+      # Operator board (everything EXCEPT /cliente): engineering telemetry.
+      # Users: andre (+operator when provisioned). Tenant A's creds must NOT open this.
+      - traefik.http.routers.factory.rule=Host(`factory.example.com`) && !PathPrefix(`/cliente`)
       - traefik.http.routers.factory.entrypoints=websecure
       - traefik.http.routers.factory.tls.certresolver=myresolver
       - traefik.http.routers.factory.middlewares=factory-auth
       - traefik.http.middlewares.factory-auth.basicauth.users=${FACTORY_BASICAUTH}
+      # Client view (/cliente): the plain-PT funnel page rendered by
+      # scripts/client-view.mjs — the ONLY path a client credential opens (D-30
+      # narrowed 2026-07-14). Separate realm, separate user string.
+      # FACTORY_CLIENT_BASICAUTH holds tenant-a + andre ($ doubled to $$, same rule).
+      - traefik.http.routers.factory-cliente.rule=Host(`factory.example.com`) && PathPrefix(`/cliente`)
+      - traefik.http.routers.factory-cliente.entrypoints=websecure
+      - traefik.http.routers.factory-cliente.tls.certresolver=myresolver
+      - traefik.http.routers.factory-cliente.middlewares=factory-cliente-auth
+      - traefik.http.middlewares.factory-cliente-auth.basicauth.users=${FACTORY_CLIENT_BASICAUTH}
       - traefik.http.services.factory.loadbalancer.server.port=80
       - traefik.docker.network=network_public
 networks:
