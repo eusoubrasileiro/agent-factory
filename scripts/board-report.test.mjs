@@ -26,6 +26,7 @@ import {
   buildTraceabilityModel,
   collectGitInfo,
   fmtUsd,
+  formatDateTime,
   parseRequirementsLine,
   renderDashboardHtml,
   renderInline,
@@ -1467,7 +1468,12 @@ test("CLI: --history reads the specified path and renders the Histórico tab wit
       ].join("\n") + "\n",
     );
     const out = path.join(root, "out.html");
+    // --project wahub: the seeded rows are wahub-tagged, and board-report now
+    // scopes history to the board's own project (audit C1), so the panel only
+    // renders rows whose `project` matches.
     const r = runBoardCli([
+      "--project",
+      "wahub",
       "--missions",
       missionsDir,
       "--prd",
@@ -2216,4 +2222,79 @@ test("renderDashboardHtml: a board WITH requirements keeps Requisitos as the def
     requirements: [{ id: "R1", recurso: "x", risco: "low", situacao: "todo", missionSlug: null, liveStatus: "" }],
   });
   assert.match(html, /data-tab="requisitos" aria-selected="true"/);
+});
+
+// ─── Audit 2026-07-13 regression coverage ─────────────────────────────────────
+// Locks the user-visible fixes from the adversarial UI audit so a later change
+// that reintroduces the defect turns a named test red (mutation-gate §7).
+
+test("audit C4: backticks in a requirement recurso render as <code>, not literal prose", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    requirements: [
+      { id: "A1", recurso: "coluna nova (`bot` / `human`)", risco: "low", situacao: "todo", missionSlug: null, liveStatus: "" },
+    ],
+  });
+  // The visible body only — the embedded <script id="model"> JSON legitimately
+  // carries the raw source recurso (machine data, never rendered as prose).
+  const visible = html.split('<script type="application/json"')[0];
+  assert.match(visible, /<code>bot<\/code>/);
+  assert.doesNotMatch(visible, /\(`bot`/); // no raw backtick prose in the rendered table
+});
+
+test("audit C5: a mission with 1 round reads '1 ronda' (singular), not '1 rondas'", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      { slug: "m1", status: "Done", requirements: [], features: 1, handoffs: 1, lastVerdict: null, branch: null, stats: { rounds: 1 } },
+    ],
+  });
+  assert.match(html, /1 ronda<\/span>/);
+  assert.doesNotMatch(html, /1 rondas/);
+});
+
+test("audit C5: a mission with 3 rounds keeps the plural '3 rondas'", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      { slug: "m3", status: "Done", requirements: [], features: 1, handoffs: 1, lastVerdict: null, branch: null, stats: { rounds: 3 } },
+    ],
+  });
+  assert.match(html, /3 rondas<\/span>/);
+});
+
+test("audit A1: tablist implements the ARIA roving-tabindex + arrow-key pattern", () => {
+  const html = renderDashboardHtml({ ...EMPTY_MODEL });
+  assert.match(html, /tabIndex = on \? 0 : -1/); // roving tabindex on activate
+  assert.match(html, /ArrowRight/);
+  assert.match(html, /ArrowLeft/);
+});
+
+test("audit A3: mission lane headings are <h2>; 'branches sem missão' is <h3> (H1→H2→H3 order)", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [{ slug: "m", status: "Done", requirements: [], features: 1, handoffs: 1, lastVerdict: null, branch: null }],
+    orphanBranches: [{ name: "agent/x", slug: "x", merged: false, lastCommitISO: "2026-07-01T00:00:00Z" }],
+  });
+  assert.match(html, /<h2>Done<\/h2>/);
+  assert.match(html, /<h3>branches sem missão<\/h3>/);
+});
+
+test("audit C3: formatDateTime renders 'DD/MM/YYYY HH:MM' (UTC), '' for missing/invalid", () => {
+  assert.equal(formatDateTime("2026-07-13T21:54:54.007Z"), "13/07/2026 21:54");
+  assert.equal(formatDateTime(""), "");
+  assert.equal(formatDateTime(null), "");
+  assert.equal(formatDateTime("not-a-date"), "");
+});
+
+test("audit C3: the footer shows the humanized time as text but keeps ISO in datetime=", () => {
+  const html = renderDashboardHtml({ ...EMPTY_MODEL, generatedAt: "2026-07-13T21:54:54.007Z" });
+  assert.match(html, /datetime="2026-07-13T21:54:54.007Z">13\/07\/2026 21:54<\/time>/);
+});
+
+test("audit M1/M2/A2: renderStyles emits the mobile-overflow guards and AA-safe muted colour", () => {
+  const html = renderDashboardHtml({ ...EMPTY_MODEL });
+  assert.match(html, /nav\.tabs\s*{[^}]*overflow-x:\s*auto/); // tab bar scrolls internally
+  assert.match(html, /\.tab-panel\s*{\s*overflow-x:\s*auto/); // wide tables scroll inside the panel
+  assert.match(html, /--muted:\s*#4b5563/); // WCAG-AA muted grey
 });

@@ -171,6 +171,25 @@ export function readHistory(historyPath) {
   return rows;
 }
 
+// ─── filterHistoryByProject ─────────────────────────────────────────────────
+
+/**
+ * Scope history rows to a single project. `history.jsonl` is one shared file
+ * holding every project's snapshots; each board renders exactly one project, so
+ * board-report filters here before aggregating — otherwise every board shows a
+ * global dump and a project with no rows of its own inherits foreign data
+ * (audit 2026-07-13, C1). A null/undefined projectId means "no scope" and the
+ * rows pass through unchanged.
+ *
+ * @param {Array<object>} rows
+ * @param {string | null | undefined} projectId
+ * @returns {Array<object>}
+ */
+export function filterHistoryByProject(rows, projectId) {
+  if (projectId == null) return rows;
+  return rows.filter((r) => r.project === projectId);
+}
+
 // ─── aggregate ────────────────────────────────────────────────────────────────
 
 /** Round to 6dp to shed float noise without losing micro-dollar precision. */
