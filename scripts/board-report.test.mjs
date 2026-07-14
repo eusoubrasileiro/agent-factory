@@ -22,13 +22,17 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  AGENTES_TERMS,
+  HISTORICO_TERMS,
   aggregateAgents,
   buildTraceabilityModel,
   collectGitInfo,
+  esc,
   fmtUsd,
   formatDateTime,
   parseRequirementsLine,
   renderDashboardHtml,
+  renderInfoTip,
   renderInline,
   renderIntakeTab,
 } from "./board-report.mjs";
@@ -2201,7 +2205,10 @@ test("renderAgentsTab (via renderDashboardHtml): Agentes table gets a '$/feature
   };
   const html = renderDashboardHtml(model);
   const start = html.indexOf('id="tab-agentes"');
-  const panel = html.slice(start, start + 2000);
+  // Slice the whole Agentes section (not a fixed 2000 chars): the ⓘ info-tip
+  // markup on each <th> (tooltips-ui/F1) legitimately grew the header, pushing
+  // the later columns past a fixed window. Assert against the full panel.
+  const panel = html.slice(start, html.indexOf("</section>", start));
   assert.match(panel, /\$\/feature/);
   assert.match(panel, /sem dados/);
 });
@@ -2665,4 +2672,161 @@ test("agentes-evidence: no fake zeros — a model with no cost/token data render
   assert.match(html, /glm-5\.2/);
   const agentesPanel = html.slice(html.indexOf('id="tab-agentes"'));
   assert.match(agentesPanel, /—/);
+});
+
+// ─── tooltips-ui (F1): a VISIBLE ⓘ affordance that works with mouse AND finger ──
+//
+// The M4 "tooltips" shipped as native `title=` attributes — invisible on hover
+// (long delay, tiny native chrome) and dead on touch. These tests pin a real,
+// visible, focusable affordance whose definition is revealed on hover AND on
+// tap/focus. One constant (HISTORICO_TERMS / AGENTES_TERMS) feeds BOTH the tip
+// and the legenda (A3). Each test below is a mutation gate: reverting the
+// feature turns it red.
+
+/** Compact Histórico aggregate that exercises the data branch (stat cards). */
+const TOOLTIPS_HISTORY = {
+  missõesConcluídas: 1,
+  missõesPorSemana: 0.5,
+  leadTimeMediano: 3,
+  rondasMédia: 1,
+  tokensTotal: 100,
+  atençãoPorFeature: 1,
+  byProject: {},
+  perMission: [
+    {
+      slug: "alpha",
+      project: "factory",
+      estadoAtual: "Done",
+      leadTime: 3,
+      rondas: 1,
+      últimoVerdict: "PASS",
+      data: "2026-07-01T00:00:00Z",
+    },
+  ],
+};
+
+/** Slice one tab panel out of the rendered doc: from its id anchor to its
+ *  first closing </section>. */
+function slicePanel(html, idAnchor) {
+  const start = html.indexOf(idAnchor);
+  assert.ok(start > -1, `panel anchor not found: ${idAnchor}`);
+  return html.slice(start, html.indexOf("</section>", start));
+}
+
+test("A1 mutation gate: renderInfoTip yields a VISIBLE affordance (button/tabindex + role=tooltip + def)", () => {
+  const tip = renderInfoTip("X");
+  // A visible element — not a bare title= attribute. Removing the element → red.
+  assert.match(tip, /class="info-tip"/, "carries the visible affordance class");
+  assert.match(tip, /role="tooltip"/, "carries a role=tooltip bubble");
+  assert.ok(/<button|tabindex=/.test(tip), "focusable element (button or tabindex)");
+  assert.ok(tip.includes("X"), "carries the def text X");
+});
+
+test("A1: renderInfoTip escapes the def (no raw <, >, \", &) — title= leakage was the bug", () => {
+  const tip = renderInfoTip('a<b"c>&d');
+  assert.ok(!tip.includes('<b"'), "no raw < introduced from the def");
+  assert.match(tip, /&lt;b&quot;c&gt;&amp;d/, "def is HTML-escaped in the bubble");
+});
+
+test("B1 mutation gate: the tip links its bubble via aria-describedby (id match) + aria-label fallback", () => {
+  const tip = renderInfoTip("alguma definição", "chave-1");
+  const m = tip.match(/class="info-tip__bubble" role="tooltip" id="([^"]+)"/);
+  assert.ok(m, "bubble has role=tooltip and a unique id");
+  const bubbleId = m[1];
+  assert.ok(
+    tip.includes(`aria-describedby="${bubbleId}"`),
+    "focusable element points at the bubble id (SR + keyboard reach the def)",
+  );
+  assert.ok(
+    /aria-label="[^"]*alguma definição"/.test(tip),
+    "aria-label carries the def as a screen-reader fallback",
+  );
+});
+
+test("A2 mutation gate (Histórico): one visible info-tip per stat card == HISTORICO_TERMS.length", () => {
+  const html = renderDashboardHtml({ ...EMPTY_MODEL, history: TOOLTIPS_HISTORY });
+  const panel = html.slice(html.indexOf("<!--hist-start-->"), html.indexOf("<!--hist-end-->"));
+  const count = (panel.match(/class="info-tip"/g) || []).length;
+  assert.equal(count, HISTORICO_TERMS.length, `expected ${HISTORICO_TERMS.length} tips, got ${count}`);
+});
+
+test("A2 mutation gate (Agentes, with data): one visible info-tip per column header == AGENTES_TERMS.length", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      missionWithStats("a", { models: { worker: "glm-5.2" }, rounds: 1, tokens: { total: 100 }, cost: { total: { api: 1 } } }),
+    ],
+  });
+  const panel = slicePanel(html, 'id="tab-agentes"');
+  const count = (panel.match(/class="info-tip"/g) || []).length;
+  assert.equal(count, AGENTES_TERMS.length, `expected ${AGENTES_TERMS.length} tips, got ${count}`);
+});
+
+test("A2 (Agentes empty branch): column headers STILL render their tips so the tab is never tip-less", () => {
+  // A project with no agent stats (e.g. factory itself) hits the empty branch —
+  // but the column headers (and their tips) must still render, or the tab has
+  // zero discoverable affordances for the validator (and André) to probe.
+  const html = renderDashboardHtml({ ...EMPTY_MODEL, missions: [] });
+  const panel = slicePanel(html, 'id="tab-agentes"');
+  const count = (panel.match(/class="info-tip"/g) || []).length;
+  assert.equal(count, AGENTES_TERMS.length, "empty Agentes branch still shows column-header tips");
+  assert.match(panel, /sem dados de agentes ainda/, "and keeps its empty-state message");
+});
+
+test("A3 mutation gate (Histórico): each term def appears in BOTH a tip bubble and the legenda (one constant, two surfaces)", () => {
+  const html = renderDashboardHtml({ ...EMPTY_MODEL, history: TOOLTIPS_HISTORY });
+  const panel = html.slice(html.indexOf("<!--hist-start-->"), html.indexOf("<!--hist-end-->"));
+  for (const t of HISTORICO_TERMS) {
+    const d = esc(t.def);
+    assert.ok(panel.includes(`>${d}</span>`), `tip bubble missing def for "${t.label}"`);
+    assert.ok(panel.includes(`</strong> ${d}</li>`), `legenda missing def for "${t.label}"`);
+  }
+});
+
+test("A3 mutation gate (Agentes): each column def appears in BOTH a tip bubble and the legenda", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [missionWithStats("a", { models: { worker: "glm-5.2" } })],
+  });
+  const panel = slicePanel(html, 'id="tab-agentes"');
+  for (const t of AGENTES_TERMS) {
+    const d = esc(t.def);
+    assert.ok(panel.includes(`>${d}</span>`), `agentes tip bubble missing def for "${t.label}"`);
+    assert.ok(panel.includes(`</strong> ${d}</li>`), `agentes legenda missing def for "${t.label}"`);
+  }
+});
+
+test("B2 mutation gate: CSS hides the bubble by default and reveals it on :hover and :focus/:focus-within", () => {
+  const html = renderDashboardHtml(EMPTY_MODEL);
+  const style = html.slice(html.indexOf("<style>"), html.indexOf("</style>"));
+  assert.match(style, /\.info-tip__bubble\s*\{[^}]*display:\s*none/, "bubble hidden by default");
+  assert.match(style, /\.info-tip:hover[^{]*\{[^}]*display:\s*block/, "hover reveals the bubble");
+  assert.match(
+    style,
+    /\.info-tip:focus(?:-within)?[^{]*\{[^}]*display:\s*block/,
+    "focus (or focus-within) reveals the bubble — keyboard/tap reach it",
+  );
+});
+
+test("B3 mutation gate: the board script toggles info-tip open state on tap/click (touch can't rely on :focus)", () => {
+  const html = renderDashboardHtml(EMPTY_MODEL);
+  const script = html.slice(html.lastIndexOf("<script>"), html.lastIndexOf("</script>"));
+  assert.match(script, /info-tip/, "script wires the .info-tip elements");
+  assert.match(script, /aria-expanded/, "script toggles aria-expanded (tap to show/hide)");
+});
+
+test("C1: Histórico empty branch ('sem dados ainda') still renders the legenda", () => {
+  const html = renderDashboardHtml({ ...EMPTY_MODEL }); // no history → empty branch
+  const panel = html.slice(html.indexOf("<!--hist-start-->"), html.indexOf("<!--hist-end-->"));
+  assert.match(panel, /sem dados ainda/);
+  assert.match(panel, /<details class="legenda">/);
+  assert.match(panel, /o que significa cada número/);
+});
+
+test("C2 determinism: tip ids derive from the key — same model renders byte-identical (no Math.random / wall-clock)", () => {
+  assert.equal(renderInfoTip("d", "hist-3"), renderInfoTip("d", "hist-3"), "same inputs → identical markup");
+  assert.notEqual(renderInfoTip("d", "hist-3"), renderInfoTip("d", "agentes-3"), "different key → different id");
+  // Whole-document determinism: a fixed generatedAt must yield byte-identical HTML
+  // across renders (guards against random/timestamp ids anywhere, including tips).
+  assert.equal(renderDashboardHtml(EMPTY_MODEL), renderDashboardHtml(EMPTY_MODEL));
 });
