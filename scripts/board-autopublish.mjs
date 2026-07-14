@@ -48,9 +48,11 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { renderClientPage } from "./client-view.mjs";
 import { renderRootIndex, renderScrumbanRedirect } from "./board-index.mjs";
 import { deriveMissionState } from "./board-sync.mjs";
 import { appendSnapshots, snapshotRows } from "./history.mjs";
+import { readIntake } from "./intake-report.mjs";
 import { isMainModule } from "./lib/is-main.mjs";
 import { loadProjects, resolveProject } from "./lib/project.mjs";
 
@@ -66,15 +68,17 @@ const DEFAULT_HOST = "deploy-host";
 
 /**
  * Strip every line carrying a volatile timestamp marker so the content hash is
- * stable across renders of identical state. Three markers exist in the rendered
+ * stable across renders of identical state. Four markers exist in the rendered
  * HTML, all regenerated at `new Date().toISOString()` on every render:
  *   - the footer line `gerado em <iso>` (Portuguese, human-visible) — present in
  *     both the per-project dashboard and the root index;
  *   - the embedded `<script id="model">` JSON field `"generatedAt": "<iso>"`
  *     (dashboard model payload);
  *   - the root-index card line `última atualização <iso>` (board-index.mjs),
- *     which mirrors the per-project `generatedAt` and is therefore also volatile.
- * All three are removed; everything else is preserved so real content changes
+ *     which mirrors the per-project `generatedAt` and is therefore also volatile;
+ *   - the client-page footer line `atualizado em <time datetime="<iso>">…</time>`
+ *     (client-view.mjs) — the client status page's own regenerated timestamp.
+ * All four are removed; everything else is preserved so real content changes
  * still move the hash.
  * @param {string} html
  * @returns {string}
@@ -86,7 +90,8 @@ export function stripTimestampLines(html) {
       (line) =>
         !line.includes("gerado em") &&
         !line.includes('"generatedAt"') &&
-        !line.includes("última atualização"),
+        !line.includes("última atualização") &&
+        !line.includes("atualizado em"),
     )
     .join("\n");
 }
@@ -332,6 +337,64 @@ function writeRootIndex({ projects: rendered, distDir }) {
   return { rootHtml, redirectHtml, rootPath, redirectPath };
 }
 
+// ─── Client status page (M5 — client-view) ───────────────────────────────────
+//
+// A second published artifact: the plain-PT client funnel page
+// (`dist/factory-board/cliente/index.html`). It is built ONLY from curated
+// labels (`client-labels.json` beside a declared `intake[]` source), never from
+// the intake summary, and the renderer (client-view.mjs) is whitelist-by-
+// construction + fail-closed. This wiring is the publish-side fail-closed gate:
+// the page is rendered and written ONLY when a project BOTH declares `intake[]`
+// AND ships a parseable `client-labels.json`. No labels → no cliente/ dir → an
+// unlabeled (therefore unsafe) page can never be published.
+
+/**
+ * Render the client status page from the first project that declares an
+ * `intake[]` source with a parseable `client-labels.json` beside it. Labels from
+ * multiple intake sources are merged. Returns "" (render nothing, write no file)
+ * when no qualifying project exists — the fail-closed outcome.
+ *
+ * The engine stays product-agnostic: it never names a client or product, only
+ * follows the profile-declared `intake[]` to the sibling labels file (D-15).
+ *
+ * @param {Array<{id: string}>} manifest — project entries from loadProjects.
+ * @param {string} repoRoot — the factory root (where intake[].file resolves from).
+ * @param {string} generatedAt — ISO timestamp for the page footer.
+ * @returns {string} — the rendered HTML, or "" when labels are absent.
+ */
+function renderClientePage(manifest, repoRoot, generatedAt) {
+  for (const entry of manifest ?? []) {
+    if (!entry || typeof entry.id !== "string") continue;
+    const { profile } = resolveProject({ project: entry.id }, repoRoot);
+    if (!Array.isArray(profile.intake) || profile.intake.length === 0) continue;
+
+    // Merge the curated label maps from every intake source that ships one. A
+    // source whose labels file is missing or unparseable contributes nothing.
+    /** @type {Record<string, object>} */
+    const labels = {};
+    let any = false;
+    for (const src of profile.intake) {
+      const labelsPath = path.join(path.dirname(src.file), "client-labels.json");
+      if (!existsSync(labelsPath)) continue;
+      let parsed;
+      try {
+        parsed = JSON.parse(readFileSync(labelsPath, "utf8"));
+      } catch {
+        continue; // corrupt labels → this source contributes nothing (fail-closed)
+      }
+      if (parsed && typeof parsed === "object") {
+        Object.assign(labels, parsed);
+        any = true;
+      }
+    }
+    if (!any) continue; // no labels anywhere → fail closed, try no further source
+
+    const { rows } = readIntake(profile.intake);
+    return renderClientPage({ intake: rows, labels, generatedAt });
+  }
+  return "";
+}
+
 // ─── Publish log ─────────────────────────────────────────────────────────────
 
 function logLine(repoRoot, message) {
@@ -482,13 +545,26 @@ function runLocked({ repoRoot, dryRun, manifest }) {
   const distDir = path.join(repoRoot, "dist", "factory-board");
   const root = writeRootIndex({ projects: rendered, distDir });
 
+  // M5: client status page (`/cliente/`). Rendered + written only when a project
+  // declares `intake[]` with a parseable `client-labels.json` (fail-closed — no
+  // labels ⇒ empty string ⇒ no dir). Folded into the content hash so a curated-
+  // label change republishes (and the page's own footer timestamp is stripped,
+  // so an identical re-render does not). See renderClientePage above.
+  const clienteHtml = renderClientePage(manifest, repoRoot, new Date().toISOString());
+  if (clienteHtml) {
+    const clienteDir = path.join(distDir, "cliente");
+    mkdirSync(clienteDir, { recursive: true });
+    writeFileSync(path.join(clienteDir, "index.html"), clienteHtml);
+  }
+
   // Content hash over concatenated rendered HTML (timestamps stripped):
-  // per-project pages (manifest order) + root index + scrumban redirect.
-  // Order is deterministic; root + redirect last.
+  // per-project pages (manifest order) + root index + scrumban redirect + the
+  // client page ("" when absent). Order is deterministic.
   const htmls = [
     ...rendered.map((r) => readFileSync(r.outPath, "utf8")),
     root.rootHtml,
     root.redirectHtml,
+    clienteHtml,
   ];
   const hash = contentHash(htmls);
 
