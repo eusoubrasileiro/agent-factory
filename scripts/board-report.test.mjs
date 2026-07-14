@@ -25,6 +25,7 @@ import {
   AGENTES_TERMS,
   HISTORICO_TERMS,
   aggregateAgents,
+  canonicalModelId,
   buildTraceabilityModel,
   collectGitInfo,
   esc,
@@ -1682,6 +1683,30 @@ test("aggregateAgents: missions without a worker model are skipped; empty → []
   assert.deepEqual(aggregateAgents([]), []);
   assert.deepEqual(aggregateAgents([{ slug: "x", stats: null }]), []);
   assert.deepEqual(aggregateAgents([{ slug: "y", stats: { models: {} } }]), []);
+});
+
+test("aggregateAgents: the same model under two ids merges into ONE row (canonical)", () => {
+  const rows = aggregateAgents([
+    { slug: "a", features: 1, stats: { models: { worker: "glm-5.2" } } },
+    { slug: "b", features: 1, stats: { models: { worker: "zai-coding-plan/glm-5.2" } } },
+    { slug: "c", features: 1, stats: { models: { worker: "claude-sonnet-5" } } },
+    { slug: "d", features: 1, stats: { models: { worker: "claude-sonnet-4-6" } } },
+  ]);
+  const byModel = Object.fromEntries(rows.map((r) => [r.model, r.missoes]));
+  // z.ai's prefixed id and the bare flag are the SAME model → one row, 2 missions.
+  assert.equal(byModel["glm-5.2"], 2);
+  assert.equal(byModel["zai-coding-plan/glm-5.2"], undefined);
+  // genuinely different models stay distinct — never over-merge.
+  assert.equal(byModel["claude-sonnet-5"], 1);
+  assert.equal(byModel["claude-sonnet-4-6"], 1);
+});
+
+test("canonicalModelId: strips provider/plan prefix, keeps distinct models distinct", () => {
+  assert.equal(canonicalModelId("zai-coding-plan/glm-5.2"), "glm-5.2");
+  assert.equal(canonicalModelId("glm-5.2"), "glm-5.2");
+  assert.equal(canonicalModelId("anthropic/claude-opus-4-8"), "claude-opus-4-8");
+  assert.notEqual(canonicalModelId("claude-sonnet-5"), canonicalModelId("claude-sonnet-4-6"));
+  assert.equal(canonicalModelId(null), "");
 });
 
 test("Agentes: tab button present + renders per-model rows", () => {

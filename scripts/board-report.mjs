@@ -1130,7 +1130,7 @@ function renderMissionStatsLine(stats) {
     );
   }
   const model = stats.models?.worker;
-  if (model) cells.push(`<span class="stat-cell" title="modelo do worker">${esc(model)}</span>`);
+  if (model) cells.push(`<span class="stat-cell" title="modelo do worker">${esc(canonicalModelId(model))}</span>`);
   if (typeof stats.tokens?.total === "number" && stats.tokens.total > 0) {
     cells.push(`<span class="stat-cell" title="tokens">${esc(fmtTokens(stats.tokens.total))} tok</span>`);
   }
@@ -1380,12 +1380,29 @@ function statsDurationH(durations) {
  * @param {Array<object>} missions — board model missions (with optional `stats`)
  * @returns {Array<{ model: string, missoes: number, passPrimeiraRate: number|null, rondasMedia: number|null, tokensPorFeature: number|null, custoPorFeature: number|null, escalations: number, tokensTotal: number }>}
  */
+/**
+ * Canonical model id for A/B grouping: strip a provider/plan prefix (everything
+ * up to and including the last "/"), lowercase-trim. The SAME model recorded
+ * under different ids must merge into one row — `zai-coding-plan/glm-5.2` (z.ai's
+ * coding-plan id) and `glm-5.2` (the bare `--model` flag) are the same model.
+ * Models with no shared tail stay distinct (`claude-sonnet-5` ≠ `claude-sonnet-4-6`).
+ * @param {string} id @returns {string}
+ */
+export function canonicalModelId(id) {
+  if (typeof id !== "string") return "";
+  const trimmed = id.trim();
+  const slash = trimmed.lastIndexOf("/");
+  return (slash >= 0 ? trimmed.slice(slash + 1) : trimmed).toLowerCase();
+}
+
 export function aggregateAgents(missions) {
   const safe = Array.isArray(missions) ? missions : [];
   const byModel = new Map();
   for (const m of safe) {
-    const model = m?.stats?.models?.worker;
-    if (typeof model !== "string" || model.length === 0) continue;
+    const raw = m?.stats?.models?.worker;
+    if (typeof raw !== "string" || raw.length === 0) continue;
+    // Group by the canonical id so one model recorded under two ids is one row.
+    const model = canonicalModelId(raw);
     if (!byModel.has(model)) byModel.set(model, []);
     byModel.get(model).push(m);
   }
