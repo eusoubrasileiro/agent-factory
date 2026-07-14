@@ -30,11 +30,27 @@ function esc(value) {
     .replace(/'/g, "&#39;");
 }
 
+/**
+ * Human-readable `DD/MM/YYYY HH:MM` (UTC) for the card/footer timestamps — the
+ * raw ISO-8601 with ms + `Z` is machine noise on screen (audit C3). Kept local
+ * (this module stays self-contained, no board-report import); mirrors the
+ * dashboard's own formatter. "" for a missing/invalid input.
+ * @param {string|null|undefined} iso
+ * @returns {string}
+ */
+function formatDateTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}/${d.getUTCFullYear()} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+}
+
 const ROOT_STYLES = `
 :root {
   --bg: #fafafa;
   --fg: #1f2937;
-  --muted: #6b7280;
+  --muted: #4b5563;
   --border: #e5e7eb;
   --card-bg: #ffffff;
   --link: #2563eb;
@@ -78,7 +94,7 @@ function renderProjectCard(p) {
   const noun = inFlight === 1 ? "missão em voo" : "missões em voo";
   const updatedAt = p?.updatedAt ?? null;
   const updatedAtHtml = updatedAt
-    ? `\n        <span class="card-updated">última atualização ${esc(updatedAt)}</span>`
+    ? `\n        <span class="card-updated">última atualização <time datetime="${esc(updatedAt)}">${esc(formatDateTime(updatedAt))}</time></span>`
     : "";
   return `      <a class="project-card" href="/${id}/">
         <span class="card-name">${name}</span>
@@ -124,7 +140,7 @@ ${cards}
     </div>
   </main>
   <footer class="site">
-    gerado em <time datetime="${esc(generatedAt)}">${esc(generatedAt)}</time> · board-index
+    gerado em <time datetime="${esc(generatedAt)}">${esc(formatDateTime(generatedAt))}</time> · board-index
   </footer>
 </body>
 </html>

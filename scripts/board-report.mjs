@@ -34,7 +34,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { normalizeSituacao, parseBacklogTables } from "./board-import-backlog.mjs";
 import { deriveMissionState } from "./board-sync.mjs";
-import { aggregate, readHistory } from "./history.mjs";
+import { aggregate, filterHistoryByProject, readHistory } from "./history.mjs";
 import { buildChain, readIntake } from "./intake-report.mjs";
 import { isMainModule } from "./lib/is-main.mjs";
 import { resolveProject } from "./lib/project.mjs";
@@ -546,12 +546,28 @@ function formatDDMM(iso) {
   return `${dd}/${mm}`;
 }
 
+/**
+ * Human-readable `DD/MM/YYYY HH:MM` (UTC) for user-facing timestamps — the raw
+ * ISO-8601 with milliseconds and `Z` is machine noise on screen (audit C3). The
+ * machine form still belongs in a `<time datetime>` attribute; this is only the
+ * visible text. UTC (like formatDDMM) keeps it deterministic for tests.
+ * @param {string|null|undefined} iso
+ * @returns {string} formatted string, or "" for a missing/invalid input
+ */
+export function formatDateTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}/${d.getUTCFullYear()} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+}
+
 export function renderStyles() {
   return `
 :root {
   --bg: #fafafa;
   --fg: #1f2937;
-  --muted: #6b7280;
+  --muted: #4b5563;
   --border: #e5e7eb;
   --card-bg: #ffffff;
   --link: #2563eb;
@@ -580,10 +596,13 @@ body {
   color: var(--fg);
   background: var(--bg);
   line-height: 1.5;
+  overflow-x: hidden; /* audit C1/M2: page body never scrolls sideways; wide content scrolls inside its panel */
 }
 header.site { padding: 1.5rem 2rem 0; border-bottom: 1px solid var(--border); background: var(--card-bg); }
 header.site h1 { margin: 0 0 1rem; font-size: 1.25rem; font-weight: 600; }
-nav.tabs { display: flex; gap: 0.25rem; }
+/* audit M1: the tab bar scrolls internally instead of clipping off-screen tabs on mobile. */
+nav.tabs { display: flex; gap: 0.25rem; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+nav.tabs::-webkit-scrollbar { display: none; }
 nav.tabs button {
   appearance: none;
   border: none;
@@ -594,6 +613,8 @@ nav.tabs button {
   color: var(--muted);
   cursor: pointer;
   border-radius: 6px 6px 0 0;
+  flex: 0 0 auto; /* audit M1: keep tabs full-width so the bar scrolls rather than squashing them */
+  white-space: nowrap;
 }
 nav.tabs button:hover { background: var(--bg); }
 nav.tabs button[aria-selected="true"] {
@@ -601,7 +622,10 @@ nav.tabs button[aria-selected="true"] {
   border-bottom-color: var(--link);
   font-weight: 600;
 }
+nav.tabs button:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; } /* audit nit: authored focus ring, not UA default */
 main { padding: 1.5rem 2rem 4rem; max-width: 1100px; margin: 0 auto; }
+/* audit M2: a wide table scrolls inside its own panel instead of pushing the page sideways. */
+.tab-panel { overflow-x: auto; }
 .tab-panel[hidden] { display: none; }
 h2 { font-size: 1.05rem; font-weight: 600; margin: 1.5rem 0 0.5rem; }
 h3 { font-size: 0.78rem; font-weight: 600; margin: 0 0 0.5rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
@@ -609,6 +633,7 @@ table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; font-size
 th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
 th { font-weight: 600; color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
 td.id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+td code, th code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; padding: 0 0.2rem; }
 .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 9999px; font-size: 0.72rem; font-weight: 600; white-space: nowrap; }
 .badge-status.done { background: var(--status-done-bg); color: var(--status-done-fg); }
 .badge-status.needs-human { background: var(--status-needs-human-bg); color: var(--status-needs-human-fg); }
@@ -626,7 +651,8 @@ td.id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space
 a.mission-link { color: var(--link); text-decoration: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.82rem; }
 a.mission-link:hover { text-decoration: underline; }
 .lanes { display: grid; gap: 1.5rem; }
-.lane h3 { margin-bottom: 0.5rem; }
+/* audit A3: lane headings are semantically <h2> (H1 -> H2 lane -> H3 branches) but keep the compact uppercase-muted look. */
+.lane h2 { margin: 0 0 0.5rem; font-size: 0.78rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .mission-card { border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); padding: 0.75rem 1rem; margin-bottom: 0.5rem; }
 .mission-card > summary { cursor: pointer; list-style: none; }
 .mission-card > summary::-webkit-details-marker { display: none; }
@@ -689,14 +715,30 @@ function renderScript(defaultTab = "requisitos") {
 (function () {
   function activate(tab) {
     document.querySelectorAll('[data-tab]').forEach(function (btn) {
-      btn.setAttribute('aria-selected', String(btn.dataset.tab === tab));
+      var on = btn.dataset.tab === tab;
+      btn.setAttribute('aria-selected', String(on));
+      // ARIA tabs pattern (audit A1): roving tabindex — only the selected tab is
+      // in the Tab sequence; the rest are reached with the arrow keys below.
+      btn.tabIndex = on ? 0 : -1;
     });
     document.querySelectorAll('.tab-panel').forEach(function (panel) {
       panel.hidden = !panel.id.endsWith('-' + tab);
     });
   }
-  document.querySelectorAll('[data-tab]').forEach(function (btn) {
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('[data-tab]'));
+  tabs.forEach(function (btn, i) {
     btn.addEventListener('click', function () { activate(btn.dataset.tab); });
+    btn.addEventListener('keydown', function (e) {
+      var next = null;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = tabs[(i + 1) % tabs.length];
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = tabs[(i - 1 + tabs.length) % tabs.length];
+      else if (e.key === 'Home') next = tabs[0];
+      else if (e.key === 'End') next = tabs[tabs.length - 1];
+      if (!next) return;
+      e.preventDefault();
+      activate(next.dataset.tab);
+      next.focus();
+    });
   });
   document.querySelectorAll('a[data-jump-to-mission]').forEach(function (a) {
     a.addEventListener('click', function (e) {
@@ -706,7 +748,7 @@ function renderScript(defaultTab = "requisitos") {
       var target = document.getElementById(id);
       if (target) {
         target.open = true;
-        target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     });
   });
@@ -725,7 +767,7 @@ function renderRequirementsTable(rows) {
         : `<span class="muted">sem missão</span>`;
       return `        <tr>
           <td class="id">${esc(r.id)}</td>
-          <td>${renderInline(r.recurso)}</td>
+          <td>${renderInlineRich(r.recurso)}</td>
           <td><span class="badge badge-risk ${riskClass(r.risco)}">${esc(r.risco || "—")}</span></td>
           <td><span class="badge badge-status ${statusClass(r.liveStatus)}">${esc(r.liveStatus || "—")}</span></td>
           <td>${missionCell}</td>
@@ -823,7 +865,10 @@ function renderMissionStatsLine(stats) {
   const h = statsDurationH(stats.durations);
   if (h !== null) cells.push(`<span class="stat-cell" title="tempo de parede">${esc(fmtStat(h, " h"))}</span>`);
   if (typeof stats.rounds === "number") {
-    cells.push(`<span class="stat-cell" title="rondas de validação">${esc(stats.rounds)} rondas</span>`);
+    const r = stats.rounds;
+    cells.push(
+      `<span class="stat-cell" title="rondas de validação">${esc(r)} ${r === 1 ? "ronda" : "rondas"}</span>`,
+    );
   }
   if (cells.length === 0) return "";
   return `<div class="card-stats">${cells.join("")}</div>`;
@@ -942,7 +987,7 @@ function renderMissionsTab(missions, orphans) {
     if (cards.length === 0) return "";
     const cardsHtml = cards.map(renderMissionCard).join("\n");
     return `    <div class="lane" data-status="${esc(status)}">
-      <h3>${esc(status)}</h3>
+      <h2>${esc(status)}</h2>
 ${cardsHtml}
     </div>`;
   })
@@ -952,7 +997,7 @@ ${cardsHtml}
   const orphansHtml =
     orphans.length > 0
       ? `    <section class="orphans">
-      <h2>branches sem missão</h2>
+      <h3>branches sem missão</h3>
       <ul>
 ${orphans
   .map((b) => {
@@ -1308,7 +1353,7 @@ ${renderHistoryTab(history)}
 ${renderIntakeTab(intake)}
   </main>
   <footer class="site">
-    gerado em <time datetime="${esc(generatedAt)}">${esc(generatedAt)}</time> · board-report
+    gerado em <time datetime="${esc(generatedAt)}">${esc(formatDateTime(generatedAt))}</time> · board-report
   </footer>
   <script type="application/json" id="model">${modelJson}</script>
   <script type="application/json" id="history">${historyJson}</script>
@@ -1395,7 +1440,11 @@ function main() {
 
   // History aggregation (feature 04): read JSONL, aggregate stats, pass to
   // the renderer. Missing/empty/corrupt → null (Histórico tab shows "sem dados").
-  const historyRows = readHistory(historyPath);
+  // Scope to THIS board's project (audit 2026-07-13, C1): history.jsonl is a
+  // single shared file across projects, so an unfiltered read makes every board
+  // render a global dump and gives a project with no rows of its own another
+  // project's data.
+  const historyRows = filterHistoryByProject(readHistory(historyPath), resolved.id);
   model.history =
     historyRows.length > 0 ? aggregate(historyRows, { now: model.generatedAt, missionsDir }) : null;
 

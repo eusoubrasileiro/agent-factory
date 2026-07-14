@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { aggregate, appendSnapshots, readHistory, snapshotRows } from "./history.mjs";
+import { aggregate, appendSnapshots, filterHistoryByProject, readHistory, snapshotRows } from "./history.mjs";
 
 // ─── Fixture helpers ──────────────────────────────────────────────────────────
 
@@ -311,6 +311,36 @@ test("readHistory: handles duplicate/near-duplicate rows gracefully (returns all
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ─── filterHistoryByProject ─────────────────────────────────────────────────
+// Each board renders ONE project. history.jsonl is a single shared file holding
+// every project's snapshots, so board-report must scope rows to the current
+// project before aggregating — otherwise every board shows a global dump and a
+// project with no rows of its own inherits foreign data (audit 2026-07-13, C1).
+
+test("filterHistoryByProject: keeps only rows for the given project", () => {
+  const rows = [
+    row("a", { project: "factory" }),
+    row("b", { project: "wahub" }),
+    row("c", { project: "factory" }),
+  ];
+  const kept = filterHistoryByProject(rows, "factory");
+  assert.deepEqual(
+    kept.map((r) => r.slug),
+    ["a", "c"],
+  );
+});
+
+test("filterHistoryByProject: a project with no rows → [] (tenant-c case)", () => {
+  const rows = [row("a", { project: "factory" }), row("b", { project: "wahub" })];
+  assert.deepEqual(filterHistoryByProject(rows, "tenant-c"), []);
+});
+
+test("filterHistoryByProject: null/undefined projectId → returns all rows unchanged", () => {
+  const rows = [row("a", { project: "factory" }), row("b", { project: "wahub" })];
+  assert.equal(filterHistoryByProject(rows, undefined).length, 2);
+  assert.equal(filterHistoryByProject(rows, null).length, 2);
 });
 
 // ─── aggregate ────────────────────────────────────────────────────────────────
