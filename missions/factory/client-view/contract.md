@@ -1,88 +1,82 @@
-# Contract — client-view
+# Contract — client-view (v2, redesigned after leak failure)
 
-Files you may touch: `scripts/client-view.mjs` (new), `scripts/client-view.test.mjs`
-(new), `scripts/board-autopublish.mjs` + its test (ONLY the minimal wiring in D below).
-Nothing else.
+## Why v2
 
-## A — renderer (pure)
+v1 rendered the intake `summary` field (whitelisted) and passed the seat's fixture
+leak test — but against the REAL `clients/tenant-a/requirements-intake.md` it leaked
+massively: the summary field IS engineering prose (file:line refs, commit hashes,
+branch names, internal audit corrections, `*(engagement)*` strategy). A whitelist that
+includes `summary` leaks by construction. **The only safe design is to render a
+separately-curated client-safe label, never the intake summary.**
 
-`scripts/client-view.mjs` exports:
+Files you may touch: `scripts/client-view.mjs` (rewrite), `scripts/client-view.test.mjs`
+(rewrite), `scripts/board-autopublish.mjs` + test (wiring only). Nothing else.
 
-```
-renderClientPage({ intake, missions, generatedAt, projectName })  → HTML string
-buildClientRows(intake, missions)                                 → row model (pure)
-```
+## A — data model: curated labels, join by id
 
-- A1 **Whitelist construction.** `buildClientRows` maps each intake row to EXACTLY
-  `{ id, summary, clientStatus, shippedDate }` — built field-by-field from an
-  allowlist, never by spreading/cloning the source row.
-  *Mutation gate: spread the source row into the output → the leak test (C1) goes red.*
-- A2 **Status mapping** (intake lifecycle `STATUSES` from `scripts/intake-report.mjs:34`
-  — reuse, don't redeclare): `New`/`Distilled` → **na fila** · `Ratified` → **em
-  construção** · `Landed` → **no ar**. Unknown → **na fila** (never crash, never leak
-  the raw value).
-- A3 **Exclusion by type:** rows whose `type` is `business-decision` are dropped
-  entirely (engagement/payment lines are not project progress).
-  *Mutation gate: stop dropping them → named test red.*
-- A4 **`Novidades da semana`:** a section listing rows whose status became Landed with
-  a shipped/landed date within the last 7 days of `generatedAt` (derive date from the
-  row's own date fields; when no date is derivable the row simply doesn't appear here —
-  absent, never guessed).
-- A5 **Language:** page is plain PT-BR. Section headings: `O que você pediu` (funnel
-  table: pedido / situação / entregue em) and `Novidades da semana`. Status badges show
-  ONLY the three client words. Footer: `atualizado em <DD/MM/YYYY HH:MM>` (UTC format,
-  same shape as board-report's formatDateTime — you may copy the 8-line helper; do NOT
-  import board-report, the client page must not grow a dependency on the operator
-  renderer).
-- A6 **Self-contained HTML:** single inline `<style>`, zero external loads, mobile-first
-  (the client reads on a phone: max-width card layout, ≥16px base font, table degrades
-  to stacked cards under 480px via CSS only). `lang="pt-BR"`. No `<script>` at all —
-  a static page needs none, and no script = no leak channel.
-- A7 Escape everything interpolated (write a local 5-line `esc()`, same as
-  `board-index.mjs:24` pattern).
+- The client-safe text comes from `clients/tenant-a/client-labels.json` — an object
+  `{ "IN-44": { "label": "<plain PT phrase>", "client_visible": true|false }, ... }`
+  (authored separately, ratified by André). The renderer is handed this map as data;
+  it does NOT read the intake summary for display text.
+- A1 `buildClientRows(intake, labels, missions)` emits one row per intake id that is
+  BOTH `client_visible: true` AND has a non-empty `label`. Every other row is omitted.
+  Each emitted row is EXACTLY `{ label, clientStatus, shippedDate }` — built field by
+  field. The intake `id`, `summary`, `type`, `detail` are NEVER copied into the output.
+  *Mutation gate: include a row whose label is missing or client_visible:false → the
+  leak/whitelist test goes red.*
+- A2 Status mapping from the intake lifecycle (`STATUSES`, scripts/intake-report.mjs:34):
+  `New`/`Distilled` → **na fila** · `Ratified` → **em construção** · `Landed` → **no ar**.
+  Unknown → **na fila**.
+- A3 `shippedDate` only for `no ar` rows (a Landed date within the row's data);
+  otherwise empty. Never guess.
 
-## B — intake summary sanitation
+## B — fail-closed leak filter (defense in depth)
 
-- B1 The `summary` shown to the client is the intake row's summary with inline
-  backtick-code spans REMOVED (content kept, backticks stripped) and any `→`-chain of
-  mission slugs/backlog ids stripped. If after stripping the summary is empty, fall
-  back to the row id alone.
-- B2 The `# Detalhamento técnico` block (`detail` field) is NEVER read — not even to
-  test emptiness. `buildClientRows` must not reference the field.
+- B1 Even a curated label passes through a final `isClientSafe(text)` guard before
+  render: reject (drop the whole row, log nothing to output) if the label matches any
+  forbidden class (case-insensitive): `R$`, `$`+digit, `tok`, model names
+  (glm|claude|opus|sonnet|gpt|gemini), `detalhamento`, `pagamento`, `engagement`,
+  `gate:`, `agent/`, `.ts`/`.tsx`/`.mjs`, `:` followed by digits (line refs), a 7+ hex
+  run (commit), `Needs Human`, `verdict`, `PASS`, `FAIL`. Curated labels should never
+  trip this — the guard exists so a bad label fails CLOSED (row vanishes), never leaks.
+  *Mutation gate: disable the guard → a test feeding a label with "webhook.ts:12" still
+  renders it → red.*
 
-## C — the leak test (the heart)
+## C — the leak test (against REAL data, not a fixture)
 
-- C1 `client-view.test.mjs` builds a fixture intake containing every forbidden class:
-  a `business-decision` row with "R$ 2.000" and "pagamento"; a row with a
-  `detail` block containing "claude-opus", "glm-5.2", "tokens", "$4.20"; summaries with
-  backticks and mission-slug chains; a `models`/`stats` field on a mission. It renders
-  the FULL page and asserts the output contains NONE of:
-  `R$`, `$`, `tok`, `glm`, `claude`, `opus`, `sonnet`, `detalhamento`, `pagamento`,
-  `gate:`, `agent/`, the mission slug, `Needs Human`, `verdict`, `PASS`, `FAIL`.
-  Case-insensitive. This is ONE named test: `leak: forbidden token classes never reach
-  client HTML`.
-- C2 A second test asserts the ALLOWED content did land (ids, plain summaries, the
-  three status words, dates) — the whitelist must not be satisfied by rendering nothing.
+- C1 `client-view.test.mjs` reads the ACTUAL
+  `/home/andre/Projects/amiticia/clients/tenant-a/requirements-intake.md` via
+  `parseIntake` (intake-report.mjs) AND the ACTUAL `client-labels.json`, renders the
+  full page, and asserts the output contains NONE of the forbidden classes in B1.
+  This is the named test `leak: real tenant-a intake never reaches client HTML`. If the
+  labels file is absent at test time, SKIP with a clear message (don't fake-pass).
+- C2 A positive test: at least one curated `no ar` row renders its label + "no ar" +
+  its date; and a `client_visible:false` row's label never appears.
 
-## D — publish wiring (minimal)
+## D — page (unchanged from v1 where safe)
 
-- D1 `board-autopublish.mjs`: after per-project renders, render the client page for
-  every project whose profile declares `intake[]` (today that's one; the engine stays
-  product-agnostic) into `dist/factory-board/cliente/index.html`. Reuse the model the
-  project render already built if reachable; otherwise call the renderer with the
-  intake read the funnel already performs. Fold the HTML into the existing content hash
-  (timestamp-stripping rules included) so a client-page change republishes and a
-  no-change run stays "sem mudanças".
-- D2 If NO project declares intake, no cliente/ dir is written (and a stale one is not
-  deleted by you — rsync --delete handles it).
-- D3 Autopublish tests: extend existing test file minimally (client page in hash, D2).
+- Plain PT-BR, self-contained HTML, mobile-first, NO `<script>`. Sections:
+  `O que estamos construindo` (the funnel: label · situação · entregue em) and
+  `Novidades da semana` (labels that reached `no ar` in the last 7 days of
+  `generatedAt`). Footer `atualizado em <DD/MM/YYYY HH:MM>` (local formatDateTime helper,
+  no board-report import). Local `esc()`. Three status words only.
+
+## E — publish wiring (minimal)
+
+- E1 `board-autopublish.mjs`: render the client page into
+  `dist/factory-board/cliente/index.html` ONLY when BOTH the project declares
+  `intake[]` AND `client-labels.json` exists and parses. If labels are absent, write NO
+  cliente/ dir (fail-closed — never publish an unlabeled, therefore unsafe, page).
+  Fold into the content hash.
+- E2 Autopublish test covers: labels present → page written; labels absent → no page.
 
 ## Gate
 
-`pnpm test` green from worktree root. No product literals in `scripts/**` (meta-test).
-Small commits on `agent/client-view`. Handoff at
-`missions/factory/client-view/features/01.handoff.md`.
+`pnpm test` green from worktree root. No product literals in `scripts/**`. Small commits
+on `agent/client-view-v2`. Handoff at
+`missions/factory/client-view/features/02.handoff.md`.
 
 ## Out of scope
 
-Traefik/VPS routing (M6, coordinator). Operator board changes. Provisioning users.
+Authoring the labels (André ratifies a drafted set — separate). Traefik/VPS (M6).
+Operator board.
