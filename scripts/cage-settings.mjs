@@ -95,6 +95,31 @@ export function criticalFileRules(globs = []) {
 }
 
 /**
+ * Allow rules for a project's deterministic gate commands. Without these, EVERY
+ * Bash invocation needs interactive approval (the OS sandbox is off on this
+ * machine — D-18 — so `autoAllowBashIfSandboxed` never fires, and a seat's
+ * throwaway `CLAUDE_CONFIG_DIR` has no workspace-trust record, so Claude Code
+ * ignores the worktree's own `.claude/settings.json` allow list entirely). A
+ * caged seat could therefore never self-verify its own work — it had to leave
+ * every diff uncommitted for the leader to gate by hand. Each `gate[]` entry
+ * (an exact command string, e.g. `"pnpm test"`) yields BOTH a bare-exact rule
+ * and a `<cmd> *` rule for trailing flags — the same two-rule convention the
+ * project's own trusted `.claude/settings.json` already uses for these commands.
+ *
+ * @param {string[]} commands — exact command strings from projects/<id>/project.json gate[]
+ * @returns {string[]}
+ */
+export function gateCommandRules(commands = []) {
+  if (!Array.isArray(commands)) return [];
+  const rules = [];
+  for (const cmd of commands) {
+    if (typeof cmd !== "string" || cmd.length === 0) continue;
+    rules.push(`Bash(${cmd})`, `Bash(${cmd} *)`);
+  }
+  return rules;
+}
+
+/**
  * Ancestor `.env` Read denies (cage-bash-hook F1). A dispatched worktree lives N
  * levels under a repo whose root may hold the real `.env`; the built-in Read tool
  * can reach it by absolute/relative path. Deny `.env` + `.env.*` reads for the three
@@ -164,10 +189,15 @@ function bashHookConfig(worktreeAbs) {
  * walk, so the existing anchoring logic substitutes {{WORKTREE}} for them too.
  * The base template therefore carries zero product paths (Feature 03).
  *
+ * When `opts.gateCommands` is given, those `project.json → gate[]` command
+ * strings are appended to `template.permissions.allow` (see `gateCommandRules`)
+ * — the ONLY Bash commands a caged seat can run without interactive approval,
+ * beyond whatever the template itself already allows.
+ *
  * A trailing slash on `worktreeAbs` would yield `//path//backend` — normalize.
  * @param {object} template — parsed templates/settings-external.json
  * @param {string} worktreeAbs — absolute path, no trailing slash required
- * @param {{criticalFiles?: string[]}} [opts]
+ * @param {{criticalFiles?: string[], gateCommands?: string[]}} [opts]
  * @returns {object} the settings object to serialize
  */
 export function renderCageSettings(template, worktreeAbs, opts = {}) {
@@ -175,11 +205,16 @@ export function renderCageSettings(template, worktreeAbs, opts = {}) {
   if (typeof worktreeAbs !== "string" || !path.isAbsolute(worktreeAbs)) {
     throw new Error(`worktree must be an absolute path, got: ${worktreeAbs}`);
   }
-  const { criticalFiles = [], sandboxEnabled = machineSandboxEnabled() } = opts || {};
-  const extra = [...criticalFileRules(criticalFiles), ...parentEnvRules(worktreeAbs)];
+  const { criticalFiles = [], gateCommands = [], sandboxEnabled = machineSandboxEnabled() } = opts || {};
+  const extraDeny = [...criticalFileRules(criticalFiles), ...parentEnvRules(worktreeAbs)];
+  const extraAllow = gateCommandRules(gateCommands);
   let merged = {
     ...template,
-    permissions: { ...template.permissions, deny: [...(template.permissions?.deny ?? []), ...extra] },
+    permissions: {
+      ...template.permissions,
+      deny: [...(template.permissions?.deny ?? []), ...extraDeny],
+      allow: [...(template.permissions?.allow ?? []), ...extraAllow],
+    },
   };
   // The template states the intent; the machine states what is possible (D-18).
   merged = { ...merged, sandbox: { ...merged.sandbox, enabled: sandboxEnabled === true } };
@@ -207,6 +242,12 @@ export function renderCageSettings(template, worktreeAbs, opts = {}) {
 export function denyRules(settings) {
   const d = settings?.permissions?.deny;
   return Array.isArray(d) ? d : [];
+}
+
+/** Every allow rule in a rendered settings object. */
+export function allowRules(settings) {
+  const a = settings?.permissions?.allow;
+  return Array.isArray(a) ? a : [];
 }
 
 /**
@@ -269,17 +310,20 @@ export function loadTemplate(templatePath = TEMPLATE_PATH) {
  * `resolveProject` is total — an unknown project degrades to `[]`, never throws.
  *
  * @param {string|{templatePath?: string, project?: string, factoryRoot?: string}} [opts]
- * @returns {{template: object, criticalFiles: string[]}}
+ * @returns {{template: object, criticalFiles: string[], gateCommands: string[]}}
  */
 function buildSettingsInput(opts = {}) {
   const isString = typeof opts === "string";
   const templatePath = isString ? opts : opts?.templatePath || TEMPLATE_PATH;
   const template = loadTemplate(templatePath);
   let criticalFiles = [];
+  let gateCommands = [];
   if (!isString && opts?.project) {
-    criticalFiles = resolveProject({ project: opts.project }, opts.factoryRoot).profile.criticalFiles;
+    const { profile } = resolveProject({ project: opts.project }, opts.factoryRoot);
+    criticalFiles = profile.criticalFiles;
+    gateCommands = profile.gate;
   }
-  return { template, criticalFiles };
+  return { template, criticalFiles, gateCommands };
 }
 
 /**
@@ -293,11 +337,11 @@ function buildSettingsInput(opts = {}) {
  *   profile's Critical Files when `project` is given.
  */
 export function writeCageSettings(worktreeAbs, opts = {}) {
-  const { template, criticalFiles } = buildSettingsInput(opts);
+  const { template, criticalFiles, gateCommands } = buildSettingsInput(opts);
   const sandboxEnabled = typeof opts === "object" && opts !== null && "sandboxEnabled" in opts
     ? opts.sandboxEnabled
     : machineSandboxEnabled();
-  const settings = renderCageSettings(template, worktreeAbs, { criticalFiles, sandboxEnabled });
+  const settings = renderCageSettings(template, worktreeAbs, { criticalFiles, gateCommands, sandboxEnabled });
   const problems = auditCageSettings(settings);
   if (problems.length > 0) throw new Error(`refusing to write a broken cage:\n- ${problems.join("\n- ")}`);
   const out = cageSettingsPath(worktreeAbs);
@@ -329,9 +373,11 @@ function main() {
   const projectIdx = argv.indexOf("--project");
   const project = projectIdx !== -1 ? argv[projectIdx + 1] : undefined;
   const abs = path.resolve(wt);
-  const { template, criticalFiles } = buildSettingsInput(project ? { project } : {});
+  const { template, criticalFiles, gateCommands } = buildSettingsInput(project ? { project } : {});
   if (cmd === "print") {
-    process.stdout.write(`${JSON.stringify(renderCageSettings(template, abs, { criticalFiles }), null, 2)}\n`);
+    process.stdout.write(
+      `${JSON.stringify(renderCageSettings(template, abs, { criticalFiles, gateCommands }), null, 2)}\n`,
+    );
     return 0;
   }
   process.stdout.write(`${writeCageSettings(abs, project ? { project } : {})}\n`);

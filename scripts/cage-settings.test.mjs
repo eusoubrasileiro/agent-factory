@@ -14,11 +14,13 @@ import path from "node:path";
 import { test } from "node:test";
 
 import {
+  allowRules,
   auditCageSettings,
   cageHookPath,
   cageSettingsPath,
   criticalFileRules,
   denyRules,
+  gateCommandRules,
   loadTemplate,
   parentEnvRules,
   renderBashHook,
@@ -109,6 +111,67 @@ test("renderCageSettings: merges profile critical files into the base template",
     "Write(//home/x/.claude/worktrees/demo/backend/src/bot/**)",
   ]) {
     assert.ok(rules.includes(r), `expected rule present: ${r}`);
+  }
+});
+
+// ─── gateCommandRules + profile merge (gate-command allow) ────────────────────
+
+test("gateCommandRules: emits a bare + trailing-args Bash rule per command", () => {
+  assert.deepEqual(
+    gateCommandRules(["pnpm test"]),
+    ["Bash(pnpm test)", "Bash(pnpm test *)"],
+  );
+  assert.deepEqual(
+    gateCommandRules(["pnpm test", "pnpm typecheck"]),
+    ["Bash(pnpm test)", "Bash(pnpm test *)", "Bash(pnpm typecheck)", "Bash(pnpm typecheck *)"],
+  );
+  // non-array / empty / wrong-shaped input → [] (never throws)
+  assert.deepEqual(gateCommandRules([]), []);
+  assert.deepEqual(gateCommandRules(undefined), []);
+  assert.deepEqual(gateCommandRules(null), []);
+  assert.deepEqual(gateCommandRules("not-an-array"), []);
+});
+
+test("renderCageSettings: merges profile gate commands into permissions.allow", () => {
+  const out = renderCageSettings(
+    { permissions: { deny: [], allow: ["Bash(git add:*)"] } },
+    WT,
+    { gateCommands: ["pnpm quality-gate"] },
+  );
+  const rules = allowRules(out);
+  assert.ok(rules.includes("Bash(git add:*)"), "base template allow rules survive the merge");
+  assert.ok(rules.includes("Bash(pnpm quality-gate)"));
+  assert.ok(rules.includes("Bash(pnpm quality-gate *)"));
+});
+
+test("writeCageSettings: a project's gate commands land in permissions.allow", () => {
+  const root = tmpRoot();
+  try {
+    const projDir = path.join(root, "projects", "synthetic");
+    mkdirSync(projDir, { recursive: true });
+    writeFileSync(
+      path.join(projDir, "project.json"),
+      JSON.stringify({ id: "synthetic", gate: ["pnpm test", "pnpm lint"] }),
+    );
+    writeFileSync(path.join(projDir, "critical-files.json"), JSON.stringify([]));
+
+    const wt = path.join(root, "wt");
+    const out = writeCageSettings(wt, { project: "synthetic", factoryRoot: root });
+    const rules = allowRules(JSON.parse(readFileSync(out, "utf8")));
+    for (const r of ["Bash(pnpm test)", "Bash(pnpm test *)", "Bash(pnpm lint)", "Bash(pnpm lint *)"]) {
+      assert.ok(rules.includes(r), `expected gate allow rule present: ${r}`);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the shipped template's own git add/commit allow rules survive rendering", () => {
+  const template = loadTemplate();
+  const out = renderCageSettings(template, WT);
+  const rules = allowRules(out);
+  for (const r of ["Bash(git add:*)", "Bash(git add *)", "Bash(git commit:*)", "Bash(git commit *)"]) {
+    assert.ok(rules.includes(r), `expected universal git-workflow rule present: ${r}`);
   }
 });
 

@@ -21,7 +21,19 @@
     "per-project Edit/Write denies (a product's source/schema/hook globs) are NO",
     "LONGER hardcoded here; they are generated at render time from the active",
     "profile's projects/<id>/critical-files.json and appended to permissions.deny.",
-    "The engine therefore carries zero product paths."
+    "The engine therefore carries zero product paths.",
+    "",
+    "GATE COMMANDS: this machine's OS sandbox cannot initialise (D-18), so",
+    "`autoAllowBashIfSandboxed` never fires, and the seat's throwaway",
+    "CLAUDE_CONFIG_DIR has no workspace-trust record, so Claude Code ignores the",
+    "worktree's own .claude/settings.json allow list entirely — EVERY Bash command",
+    "needs interactive approval unless explicitly allowed HERE. Without this, a",
+    "caged seat cannot run its own gate (pnpm test/typecheck/lint/quality-gate)",
+    "and must leave every diff uncommitted for the leader to verify by hand.",
+    "permissions.allow below carries only universal git-workflow commands (add,",
+    "commit — every seat across every project needs these to finish a feature);",
+    "the project's OWN gate[] commands (from project.json) are generated at",
+    "render time and appended here, mirroring how critical-files.json feeds deny."
   ],
 
   "sandbox": {
@@ -33,6 +45,12 @@
 
   "permissions": {
     "defaultMode": "acceptEdits",
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git add *)",
+      "Bash(git commit:*)",
+      "Bash(git commit *)"
+    ],
     "deny": [
       "Edit(//{{WORKTREE}}/.claude/settings*.json)",
       "Write(//{{WORKTREE}}/.claude/settings*.json)",
