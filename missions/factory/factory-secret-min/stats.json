@@ -1,0 +1,41 @@
+{
+  "slug": "factory-secret-min",
+  "generatedAt": "2026-07-08T22:52:24.341Z",
+  "branch": "agent/factory-secret-min",
+  "mergeBase": "fef631574ab4aee7f1708c717572a11a29cebc4f",
+  "loc": {
+    "added": 563,
+    "deleted": 26,
+    "files": 7
+  },
+  "testsAdded": 16,
+  "baselineChanged": false,
+  "baselineKeysChanged": [],
+  "durations": {
+    "building": 1006901,
+    "validating": null
+  },
+  "tokens": {
+    "worker": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "total": 0
+    },
+    "validator": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "total": 0
+    },
+    "total": 0
+  },
+  "models": {
+    "worker": null,
+    "validator": null
+  },
+  "rounds": 0,
+  "attention": 0,
+  "escalations": 0,
+  "pr": null
+}

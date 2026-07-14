@@ -1,0 +1,41 @@
+{
+  "slug": "factory-live-board",
+  "generatedAt": "2026-07-08T22:52:24.453Z",
+  "branch": "agent/factory-live-board",
+  "mergeBase": "55a8e2439658374ac5fbf685925bd12a432574a9",
+  "loc": {
+    "added": 3373,
+    "deleted": 406,
+    "files": 41
+  },
+  "testsAdded": 101,
+  "baselineChanged": false,
+  "baselineKeysChanged": [],
+  "durations": {
+    "building": null,
+    "validating": null
+  },
+  "tokens": {
+    "worker": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "total": 25937815
+    },
+    "validator": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "total": 5696876
+    },
+    "total": 31634691
+  },
+  "models": {
+    "worker": "zai-coding-plan/glm-5.2",
+    "validator": "zai-coding-plan/glm-5.2"
+  },
+  "rounds": 0,
+  "attention": 0,
+  "escalations": 0,
+  "pr": null
+}

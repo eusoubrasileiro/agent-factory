@@ -1,0 +1,41 @@
+{
+  "slug": "factory-dashboard",
+  "generatedAt": "2026-07-08T22:51:15.554Z",
+  "branch": "agent/factory-dashboard",
+  "mergeBase": "f9f3a914441ec850de64e827cd506a85725ecaae",
+  "loc": {
+    "added": 2663,
+    "deleted": 1777,
+    "files": 35
+  },
+  "testsAdded": 99,
+  "baselineChanged": false,
+  "baselineKeysChanged": [],
+  "durations": {
+    "building": null,
+    "validating": null
+  },
+  "tokens": {
+    "worker": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "total": 0
+    },
+    "validator": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "total": 0
+    },
+    "total": 0
+  },
+  "models": {
+    "worker": "zai-coding-plan/glm-5.2",
+    "validator": null
+  },
+  "rounds": 1,
+  "attention": 1,
+  "escalations": 0,
+  "pr": null
+}

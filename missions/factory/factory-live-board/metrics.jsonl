@@ -1,0 +1,9 @@
+{"seat":"worker","type":"phase_end","detail":"external:zai-coding-plan/glm-5.2","tokens":4822610,"costUsd":0,"ts":"2026-07-08T12:58:59.868Z"}
+{"seat":"worker","type":"phase_end","detail":"external:zai-coding-plan/glm-5.2","tokens":646643,"costUsd":0,"ts":"2026-07-08T13:32:05.025Z"}
+{"seat":"worker","type":"phase_end","detail":"external:zai-coding-plan/glm-5.2","tokens":3472808,"costUsd":0,"ts":"2026-07-08T13:56:39.147Z"}
+{"seat":"worker","type":"phase_end","detail":"external:zai-coding-plan/glm-5.2","tokens":6590970,"costUsd":0,"ts":"2026-07-08T14:26:13.423Z"}
+{"seat":"worker","type":"phase_end","detail":"external:zai-coding-plan/glm-5.2","tokens":1281267,"costUsd":0,"ts":"2026-07-08T14:40:35.020Z"}
+{"seat":"worker","type":"phase_end","detail":"external:zai-coding-plan/glm-5.2","tokens":5867626,"costUsd":0,"ts":"2026-07-08T15:36:42.035Z"}
+{"seat":"worker","type":"phase_end","detail":"external:zai-coding-plan/glm-5.2","tokens":1294191,"costUsd":0,"ts":"2026-07-08T15:40:48.546Z"}
+{"seat":"worker","type":"phase_end","detail":"external:zai-coding-plan/glm-5.2","tokens":1961700,"costUsd":0,"ts":"2026-07-08T15:56:39.189Z"}
+{"seat":"validator","type":"phase_end","detail":"external:zai-coding-plan/glm-5.2","tokens":5696876,"costUsd":0,"ts":"2026-07-08T16:32:19.190Z"}

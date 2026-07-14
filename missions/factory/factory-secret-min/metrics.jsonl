@@ -1,0 +1,2 @@
+{"seat":"worker","type":"phase_start","detail":"factory-secret-min build (coordinator-authored; secrets Critical File)","ts":"2026-07-08T20:02:00.160Z"}
+{"seat":"worker","type":"phase_end","detail":"factory-secret-min: F1/F2/F3 done; acceptance green (probe 0 hits, test:factory 245, tsc 0, planted-prompt canary absent + printenv UNSET, z.ai auth OK)","ts":"2026-07-08T20:18:47.061Z"}

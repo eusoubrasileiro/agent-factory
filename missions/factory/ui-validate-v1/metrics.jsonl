@@ -1,0 +1,2 @@
+{"seat":"worker","type":"phase_start","detail":"external:claude-sonnet-4-6","model":"claude-sonnet-4-6","ts":"2026-07-13T22:05:04.232Z"}
+{"seat":"worker","type":"phase_end","detail":"external:claude-sonnet-4-6","model":"claude-sonnet-4-6","tokens":1599673,"tokensIn":37,"tokensOut":23822,"tokensReasoning":null,"tokensCacheRead":1525053,"tokensCacheWrite":50761,"durationMs":1022812,"apiCostUsd":2.02508945,"costUsd":2.02508945,"ts":"2026-07-13T22:22:07.079Z"}

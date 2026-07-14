@@ -1,0 +1,41 @@
+{
+  "slug": "scrumban-board",
+  "generatedAt": "2026-07-08T22:53:21.513Z",
+  "branch": "agent/scrumban-board",
+  "mergeBase": "4ea8c79ca5fa22aaf061c24febd8ad9d0bbaa0e1",
+  "loc": {
+    "added": 2862,
+    "deleted": 18,
+    "files": 45
+  },
+  "testsAdded": 51,
+  "baselineChanged": false,
+  "baselineKeysChanged": [],
+  "durations": {
+    "building": null,
+    "validating": null
+  },
+  "tokens": {
+    "worker": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "total": 1336911
+    },
+    "validator": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "total": 1022785
+    },
+    "total": 2359696
+  },
+  "models": {
+    "worker": "zai-coding-plan/glm-5.2",
+    "validator": "zai-coding-plan/glm-5.2"
+  },
+  "rounds": 1,
+  "attention": 0,
+  "escalations": 0,
+  "pr": null
+}
