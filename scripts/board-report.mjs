@@ -1658,6 +1658,14 @@ function renderAgentsTab(missions) {
   const total = all.length;
   const semStats = total - contributing;
   const coverage = `    <p class="muted cobertura">dados de ${esc(contributing)} de ${esc(total)} ${total === 1 ? "missão" : "missões"}${semStats > 0 ? ` (${esc(semStats)} sem stats de modelo)` : ""}</p>`;
+  // F3 — the missing-model missions are not a bug to hide: they are legacy runs
+  // (built before per-seat model capture) or runs whose model lives on a
+  // non-worker seat (validator/orchestrator). Say so, so the gap reads as
+  // accounted-for, not broken. Rendered only when there IS a gap.
+  const coberturaNota =
+    semStats > 0
+      ? `\n    <p class="muted cobertura-nota">As ${esc(semStats)} sem modelo (missões legadas, anteriores à captura por seat, ou executadas por validador/orquestrador) entram no total mas ficam fora da comparação A/B.</p>`
+      : "";
   // agentes-evidence C1: per-project boards aggregate per-project missions (the
   // post-scoping truth) — say so, once, near the numbers.
   const escopo = `    <p class="muted escopo">Só missões deste projeto.</p>`;
@@ -1673,7 +1681,7 @@ function renderAgentsTab(missions) {
   const legenda = renderLegenda(AGENTES_TERMS);
   if (agents.length === 0) {
     return `  <section id="tab-agentes" class="tab-panel" role="tabpanel" hidden>
-${coverage}
+${coverage}${coberturaNota}
     <p class="muted">sem dados de agentes ainda</p>
 ${headRow}
         <tbody></tbody>
@@ -1696,7 +1704,7 @@ ${legenda}
     })
     .join("\n");
   return `  <section id="tab-agentes" class="tab-panel" role="tabpanel" hidden>
-${coverage}
+${coverage}${coberturaNota}
 ${headRow}
         <tbody>
 ${rows}
