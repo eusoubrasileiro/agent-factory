@@ -263,7 +263,7 @@ function countFeatures(missionDirPath) {
  * @returns {{
  *   generatedAt: string,
  *   requirements: Array<{ id: string, recurso: string, risco: string, situacao: string, missionSlug: string|null, liveStatus: string }>,
- *   missions: Array<{ slug: string, status: string, gateReason: string|null, requirements: string[]|null, features: number, handoffs: number, lastVerdict: {verdict: string, round: number}|null, branch: {name: string, slug: string, merged: boolean, lastCommitISO: string|null}|null }>,
+ *   missions: Array<{ slug: string, status: string, gateReason: string|null, requirements: string[]|null, features: number, handoffs: number, lastVerdict: {verdict: string, round: number}|null, branch: {name: string, slug: string, merged: boolean, lastCommitISO: string|null}|null, ratified: boolean }>,
  *   orphanBranches: Array<{ name: string, slug: string, merged: boolean, lastCommitISO: string|null }>,
  *   intake: Array<{ id: string, date: string, type: string, summary: string, status: string, detail: string, backlog: Array<{id: string, missionSlug: string|null, liveStatus: string|null, verdict: string|null}> }>,
  * }}
@@ -314,6 +314,10 @@ export function buildTraceabilityModel({ missionsDir, prdPath, gitInfo, intakeSo
       branch: branchBySlug.get(slug) ?? null,
       stats: readStats(dir),
       pr: readPrMarker(dir),
+      // RATIFIED marker presence (lanes-legibility C1). Status is a proxy most of
+      // the time (Done ⇔ ratified) but NOT when BLOCKED coexists — the marker is
+      // the source of truth for the "não ratificado" honesty chip on merged work.
+      ratified: existsSync(path.join(dir, "RATIFIED")),
     };
   });
 
@@ -389,15 +393,50 @@ const STATUS_CLASS = {
   Blocked: "blocked",
 };
 
-const LANE_ORDER = [
-  "Needs Human",
-  "Building",
-  "Validating",
-  "Planning",
-  "Intake",
-  "Done",
-  "Blocked",
+/**
+ * The Missões kanban lanes, in render order. "Needs Human" fans out into its
+ * three real meanings (lanes-legibility F2 — ratified 2026-07-11): Aprovar plano
+ * (pre-build) · Aprovar merge (PASS, awaiting blessing) · Escalado (3 FAILs), plus
+ * a defensive "Needs Human (outro)" fallback so a null/unknown gate is never
+ * dropped silently. The `status` column is the derived-status data hook the lane
+ * carries (kept "Needs Human" on every sub-lane so existing audits still match);
+ * `heading` is the user-visible PT label. "Intake" is displayed as "Sem contrato"
+ * (F3/B1 — display only; the model status string stays "Intake").
+ */
+const MISSION_LANES = [
+  { key: "approve-plan", heading: "Aprovar plano", status: "Needs Human" },
+  { key: "ratify", heading: "Aprovar merge", status: "Needs Human" },
+  { key: "escalated", heading: "Escalado", status: "Needs Human" },
+  { key: "needs-other", heading: "Needs Human (outro)", status: "Needs Human" },
+  { key: "Building", heading: "Building", status: "Building" },
+  { key: "Validating", heading: "Validating", status: "Validating" },
+  { key: "Planning", heading: "Planning", status: "Planning" },
+  { key: "Sem contrato", heading: "Sem contrato", status: "Intake" },
+  { key: "Done", heading: "Done", status: "Done" },
+  { key: "Blocked", heading: "Blocked", status: "Blocked" },
 ];
+
+/**
+ * The render lane a mission belongs in — PRESENTATION ONLY (the derived status
+ * string is untouched). `branch.merged === true` overrides every active state to
+ * Done (Plan A ratified decision 1: a merged mission is done, not "waiting to
+ * merge"); "Parked" is returned so the caller can fold it out of the lanes grid
+ * into the collapsed Estacionado section.
+ * @param {object} m — a model mission
+ * @returns {string} a MISSION_LANES `key`, or `"Parked"`
+ */
+function laneOf(m) {
+  if (m?.branch?.merged === true) return "Done";
+  if (m?.status === "Parked") return "Parked";
+  if (m?.status === "Needs Human") {
+    if (m.gateReason === "gate:approve-plan") return "approve-plan";
+    if (m.gateReason === "gate:ratify") return "ratify";
+    if (m.gateReason === "gate:escalated") return "escalated";
+    return "needs-other";
+  }
+  if (m?.status === "Intake") return "Sem contrato";
+  return m?.status ?? "Sem contrato";
+}
 
 const BODIES = [
   { letter: "A", title: "Corpo A — Inbox" },
@@ -665,6 +704,12 @@ a.mission-link:hover { text-decoration: underline; }
 .card-pr:hover { color: var(--fg); }
 .card-chips { display: inline-flex; gap: 0.25rem; flex-wrap: wrap; }
 .chip { display: inline-block; padding: 0.05rem 0.4rem; border-radius: 4px; background: var(--bg); border: 1px solid var(--border); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; color: var(--muted); }
+/* lanes-legibility: honesty chips on a mission card. */
+.chip.chip-started { background: var(--status-building-bg); color: var(--status-building-fg); }
+.chip.chip-unratified { background: var(--risk-high-bg); color: var(--risk-high-fg); }
+.needs-human-counts { margin: 0 0 1rem; font-size: 0.9rem; color: var(--fg); }
+.estacionado { margin-top: 1.5rem; border: 1px dashed var(--border); border-radius: 8px; padding: 0.5rem 1rem; background: var(--bg); }
+.estacionado > summary { cursor: pointer; font-size: 0.78rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .card-stats { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.4rem; }
 .stat-cell { display: inline-flex; align-items: center; gap: 0.2rem; padding: 0.05rem 0.4rem; border-radius: 4px; background: var(--bg); border: 1px solid var(--border); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.7rem; color: var(--muted); }
 .loc-add { color: #166534; font-weight: 600; }
@@ -815,6 +860,18 @@ function renderMissionCard(m) {
   const prHtml = m.pr
     ? `<a class="card-pr" href="${esc(m.pr.url)}" target="_blank" rel="noopener">PR #${esc(m.pr.number)}</a>`
     : "";
+  // F3/B2: a Sem-contrato card that already shows real token/LOC spend must not
+  // read as "not started" — flag it. (lanes-legibility)
+  const startedChip =
+    laneOf(m) === "Sem contrato" && hasSpend(m.stats)
+      ? `<span class="chip chip-started" title="dossiê sem contrato, mas stats.json já registra spend">trabalho iniciado</span>`
+      : "";
+  // Plan A ratified decision 1: a merged mission is Done even without a RATIFIED
+  // marker — surface that gap honestly instead of looking blessed. (C1)
+  const unratifiedChip =
+    m.branch?.merged === true && m.ratified !== true
+      ? `<span class="chip chip-unratified" title="mergeado sem ratificação registrada">não ratificado</span>`
+      : "";
   const featuresLine = `<p>${m.features ?? 0} features, ${m.handoffs ?? 0} com handoff</p>`;
   const verdictLine = m.lastVerdict?.verdict
     ? `<p>Último veredicto: <span class="verdict-${esc(m.lastVerdict.verdict)}">${esc(m.lastVerdict.verdict)}</span> (rodada ${esc(m.lastVerdict.round)})</p>`
@@ -829,6 +886,8 @@ function renderMissionCard(m) {
             ${branchHtml}
             ${prHtml}
             ${chipsHtml}
+            ${startedChip}
+            ${unratifiedChip}
           </div>
           ${statsLine}
         </summary>
@@ -837,6 +896,21 @@ function renderMissionCard(m) {
           ${verdictLine}
         </div>
       </details>`;
+}
+
+/**
+ * True when a mission's `stats.json` records any real token or LOC spend (F3/B2).
+ * Used to flag a Sem-contrato card as "trabalho iniciado" so millions of tokens
+ * never sit next to a bare "no contract yet" reading.
+ * @param {object|null|undefined} stats — a mission's stripped stats.json
+ * @returns {boolean}
+ */
+function hasSpend(stats) {
+  if (!stats || typeof stats !== "object") return false;
+  const tok = typeof stats.tokens?.total === "number" ? stats.tokens.total : 0;
+  const added = typeof stats.loc?.added === "number" ? stats.loc.added : 0;
+  const deleted = typeof stats.loc?.deleted === "number" ? stats.loc.deleted : 0;
+  return tok > 0 || added + deleted > 0;
 }
 
 /**
@@ -988,17 +1062,47 @@ ${sections}
 }
 
 function renderMissionsTab(missions, orphans) {
-  const lanesHtml = LANE_ORDER.map((status) => {
-    const cards = missions.filter((m) => m.status === status);
+  // Parked work leaves the active lanes (F3/B3); everything else lands in a
+  // MISSION_LANES bucket via laneOf (which also routes merged ⇒ Done).
+  const parked = missions.filter((m) => laneOf(m) === "Parked");
+  const active = missions.filter((m) => laneOf(m) !== "Parked");
+
+  // F2/A2 header counts — the Needs-Human population split into its three
+  // actions. Counted off the RENDER lane (a merged mission has already left
+  // Needs Human for Done, so it is not "para aprovar merge"); zero parts omitted.
+  const counts = {
+    "approve-plan": active.filter((m) => laneOf(m) === "approve-plan").length,
+    ratify: active.filter((m) => laneOf(m) === "ratify").length,
+    escalated: active.filter((m) => laneOf(m) === "escalated").length,
+  };
+  const countParts = [];
+  if (counts["approve-plan"] > 0) countParts.push(`${counts["approve-plan"]} para aprovar plano`);
+  if (counts.ratify > 0) countParts.push(`${counts.ratify} para aprovar merge`);
+  if (counts.escalated > 0) countParts.push(`${counts.escalated} escalados`);
+  const countsHtml =
+    countParts.length > 0 ? `    <p class="needs-human-counts">${esc(countParts.join(" · "))}</p>\n` : "";
+
+  const lanesHtml = MISSION_LANES.map((lane) => {
+    const cards = active.filter((m) => laneOf(m) === lane.key);
     if (cards.length === 0) return "";
     const cardsHtml = cards.map(renderMissionCard).join("\n");
-    return `    <div class="lane" data-status="${esc(status)}">
-      <h2>${esc(status)}</h2>
+    return `    <div class="lane" data-status="${esc(lane.status)}">
+      <h2>${esc(lane.heading)}</h2>
 ${cardsHtml}
     </div>`;
   })
     .filter((s) => s.length > 0)
     .join("\n");
+
+  // F3/B3: parked missions fold into a collapsed section below the active lanes,
+  // never inside them.
+  const parkedHtml =
+    parked.length > 0
+      ? `    <details class="estacionado">
+      <summary>Estacionado (${parked.length})</summary>
+${parked.map(renderMissionCard).join("\n")}
+    </details>`
+      : "";
 
   const orphansHtml =
     orphans.length > 0
@@ -1017,9 +1121,10 @@ ${orphans
       : "";
 
   return `  <section id="tab-missoes" class="tab-panel" role="tabpanel" hidden>
-    <div class="lanes">
+${countsHtml}    <div class="lanes">
 ${lanesHtml || '    <p class="muted">Nenhuma missão.</p>'}
     </div>
+${parkedHtml}
 ${orphansHtml}
   </section>`;
 }
