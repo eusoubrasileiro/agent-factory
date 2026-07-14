@@ -1,0 +1,2 @@
+{"seat":"orchestrator","type":"intervention","detail":"W1 scope violation: unauthorized backend/bot zai-provider edits stripped from commit; worktree env fixed (shared build + prisma generate)","ts":"2026-07-07T22:42:55.954Z"}
+{"seat":"worker","type":"phase_end","detail":"external:zai-coding-plan/glm-5.2","tokens":0,"costUsd":0,"ts":"2026-07-07T23:08:54.983Z"}
