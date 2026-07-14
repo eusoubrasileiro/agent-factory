@@ -445,6 +445,16 @@ const BODIES = [
   { letter: "D", title: "Corpo D — Mineração" },
 ];
 
+/**
+ * F4b/B1 — badge PROVENANCE titles. Three status vocabularies used to render
+ * identically (verdict-derived · PRD-typed · intake lifecycle); a `title=` naming
+ * the source lets a viewer tell a real Done from a typed "done". One string per
+ * source, reused by every status badge so the vocabulary stays consistent.
+ */
+const PROV_DERIVED = "estado derivado do validate.log";
+const PROV_PRD = "Situação digitada no PRD";
+const PROV_INTAKE = "coluna do intake";
+
 /** Escape the five HTML-significant characters for safe text interpolation. */
 export function esc(value) {
   return String(value ?? "")
@@ -727,6 +737,12 @@ footer.site { padding: 1rem 2rem; border-top: 1px solid var(--border); color: va
 .stat-value { font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--fg); }
 .stat-label { font-size: 0.72rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 0.25rem; }
 .stat-value.sem-dados { font-size: 0.95rem; font-weight: 500; color: var(--muted); }
+/* vocabulary-trust A3: collapsed per-panel vocabulary ("o que significa cada número"). */
+.legenda { margin-top: 1rem; font-size: 0.8rem; color: var(--muted); }
+.legenda > summary { cursor: pointer; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.72rem; }
+.legenda ul { margin: 0.5rem 0; padding-left: 1.25rem; }
+.legenda li { margin-bottom: 0.2rem; line-height: 1.4; }
+.legenda strong { color: var(--fg); font-weight: 600; }
 .intake-legend { font-size: 0.82rem; margin: 1rem 0 0; }
 .intake-card { border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); padding: 0.75rem 1rem; margin-bottom: 0.5rem; }
 .intake-summary { margin: 0.5rem 0 0.25rem; font-size: 0.9rem; }
@@ -814,7 +830,7 @@ function renderRequirementsTable(rows) {
           <td class="id">${esc(r.id)}</td>
           <td>${renderInlineRich(r.recurso)}</td>
           <td><span class="badge badge-risk ${riskClass(r.risco)}">${esc(r.risco || "—")}</span></td>
-          <td><span class="badge badge-status ${statusClass(r.liveStatus)}">${esc(r.liveStatus || "—")}</span></td>
+          <td><span class="badge badge-status ${statusClass(r.liveStatus)}" title="${esc(r.missionSlug ? PROV_DERIVED : PROV_PRD)}">${esc(r.liveStatus || "—")}</span></td>
           <td>${missionCell}</td>
         </tr>`;
     })
@@ -1016,7 +1032,7 @@ ${renderDetailBlock(row.detail)}
         <div class="card-row">
           <span class="card-slug">${esc(row.id)}</span>
           <span class="badge badge-type type-${esc(typeClass)}">${esc(row.type || "—")}</span>
-          <span class="badge badge-life life-${esc(lifeClass)}">${esc(row.status || "—")}</span>
+          <span class="badge badge-life life-${esc(lifeClass)}" title="${esc(PROV_INTAKE)}">${esc(row.status || "—")}</span>
           ${renderChain(row.backlog)}
         </div>
         <p class="intake-summary">${renderInlineRich(row.summary)}</p>
@@ -1239,6 +1255,48 @@ export function aggregateAgents(missions) {
 }
 
 /**
+ * F4a/A1+A3 — the vocabulary for every Histórico KPI. ONE definition per term,
+ * used for BOTH the stat-card `title` tooltip AND the panel's collapsed
+ * "legenda" (renderLegenda). One constant, two surfaces: edit a definition here
+ * and it updates in both places — the A3 mutation gate pins tooltip and legenda
+ * to the same string. Each def names its data source (the audit's whole point).
+ * Order is the render order of the stat cards (see renderHistoryTab).
+ */
+const HISTORICO_TERMS = [
+  { label: "missões concluídas", def: "missões que chegaram a Done (history.jsonl)" },
+  { label: "missões/semana", def: "missões concluídas divididas pelas semanas decorridas (history.jsonl)" },
+  { label: "lead time mediano", def: "mediana, criação do dossiê até Done (history.jsonl)" },
+  { label: "rondas média", def: "média de rondas de validação por missão concluída (history.jsonl)" },
+  { label: "tokens", def: "total de tokens consumidos pelas missões (history.jsonl)" },
+  { label: "atenção-por-feature", def: "rondas médias por feature — quanto cada feature exigiu de retrabalho (history.jsonl)" },
+  { label: "$ API total", def: "custo API estimado de todas as missões (history.jsonl)" },
+  { label: "$ plano total", def: "mensalidade do plano fixo acumulada no período (history.jsonl)" },
+  { label: "economia (API − plano)", def: "custo API estimado das missões menos a mensalidade do plano fixo" },
+  { label: "tempo total", def: "soma do tempo de parede das missões, building + validating (history.jsonl)" },
+  { label: "tempo/feature", def: "tempo total dividido pelo número de features (history.jsonl)" },
+];
+
+/**
+ * F4a/A3 — a collapsed "o que significa cada número" legend listing each term's
+ * definition. Generated from the SAME term constants that feed the tooltips, so
+ * a definition edited in one place updates both surfaces (the A3 mutation gate
+ * compares them and goes red if they diverge into separate literals).
+ * @param {Array<{label: string, def: string}>} terms
+ * @returns {string}
+ */
+function renderLegenda(terms) {
+  const items = (Array.isArray(terms) ? terms : [])
+    .map((t) => `        <li><strong>${esc(t.label)}:</strong> ${esc(t.def)}</li>`)
+    .join("\n");
+  return `    <details class="legenda">
+      <summary>o que significa cada número</summary>
+      <ul>
+${items}
+      </ul>
+    </details>`;
+}
+
+/**
  * Render the Histórico tab: stat cards + per-mission table, or "sem dados
  * ainda" when there is no history (contract A6, never crash). All values are
  * derived from history.jsonl + metrics.jsonl — deterministic, never wall-clock.
@@ -1255,10 +1313,15 @@ function renderHistoryTab(history) {
   const h = history && typeof history === "object" ? history : null;
   const hasData = h && Array.isArray(h.perMission) && h.perMission.length > 0;
 
+  // F4a/A3 — the legenda is rendered in BOTH branches so every Histórico panel
+  // instance ends with the vocabulary (one constant, two surfaces with the titles).
+  const legenda = renderLegenda(HISTORICO_TERMS);
+
   if (!hasData) {
     return `<!--hist-start-->
   <section id="tab-historico" class="tab-panel" role="tabpanel" hidden>
     <p class="muted">sem dados ainda</p>
+${legenda}
   </section>
 <!--hist-end-->`;
   }
@@ -1278,6 +1341,30 @@ function renderHistoryTab(history) {
     typeof h.timeTotalH === "number" && h.featuresTotal > 0 ? h.timeTotalH / h.featuresTotal : null;
   const tempoPorFeatureFmt = fmtHours(tempoPorFeature);
 
+  // F4a/A1 — values paired IN HISTORICO_TERMS ORDER so each term's definition
+  // (`title`) lands on its own card. semDados drives the existing honesty class.
+  const cardValues = [
+    { value: String(missõesConcluídas), semDados: false },
+    { value: missõesPorSemana, semDados: missõesPorSemana === "sem dados" },
+    { value: leadTimeMediano, semDados: leadTimeMediano === "sem dados" },
+    { value: rondasMédia, semDados: rondasMédia === "sem dados" },
+    { value: tokensTotal, semDados: tokensTotal === "sem dados" },
+    { value: atençãoPorFeature, semDados: atençãoPorFeature === "sem dados" },
+    { value: custoTotal, semDados: custoTotal === "sem dados" },
+    { value: planoTotal, semDados: planoTotal === "sem dados" },
+    { value: economia, semDados: economia === "sem dados" },
+    { value: tempoTotal, semDados: tempoTotal === "sem dados" },
+    { value: tempoPorFeatureFmt, semDados: tempoPorFeatureFmt === "sem dados" },
+  ];
+  const cardsHtml = HISTORICO_TERMS.map((term, i) => {
+    const c = cardValues[i];
+    const valueClass = c.semDados ? "stat-value sem-dados" : "stat-value";
+    return `      <div class="stat-card" title="${esc(term.def)}">
+        <div class="${valueClass}">${esc(c.value)}</div>
+        <div class="stat-label">${esc(term.label)}</div>
+      </div>`;
+  }).join("\n");
+
   const tableBody = h.perMission
     .map((m) => {
       const leadTime = m.leadTime !== null ? fmtStat(m.leadTime, " dias") : "—";
@@ -1287,7 +1374,7 @@ function renderHistoryTab(history) {
       const data = m.data ? formatDDMM(m.data) : "—";
       return `        <tr>
           <td class="id">${esc(m.slug)}</td>
-          <td><span class="badge badge-status ${statusClass(m.estadoAtual)}">${esc(m.estadoAtual || "—")}</span></td>
+          <td><span class="badge badge-status ${statusClass(m.estadoAtual)}" title="${esc(PROV_DERIVED)}">${esc(m.estadoAtual || "—")}</span></td>
           <td>${esc(leadTime)}</td>
           <td>${esc(m.rondas)}</td>
           <td>${esc(fmtUsd(m.custo))}</td>
@@ -1301,50 +1388,7 @@ function renderHistoryTab(history) {
   return `<!--hist-start-->
   <section id="tab-historico" class="tab-panel" role="tabpanel" hidden>
     <div class="stat-cards">
-      <div class="stat-card">
-        <div class="stat-value">${esc(missõesConcluídas)}</div>
-        <div class="stat-label">missões concluídas</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value${missõesPorSemana === "sem dados" ? " sem-dados" : ""}">${esc(missõesPorSemana)}</div>
-        <div class="stat-label">missões/semana</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value${leadTimeMediano === "sem dados" ? " sem-dados" : ""}">${esc(leadTimeMediano)}</div>
-        <div class="stat-label">lead time mediano</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">${esc(rondasMédia)}</div>
-        <div class="stat-label">rondas média</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value${tokensTotal === "sem dados" ? " sem-dados" : ""}">${esc(tokensTotal)}</div>
-        <div class="stat-label">tokens</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value${atençãoPorFeature === "sem dados" ? " sem-dados" : ""}">${esc(atençãoPorFeature)}</div>
-        <div class="stat-label">atenção-por-feature</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value${custoTotal === "sem dados" ? " sem-dados" : ""}">${esc(custoTotal)}</div>
-        <div class="stat-label">$ API total</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value${planoTotal === "sem dados" ? " sem-dados" : ""}">${esc(planoTotal)}</div>
-        <div class="stat-label">$ plano total</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value${economia === "sem dados" ? " sem-dados" : ""}">${esc(economia)}</div>
-        <div class="stat-label">economia (API − plano)</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value${tempoTotal === "sem dados" ? " sem-dados" : ""}">${esc(tempoTotal)}</div>
-        <div class="stat-label">tempo total</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value${tempoPorFeatureFmt === "sem dados" ? " sem-dados" : ""}">${esc(tempoPorFeatureFmt)}</div>
-        <div class="stat-label">tempo/feature</div>
-      </div>
+${cardsHtml}
     </div>
       <table>
         <thead><tr><th>Missão</th><th>Estado atual</th><th>Lead time</th><th>Rondas</th><th>$</th><th>Tempo</th><th>Último verdict</th><th>Data</th></tr></thead>
@@ -1352,23 +1396,46 @@ function renderHistoryTab(history) {
 ${tableBody}
         </tbody>
       </table>
+${legenda}
   </section>
 <!--hist-end-->`;
 }
+
+/**
+ * F4a/A2+A3 — the vocabulary for every Agentes column. ONE definition per header,
+ * used for BOTH the `<th title>` AND the panel legenda (renderLegenda), so a
+ * definition edited here updates both surfaces (the A3 mutation gate pins them).
+ */
+const AGENTES_TERMS = [
+  { label: "Modelo", def: "modelo do worker que executou as missões (stats.json)" },
+  { label: "Missões", def: "quantas missões rodaram neste modelo (stats.json)" },
+  { label: "PASS de 1ª", def: "fração das missões que passaram na validação na primeira ronda (validate.log)" },
+  { label: "Rondas médias", def: "média de rondas de validação por missão neste modelo (validate.log)" },
+  { label: "Tokens/feature", def: "tokens totais divididos pelas features neste modelo (stats.json)" },
+  { label: "$/feature", def: "custo API total dividido pelas features neste modelo (stats.json)" },
+  { label: "Escalações", def: "quantas vezes o validador escalou para humano neste modelo (stats.json)" },
+];
 
 /**
  * Render the "Agentes" tab (factory-metrics W3, F4): per-model performance
  * grouped from the missions' stats.json — missões, taxa de PASS de primeira,
  * rondas médias, tokens/feature, escalações. "sem dados" when no mission has a
  * recorded worker model. Portuguese labels (user-facing). Never crashes.
+ *
+ * vocabulary-trust A2+A3: every column header carries a `title` definition, and
+ * the panel ends with a legenda — both generated from AGENTES_TERMS.
  * @param {Array<object>} missions — board model missions (with optional stats)
  * @returns {string}
  */
 function renderAgentsTab(missions) {
   const agents = aggregateAgents(missions);
+  // F4a/A2+A3 — headers + legenda from the one column vocabulary constant.
+  const headCells = AGENTES_TERMS.map((t) => `<th title="${esc(t.def)}">${esc(t.label)}</th>`).join("");
+  const legenda = renderLegenda(AGENTES_TERMS);
   if (agents.length === 0) {
     return `  <section id="tab-agentes" class="tab-panel" role="tabpanel" hidden>
     <p class="muted">sem dados de agentes ainda</p>
+${legenda}
   </section>`;
   }
   const fmtPct = (r) => (r === null || r === undefined ? "—" : `${Math.round(r * 100)}%`);
@@ -1387,11 +1454,12 @@ function renderAgentsTab(missions) {
     .join("\n");
   return `  <section id="tab-agentes" class="tab-panel" role="tabpanel" hidden>
       <table>
-        <thead><tr><th>Modelo</th><th>Missões</th><th>PASS de 1ª</th><th>Rondas médias</th><th>Tokens/feature</th><th>$/feature</th><th>Escalações</th></tr></thead>
+        <thead><tr>${headCells}</tr></thead>
         <tbody>
 ${rows}
         </tbody>
       </table>
+${legenda}
   </section>`;
 }
 
@@ -1410,13 +1478,22 @@ export function renderDashboardHtml(model) {
   const reqs = Array.isArray(safe.requirements) ? safe.requirements : [];
   // Land on the most useful tab. A project with no requirements (no PRD, e.g. the
   // engine itself) opens on Missões instead of an empty Requisitos panel.
-  const defaultTab = reqs.length === 0 ? "missoes" : "requisitos";
+  const hasReqs = reqs.length > 0;
+  const defaultTab = hasReqs ? "requisitos" : "missoes";
   const sel = (tab) => (tab === defaultTab ? "true" : "false");
   const missions = Array.isArray(safe.missions) ? safe.missions : [];
   const orphans = Array.isArray(safe.orphanBranches) ? safe.orphanBranches : [];
   const intake = Array.isArray(safe.intake) ? safe.intake : [];
   const generatedAt = safe.generatedAt ?? new Date().toISOString();
   const history = safe.history ?? null;
+
+  // vocabulary-trust D1: the Requisitos tab follows the SAME existence rule as
+  // Intake (renderIntakeTab → "" when empty). A PRD-less project renders NO
+  // Requisitos button and NO panel — an empty tab was a self-inflicted credibility
+  // wound (review Q1). Default-tab logic still lands on Missões.
+  const requisitosButton = hasReqs
+    ? `      <button type="button" role="tab" data-tab="requisitos" aria-selected="${sel("requisitos")}">Requisitos</button>\n`
+    : "";
 
   // The Intake tab exists only for a project whose profile declares a capture log.
   const intakeTabButton =
@@ -1450,14 +1527,13 @@ ${renderStyles()}
   <header class="site">
     <h1>AmiticIA Factory — rastreabilidade</h1>
     <nav class="tabs" role="tablist">
-      <button type="button" role="tab" data-tab="requisitos" aria-selected="${sel("requisitos")}">Requisitos</button>
-      <button type="button" role="tab" data-tab="missoes" aria-selected="${sel("missoes")}">Missões</button>
+${requisitosButton}      <button type="button" role="tab" data-tab="missoes" aria-selected="${sel("missoes")}">Missões</button>
       <button type="button" role="tab" data-tab="agentes" aria-selected="${sel("agentes")}">Agentes</button>
       <button type="button" role="tab" data-tab="historico" aria-selected="${sel("historico")}">Histórico</button>${intakeTabButton}
     </nav>
   </header>
   <main>
-${renderRequirementsTab(reqs)}
+${hasReqs ? renderRequirementsTab(reqs) : ""}
 ${renderMissionsTab(missions, orphans)}
 ${renderAgentsTab(missions)}
 ${renderHistoryTab(history)}
