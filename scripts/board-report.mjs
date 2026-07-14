@@ -611,6 +611,86 @@ export function formatDateTime(iso) {
   return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}/${d.getUTCFullYear()} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
 }
 
+// ─── board-banner-lint (F2): pure decision helpers ────────────────────────────
+//
+// Two trust features for the operator (board-banner-lint brief): (A) a staleness
+// banner that warns when a board tab was opened long after it was generated, and
+// (B) a contradiction ⚠ lint that flags missions in impossible states. Both are
+// PURE decisions over already-assembled data — no disk, no clock inside. The HTML
+// surfaces (banner container, client reveal, ⚠ chip) live further down.
+
+/**
+ * F2/A1 — humanize a staleness gap (ms) into compact PT: minutes under an hour,
+ * hours under a day, else days (singular "dia"). Pure. Mirrored byte-for-byte by
+ * the client-side reveal in `renderScript` (the browser can't import this module).
+ * @param {number} gapMs
+ * @returns {string}
+ */
+function humanizeStaleAge(gapMs) {
+  const min = gapMs / 60000;
+  if (min < 60) return `${Math.round(min)} min`;
+  const hr = gapMs / 3600000;
+  if (hr < 24) return `${Math.round(hr)} h`;
+  const day = Math.floor(gapMs / 86400000);
+  return `${day} ${day === 1 ? "dia" : "dias"}`;
+}
+
+/**
+ * F2/A1 — pure staleness decision. A board is static HTML; staleness is a
+ * VIEW-TIME fact (the file can be served/opened long after it was generated).
+ * Returns a PT warning when `nowMs - generatedAtMs` exceeds the threshold (default
+ * 30 min), else `null`. `now` is a PARAMETER — there is no `Date.now()` inside this
+ * helper (deterministic; the browser supplies `now` at view time, see renderScript).
+ *
+ * The comparison is strictly-greater: a board exactly at the threshold is still
+ * fresh, so a just-rendered tab never warns. Mutation-gated by the A1 tests.
+ * @param {number} generatedAtMs
+ * @param {number} nowMs
+ * @param {number} [thresholdMs=30*60*1000]
+ * @returns {string|null}
+ */
+export function stalenessText(generatedAtMs, nowMs, thresholdMs = 30 * 60 * 1000) {
+  const gap = nowMs - generatedAtMs;
+  if (!(gap > thresholdMs)) return null;
+  return `dados gerados há ${humanizeStaleAge(gap)} — podem estar defasados`;
+}
+
+/**
+ * F2/B1 — pure contradiction lint. Returns the human PT reasons a mission's state
+ * is self-contradictory (two facts that cannot both be true), so a viewer distrusts
+ * the RIGHT card instead of the whole board:
+ *   1. `Done` but no verdict was ever recorded — was it validated? we can't tell.
+ *   2. Awaiting plan approval (`gate:approve-plan`), yet work was already delivered
+ *      (`handoffs > 0`).
+ *   3. Queued to ratify a merge (`gate:ratify`) whose last verdict was `FAIL`.
+ * Empty array when the state is coherent. Pure over the mission object.
+ *
+ * The `gateReason` values are the REAL model labels (`gate:approve-plan` /
+ * `gate:ratify` from board-sync.mjs), NOT the contract's `approve-plan` shorthand
+ * — matching the shorthand would never fire on actual mission data, which is the
+ * exact "claimed but never worked" failure this mission exists to fix.
+ * @param {object} mission
+ * @returns {string[]}
+ */
+export function missionContradictions(mission) {
+  const out = [];
+  if (!mission || typeof mission !== "object") return out;
+  if (mission.status === "Done" && mission.lastVerdict == null) {
+    out.push("concluída sem veredito registrado");
+  }
+  if (
+    mission.gateReason === "gate:approve-plan" &&
+    typeof mission.handoffs === "number" &&
+    mission.handoffs > 0
+  ) {
+    out.push("aguardando aprovação do plano, mas já há trabalho entregue");
+  }
+  if (mission.gateReason === "gate:ratify" && mission.lastVerdict?.verdict === "FAIL") {
+    out.push("marcada para ratificar com último veredito FAIL");
+  }
+  return out;
+}
+
 export function renderStyles() {
   return `
 :root {
@@ -647,6 +727,11 @@ body {
   line-height: 1.5;
   overflow-x: hidden; /* audit C1/M2: page body never scrolls sideways; wide content scrolls inside its panel */
 }
+/* board-banner-lint (F2/A2): staleness banner — hidden server-side, revealed at
+   view time when the data is older than 30 min. [hidden] enforces hiding even
+   with the base rule; removing it client-side shows the amber warning. */
+.staleness-banner { padding: 0.6rem 2rem; background: var(--status-needs-human-bg); color: var(--status-needs-human-fg); border-bottom: 1px solid var(--border); font-size: 0.9rem; font-weight: 500; }
+.staleness-banner[hidden] { display: none; }
 header.site { padding: 1.5rem 2rem 0; border-bottom: 1px solid var(--border); background: var(--card-bg); }
 header.site h1 { margin: 0 0 1rem; font-size: 1.25rem; font-weight: 600; }
 /* audit M1: the tab bar scrolls internally instead of clipping off-screen tabs on mobile. */
@@ -717,6 +802,9 @@ a.mission-link:hover { text-decoration: underline; }
 /* lanes-legibility: honesty chips on a mission card. */
 .chip.chip-started { background: var(--status-building-bg); color: var(--status-building-fg); }
 .chip.chip-unratified { background: var(--risk-high-bg); color: var(--risk-high-fg); }
+/* board-banner-lint (F2/B2): the ⚠ chip on a self-contradictory card — red, like
+   the unratified honesty chip, so a viewer's eye lands on the card not to trust. */
+.chip.chip-contradicao { background: var(--risk-high-bg); color: var(--risk-high-fg); border-color: var(--risk-high-fg); }
 .needs-human-counts { margin: 0 0 1rem; font-size: 0.9rem; color: var(--fg); }
 .estacionado { margin-top: 1.5rem; border: 1px dashed var(--border); border-radius: 8px; padding: 0.5rem 1rem; background: var(--bg); }
 .estacionado > summary { cursor: pointer; font-size: 0.78rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
@@ -846,6 +934,50 @@ function renderScript(defaultTab = "requisitos") {
     if (t && typeof t.closest === 'function' && t.closest('.info-tip')) return;
     tips.forEach(function (o) { o.setAttribute('aria-expanded', 'false'); o.classList.remove('is-open'); });
   });
+  // board-banner-lint (F2/A2): staleness banner — revealed at VIEW TIME. The board
+  // is static HTML; a tab opened hours after it was generated must say so. The age
+  // is computed HERE (Date.now() at view time), never baked server-side, so the
+  // document stays byte-identical across renders of identical state (determinism +
+  // the autopublish content hash). The server emits only the container + an empty
+  // data-generated-at hook; on load we mirror the footer's <time datetime> into it
+  // so a real stale tab self-reveals, and a probe can inject an old value + re-run.
+  // (String concatenation, not template literals, because this lives inside the
+  // renderScript template literal — backticks would close it.)
+  function humanizeStaleAge(gapMs) {
+    var min = gapMs / 60000;
+    if (min < 60) return Math.round(min) + " min";
+    var hr = gapMs / 3600000;
+    if (hr < 24) return Math.round(hr) + " h";
+    var day = Math.floor(gapMs / 86400000);
+    return day + " " + (day === 1 ? "dia" : "dias");
+  }
+  function boardStalenessCheck() {
+    var banner = document.getElementById("staleness-banner");
+    if (!banner) return;
+    var iso = banner.getAttribute("data-generated-at");
+    // Server emits the hook empty (churn-free); mirror the footer timestamp so a
+    // real opened tab self-detects. An injected value (validator probe) wins.
+    if (!iso) {
+      var t = document.querySelector("footer.site time[datetime]");
+      if (t) iso = t.getAttribute("datetime");
+    }
+    if (!iso) return;
+    var generated = Date.parse(iso);
+    if (isNaN(generated)) return;
+    var STALE_THRESHOLD_MS = 30 * 60 * 1000;
+    var gap = Date.now() - generated;
+    if (gap > STALE_THRESHOLD_MS) {
+      banner.textContent = "dados gerados há " + humanizeStaleAge(gap) + " — podem estar defasados";
+      banner.hidden = false;
+    } else {
+      banner.hidden = true;
+      banner.textContent = "";
+    }
+  }
+  boardStalenessCheck();
+  // Exposed so a held-out Playwright probe can set data-generated-at to an old
+  // value and re-run the init to reveal the banner (touch devices / re-eval).
+  window.boardStalenessCheck = boardStalenessCheck;
   // Land on the most useful tab: a project with no requirements (no PRD) opens on
   // Missões, not an empty Requisitos panel.
   activate('${defaultTab}');
@@ -921,6 +1053,16 @@ function renderMissionCard(m) {
     m.branch?.merged === true && m.ratified !== true
       ? `<span class="chip chip-unratified" title="mergeado sem ratificação registrada">não ratificado</span>`
       : "";
+  // F2/B2: a self-contradictory state (Done but never validated; awaiting plan
+  // approval yet already delivered; queued to ratify a FAIL) gets a ⚠ chip so a
+  // viewer distrusts the RIGHT card, not the whole board. The reasons are joined by
+  // '; ' into both title (mouse) and aria-label (screen reader) and esc()'d — the
+  // chip itself is icon-only (⚠), so the text MUST reach the attributes.
+  const contradictionReasons = missionContradictions(m);
+  const contradictionChip =
+    contradictionReasons.length > 0
+      ? `<span class="chip chip-contradicao" role="img" title="${esc(contradictionReasons.join("; "))}" aria-label="${esc(contradictionReasons.join("; "))}">⚠</span>`
+      : "";
   const featuresLine = `<p>${m.features ?? 0} features, ${m.handoffs ?? 0} com handoff</p>`;
   const verdictLine = m.lastVerdict?.verdict
     ? `<p>Último veredicto: <span class="verdict-${esc(m.lastVerdict.verdict)}">${esc(m.lastVerdict.verdict)}</span> (rodada ${esc(m.lastVerdict.round)})</p>`
@@ -937,6 +1079,7 @@ function renderMissionCard(m) {
             ${chipsHtml}
             ${startedChip}
             ${unratifiedChip}
+            ${contradictionChip}
           </div>
           ${statsLine}
         </summary>
@@ -1625,6 +1768,7 @@ ${renderStyles()}
   </style>
 </head>
 <body>
+  <div id="staleness-banner" class="staleness-banner" data-generated-at="" role="status" hidden></div>
   <header class="site">
     <h1>AmiticIA Factory — rastreabilidade</h1>
     <nav class="tabs" role="tablist">
