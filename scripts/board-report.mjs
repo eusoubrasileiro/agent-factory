@@ -743,6 +743,15 @@ footer.site { padding: 1rem 2rem; border-top: 1px solid var(--border); color: va
 .legenda ul { margin: 0.5rem 0; padding-left: 1.25rem; }
 .legenda li { margin-bottom: 0.2rem; line-height: 1.4; }
 .legenda strong { color: var(--fg); font-weight: 600; }
+/* tooltips-ui (F1): a VISIBLE ⓘ affordance — revealed on hover/focus/tap, NOT
+   the invisible native title=. Bubble hidden by default; the grouped reveal
+   selector toggles display on :hover, :focus, :focus-within, [aria-expanded],
+   and the JS-toggled .is-open (touch can't rely on :focus alone). */
+.info-tip { display: inline-flex; align-items: center; justify-content: center; width: 1.15rem; height: 1.15rem; margin-left: 0.3rem; padding: 0; border: 1px solid var(--border); border-radius: 50%; background: var(--card-bg); color: var(--muted); font-size: 0.62rem; font-weight: 700; line-height: 1; cursor: pointer; vertical-align: middle; position: relative; }
+.info-tip:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+.info-tip__glyph { pointer-events: none; }
+.info-tip__bubble { position: absolute; z-index: 30; top: 135%; left: 50%; transform: translateX(-50%); display: none; min-width: 12rem; max-width: 18rem; padding: 0.5rem 0.65rem; border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); color: var(--fg); font-size: 0.8rem; font-weight: 400; line-height: 1.35; text-align: left; text-transform: none; letter-spacing: normal; box-shadow: 0 4px 14px rgba(0,0,0,0.12); white-space: normal; }
+.info-tip:hover .info-tip__bubble, .info-tip:focus .info-tip__bubble, .info-tip:focus-within .info-tip__bubble, .info-tip.is-open .info-tip__bubble, .info-tip[aria-expanded="true"] .info-tip__bubble { display: block; }
 .intake-legend { font-size: 0.82rem; margin: 1rem 0 0; }
 .intake-card { border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); padding: 0.75rem 1rem; margin-bottom: 0.5rem; }
 .intake-summary { margin: 0.5rem 0 0.25rem; font-size: 0.9rem; }
@@ -812,6 +821,30 @@ function renderScript(defaultTab = "requisitos") {
         target.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     });
+  });
+  // tooltips-ui (F1/B3): tap/click an info-tip toggles it open — :focus alone is
+  // unreliable on touch (iOS), so the open state is driven explicitly. A click
+  // toggles aria-expanded + .is-open (CSS reveals both); a click anywhere else
+  // collapses any open tip (tap-away to hide).
+  var tips = Array.prototype.slice.call(document.querySelectorAll('.info-tip'));
+  tips.forEach(function (tip) {
+    tip.setAttribute('aria-expanded', 'false');
+    tip.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var willOpen = tip.getAttribute('aria-expanded') !== 'true';
+      tips.forEach(function (o) {
+        if (o !== tip) { o.setAttribute('aria-expanded', 'false'); o.classList.remove('is-open'); }
+      });
+      tip.setAttribute('aria-expanded', String(willOpen));
+      if (willOpen) { tip.classList.add('is-open'); tip.focus(); }
+      else { tip.classList.remove('is-open'); tip.blur(); }
+    });
+  });
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (t && typeof t.closest === 'function' && t.closest('.info-tip')) return;
+    tips.forEach(function (o) { o.setAttribute('aria-expanded', 'false'); o.classList.remove('is-open'); });
   });
   // Land on the most useful tab: a project with no requirements (no PRD) opens on
   // Missões, not an empty Requisitos panel.
@@ -1262,7 +1295,7 @@ export function aggregateAgents(missions) {
  * to the same string. Each def names its data source (the audit's whole point).
  * Order is the render order of the stat cards (see renderHistoryTab).
  */
-const HISTORICO_TERMS = [
+export const HISTORICO_TERMS = [
   { label: "missões concluídas", def: "missões que chegaram a Done (history.jsonl)" },
   { label: "missões/semana", def: "missões concluídas divididas pelas semanas decorridas (history.jsonl)" },
   { label: "lead time mediano", def: "mediana, criação do dossiê até Done (history.jsonl)" },
@@ -1294,6 +1327,47 @@ function renderLegenda(terms) {
 ${items}
       </ul>
     </details>`;
+}
+
+/**
+ * F1/A1 — a VISIBLE, focusable ⓘ affordance that reveals a definition on hover
+ * AND on tap/focus. Native `title=` is invisible-on-hover (long delay, tiny
+ * chrome) and dead on touch — a definition a viewer cannot discover is not a
+ * definition. The affordance is a real `<button>` (native focus + keyboard),
+ * carrying the def in a child `role="tooltip"` bubble wired to it via
+ * `aria-describedby` (plus an `aria-label` fallback for screen readers).
+ *
+ * The def string MUST be the term constant's `.def` — one constant, two surfaces
+ * with renderLegenda (the A3 gate pins them together). `key` derives a
+ * deterministic, unique id (from the term label/index) so aria-describedby can
+ * link the button to its bubble — never Math.random or a timestamp.
+ *
+ * @param {string} def — the definition text (the shared term constant's `.def`).
+ * @param {string} [key] — deterministic per-term key (label/index) for the id.
+ * @returns {string}
+ */
+export function renderInfoTip(def, key) {
+  const bubbleId = "tip-" + infoTipKey(key ?? def);
+  return `<button type="button" class="info-tip" aria-describedby="${bubbleId}" aria-label="${esc(def)}"><span class="info-tip__glyph" aria-hidden="true">ⓘ</span><span class="info-tip__bubble" role="tooltip" id="${bubbleId}">${esc(def)}</span></button>`;
+}
+
+/**
+ * F1/C2 — deterministic, HTML-safe id slug from an arbitrary key: strip
+ * accents (NFD), collapse non-alphanumerics to `-`. Same key → same id;
+ * different keys → different ids (no randomness, no wall-clock).
+ * @param {string} key
+ * @returns {string}
+ */
+function infoTipKey(key) {
+  return (
+    String(key)
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "x"
+  );
 }
 
 /**
@@ -1359,9 +1433,12 @@ ${legenda}
   const cardsHtml = HISTORICO_TERMS.map((term, i) => {
     const c = cardValues[i];
     const valueClass = c.semDados ? "stat-value sem-dados" : "stat-value";
+    // F1/A2 — a VISIBLE ⓘ tip inside the card (title= kept as a redundant native
+    // fallback). One tip per term → A2 mutation gate counts class="info-tip" ==
+    // HISTORICO_TERMS.length here.
     return `      <div class="stat-card" title="${esc(term.def)}">
         <div class="${valueClass}">${esc(c.value)}</div>
-        <div class="stat-label">${esc(term.label)}</div>
+        <div class="stat-label">${esc(term.label)}${renderInfoTip(term.def, "hist-" + i)}</div>
       </div>`;
   }).join("\n");
 
@@ -1406,7 +1483,7 @@ ${legenda}
  * used for BOTH the `<th title>` AND the panel legenda (renderLegenda), so a
  * definition edited here updates both surfaces (the A3 mutation gate pins them).
  */
-const AGENTES_TERMS = [
+export const AGENTES_TERMS = [
   { label: "Modelo", def: "modelo do worker que executou as missões (stats.json)" },
   { label: "Missões", def: "quantas missões rodaram neste modelo (stats.json)" },
   { label: "PASS de 1ª", def: "fração das missões que passaram na validação na primeira ronda (validate.log)" },
@@ -1442,12 +1519,22 @@ function renderAgentsTab(missions) {
   // post-scoping truth) — say so, once, near the numbers.
   const escopo = `    <p class="muted escopo">Só missões deste projeto.</p>`;
   // F4a/A2+A3 — headers + legenda from the one column vocabulary constant.
-  const headCells = AGENTES_TERMS.map((t) => `<th title="${esc(t.def)}">${esc(t.label)}</th>`).join("");
+  // F1/A2 — each header carries a VISIBLE ⓘ tip (title= kept as fallback). The
+  // header row renders in BOTH branches so a project with no agent stats (e.g.
+  // factory itself) still shows discoverable column tips — never a tip-less tab.
+  const headCells = AGENTES_TERMS.map(
+    (t, i) => `<th title="${esc(t.def)}">${esc(t.label)}${renderInfoTip(t.def, "agentes-" + i)}</th>`,
+  ).join("");
+  const headRow = `      <table>
+        <thead><tr>${headCells}</tr></thead>`;
   const legenda = renderLegenda(AGENTES_TERMS);
   if (agents.length === 0) {
     return `  <section id="tab-agentes" class="tab-panel" role="tabpanel" hidden>
 ${coverage}
     <p class="muted">sem dados de agentes ainda</p>
+${headRow}
+        <tbody></tbody>
+      </table>
 ${legenda}
   </section>`;
   }
@@ -1467,8 +1554,7 @@ ${legenda}
     .join("\n");
   return `  <section id="tab-agentes" class="tab-panel" role="tabpanel" hidden>
 ${coverage}
-      <table>
-        <thead><tr>${headCells}</tr></thead>
+${headRow}
         <tbody>
 ${rows}
         </tbody>
