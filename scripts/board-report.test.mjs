@@ -22,15 +22,21 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  AGENTES_TERMS,
+  HISTORICO_TERMS,
   aggregateAgents,
   buildTraceabilityModel,
   collectGitInfo,
+  esc,
   fmtUsd,
   formatDateTime,
+  missionContradictions,
   parseRequirementsLine,
   renderDashboardHtml,
+  renderInfoTip,
   renderInline,
   renderIntakeTab,
+  stalenessText,
 } from "./board-report.mjs";
 import { deriveMissionState } from "./board-sync.mjs";
 
@@ -2201,7 +2207,10 @@ test("renderAgentsTab (via renderDashboardHtml): Agentes table gets a '$/feature
   };
   const html = renderDashboardHtml(model);
   const start = html.indexOf('id="tab-agentes"');
-  const panel = html.slice(start, start + 2000);
+  // Slice the whole Agentes section (not a fixed 2000 chars): the ⓘ info-tip
+  // markup on each <th> (tooltips-ui/F1) legitimately grew the header, pushing
+  // the later columns past a fixed window. Assert against the full panel.
+  const panel = html.slice(start, html.indexOf("</section>", start));
   assert.match(panel, /\$\/feature/);
   assert.match(panel, /sem dados/);
 });
@@ -2631,6 +2640,19 @@ test("agentes-evidence: coverage line shows N of M missions + how many lack mode
     ],
   });
   assert.match(html, /dados de 2 de 3 missões \(1 sem stats de modelo\)/);
+  // F3: the gap is EXPLAINED, so it reads as accounted-for, not broken.
+  assert.match(html, /cobertura-nota/);
+  assert.match(html, /entram no total mas ficam fora da comparação A\/B/);
+});
+
+test("agentes-evidence (F3): no cobertura-nota when every mission has a model (no gap to explain)", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      { slug: "a", status: "Done", requirements: [], features: 1, handoffs: 1, lastVerdict: null, branch: null, stats: { models: { worker: "glm-5.2" } } },
+    ],
+  });
+  assert.doesNotMatch(html, /cobertura-nota/);
 });
 
 test("agentes-evidence: zero-coverage still names the denominator, not a bare empty state", () => {
@@ -2665,4 +2687,460 @@ test("agentes-evidence: no fake zeros — a model with no cost/token data render
   assert.match(html, /glm-5\.2/);
   const agentesPanel = html.slice(html.indexOf('id="tab-agentes"'));
   assert.match(agentesPanel, /—/);
+});
+
+// ─── tooltips-ui (F1): a VISIBLE ⓘ affordance that works with mouse AND finger ──
+//
+// The M4 "tooltips" shipped as native `title=` attributes — invisible on hover
+// (long delay, tiny native chrome) and dead on touch. These tests pin a real,
+// visible, focusable affordance whose definition is revealed on hover AND on
+// tap/focus. One constant (HISTORICO_TERMS / AGENTES_TERMS) feeds BOTH the tip
+// and the legenda (A3). Each test below is a mutation gate: reverting the
+// feature turns it red.
+
+/** Compact Histórico aggregate that exercises the data branch (stat cards). */
+const TOOLTIPS_HISTORY = {
+  missõesConcluídas: 1,
+  missõesPorSemana: 0.5,
+  leadTimeMediano: 3,
+  rondasMédia: 1,
+  tokensTotal: 100,
+  atençãoPorFeature: 1,
+  byProject: {},
+  perMission: [
+    {
+      slug: "alpha",
+      project: "factory",
+      estadoAtual: "Done",
+      leadTime: 3,
+      rondas: 1,
+      últimoVerdict: "PASS",
+      data: "2026-07-01T00:00:00Z",
+    },
+  ],
+};
+
+/** Slice one tab panel out of the rendered doc: from its id anchor to its
+ *  first closing </section>. */
+function slicePanel(html, idAnchor) {
+  const start = html.indexOf(idAnchor);
+  assert.ok(start > -1, `panel anchor not found: ${idAnchor}`);
+  return html.slice(start, html.indexOf("</section>", start));
+}
+
+test("A1 mutation gate: renderInfoTip yields a VISIBLE affordance (button/tabindex + role=tooltip + def)", () => {
+  const tip = renderInfoTip("X");
+  // A visible element — not a bare title= attribute. Removing the element → red.
+  assert.match(tip, /class="info-tip"/, "carries the visible affordance class");
+  assert.match(tip, /role="tooltip"/, "carries a role=tooltip bubble");
+  assert.ok(/<button|tabindex=/.test(tip), "focusable element (button or tabindex)");
+  assert.ok(tip.includes("X"), "carries the def text X");
+});
+
+test("A1: renderInfoTip escapes the def (no raw <, >, \", &) — title= leakage was the bug", () => {
+  const tip = renderInfoTip('a<b"c>&d');
+  assert.ok(!tip.includes('<b"'), "no raw < introduced from the def");
+  assert.match(tip, /&lt;b&quot;c&gt;&amp;d/, "def is HTML-escaped in the bubble");
+});
+
+test("B1 mutation gate: the tip links its bubble via aria-describedby (id match) + aria-label fallback", () => {
+  const tip = renderInfoTip("alguma definição", "chave-1");
+  const m = tip.match(/class="info-tip__bubble" role="tooltip" id="([^"]+)"/);
+  assert.ok(m, "bubble has role=tooltip and a unique id");
+  const bubbleId = m[1];
+  assert.ok(
+    tip.includes(`aria-describedby="${bubbleId}"`),
+    "focusable element points at the bubble id (SR + keyboard reach the def)",
+  );
+  assert.ok(
+    /aria-label="[^"]*alguma definição"/.test(tip),
+    "aria-label carries the def as a screen-reader fallback",
+  );
+});
+
+test("A2 mutation gate (Histórico): one visible info-tip per stat card == HISTORICO_TERMS.length", () => {
+  const html = renderDashboardHtml({ ...EMPTY_MODEL, history: TOOLTIPS_HISTORY });
+  const panel = html.slice(html.indexOf("<!--hist-start-->"), html.indexOf("<!--hist-end-->"));
+  const count = (panel.match(/class="info-tip"/g) || []).length;
+  assert.equal(count, HISTORICO_TERMS.length, `expected ${HISTORICO_TERMS.length} tips, got ${count}`);
+});
+
+test("A2 mutation gate (Agentes, with data): one visible info-tip per column header == AGENTES_TERMS.length", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      missionWithStats("a", { models: { worker: "glm-5.2" }, rounds: 1, tokens: { total: 100 }, cost: { total: { api: 1 } } }),
+    ],
+  });
+  const panel = slicePanel(html, 'id="tab-agentes"');
+  const count = (panel.match(/class="info-tip"/g) || []).length;
+  assert.equal(count, AGENTES_TERMS.length, `expected ${AGENTES_TERMS.length} tips, got ${count}`);
+});
+
+test("A2 (Agentes empty branch): column headers STILL render their tips so the tab is never tip-less", () => {
+  // A project with no agent stats (e.g. factory itself) hits the empty branch —
+  // but the column headers (and their tips) must still render, or the tab has
+  // zero discoverable affordances for the validator (and André) to probe.
+  const html = renderDashboardHtml({ ...EMPTY_MODEL, missions: [] });
+  const panel = slicePanel(html, 'id="tab-agentes"');
+  const count = (panel.match(/class="info-tip"/g) || []).length;
+  assert.equal(count, AGENTES_TERMS.length, "empty Agentes branch still shows column-header tips");
+  assert.match(panel, /sem dados de agentes ainda/, "and keeps its empty-state message");
+});
+
+test("A3 mutation gate (Histórico): each term def appears in BOTH a tip bubble and the legenda (one constant, two surfaces)", () => {
+  const html = renderDashboardHtml({ ...EMPTY_MODEL, history: TOOLTIPS_HISTORY });
+  const panel = html.slice(html.indexOf("<!--hist-start-->"), html.indexOf("<!--hist-end-->"));
+  for (const t of HISTORICO_TERMS) {
+    const d = esc(t.def);
+    assert.ok(panel.includes(`>${d}</span>`), `tip bubble missing def for "${t.label}"`);
+    assert.ok(panel.includes(`</strong> ${d}</li>`), `legenda missing def for "${t.label}"`);
+  }
+});
+
+test("A3 mutation gate (Agentes): each column def appears in BOTH a tip bubble and the legenda", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [missionWithStats("a", { models: { worker: "glm-5.2" } })],
+  });
+  const panel = slicePanel(html, 'id="tab-agentes"');
+  for (const t of AGENTES_TERMS) {
+    const d = esc(t.def);
+    assert.ok(panel.includes(`>${d}</span>`), `agentes tip bubble missing def for "${t.label}"`);
+    assert.ok(panel.includes(`</strong> ${d}</li>`), `agentes legenda missing def for "${t.label}"`);
+  }
+});
+
+test("B2 mutation gate: CSS hides the bubble by default and reveals it on :hover and :focus/:focus-within", () => {
+  const html = renderDashboardHtml(EMPTY_MODEL);
+  const style = html.slice(html.indexOf("<style>"), html.indexOf("</style>"));
+  assert.match(style, /\.info-tip__bubble\s*\{[^}]*display:\s*none/, "bubble hidden by default");
+  assert.match(style, /\.info-tip:hover[^{]*\{[^}]*display:\s*block/, "hover reveals the bubble");
+  assert.match(
+    style,
+    /\.info-tip:focus(?:-within)?[^{]*\{[^}]*display:\s*block/,
+    "focus (or focus-within) reveals the bubble — keyboard/tap reach it",
+  );
+});
+
+test("B3 mutation gate: the board script toggles info-tip open state on tap/click (touch can't rely on :focus)", () => {
+  const html = renderDashboardHtml(EMPTY_MODEL);
+  const script = html.slice(html.lastIndexOf("<script>"), html.lastIndexOf("</script>"));
+  assert.match(script, /info-tip/, "script wires the .info-tip elements");
+  assert.match(script, /aria-expanded/, "script toggles aria-expanded (tap to show/hide)");
+});
+
+test("C1: Histórico empty branch ('sem dados ainda') still renders the legenda", () => {
+  const html = renderDashboardHtml({ ...EMPTY_MODEL }); // no history → empty branch
+  const panel = html.slice(html.indexOf("<!--hist-start-->"), html.indexOf("<!--hist-end-->"));
+  assert.match(panel, /sem dados ainda/);
+  assert.match(panel, /<details class="legenda">/);
+  assert.match(panel, /o que significa cada número/);
+});
+
+test("C2 determinism: tip ids derive from the key — same model renders byte-identical (no Math.random / wall-clock)", () => {
+  assert.equal(renderInfoTip("d", "hist-3"), renderInfoTip("d", "hist-3"), "same inputs → identical markup");
+  assert.notEqual(renderInfoTip("d", "hist-3"), renderInfoTip("d", "agentes-3"), "different key → different id");
+  // Whole-document determinism: a fixed generatedAt must yield byte-identical HTML
+  // across renders (guards against random/timestamp ids anywhere, including tips).
+  assert.equal(renderDashboardHtml(EMPTY_MODEL), renderDashboardHtml(EMPTY_MODEL));
+});
+
+// ─── board-banner-lint (F2): the two M4 features that were claimed but never ────
+// ─── written — staleness banner (A) + contradiction ⚠ lint (B). TDD: each gate  ───
+// ─── below reverts red if the rule is dropped.                                  ───
+//
+// A board is static HTML, so (A) staleness is a VIEW-TIME fact (the file can be
+// opened long after it was generated) and (B) a contradiction is a BUILD-TIME
+// fact (a card whose own state cannot both be true). Both are TRUST features for
+// the operator: the banner stops him trusting a stale tab; the chip stops him
+// trusting a self-contradictory card.
+
+// ── A1: stalenessText — the pure staleness decision (gap → PT warning | null) ──
+
+test("A1: stalenessText fresh (gap 0) → null (no banner on a just-opened board)", () => {
+  const now = Date.UTC(2026, 6, 14, 12, 0, 0); // 2026-07-14T12:00:00Z
+  assert.equal(stalenessText(now, now), null, "zero gap is fresh");
+});
+
+test("A1: stalenessText at exactly the 30-min threshold → null (strictly-greater)", () => {
+  const gen = 1_000_000;
+  const now = gen + 30 * 60 * 1000; // exactly 30 min — the boundary is still fresh
+  assert.equal(stalenessText(gen, now), null);
+});
+
+test("A1 mutation gate: gap 31 min → non-null warning containing 'defasad' + the age", () => {
+  const gen = 1_000_000;
+  const now = gen + 31 * 60 * 1000;
+  const out = stalenessText(gen, now);
+  assert.ok(typeof out === "string" && out.length > 0, "stale ⇒ a warning string");
+  assert.match(out, /defasad/, "the stale warning names the risk");
+  assert.match(out, /há 31 min/, "the humanized age (min) is embedded");
+});
+
+test("A1 mutation gate: a fresh board never warns (catches an always-stale regression)", () => {
+  // Mutating the threshold check to something always-true (e.g. `gap >= 0`) turns
+  // this red: a fresh board would suddenly get a banner it must never show.
+  const now = 5_000_000;
+  assert.equal(stalenessText(now, now), null);
+  assert.equal(stalenessText(now - 5 * 60 * 1000, now), null, "5 min is still fresh");
+});
+
+test("A1: humanizes the age into h then dias (singular 'dia')", () => {
+  const gen = 0;
+  assert.match(stalenessText(gen, gen + 2 * 3600 * 1000), /há 2 h/);
+  assert.match(stalenessText(gen, gen + 3 * 86400 * 1000), /há 3 dias/);
+  assert.match(stalenessText(gen, gen + 1 * 86400 * 1000), /há 1 dia/);
+});
+
+test("A1: a custom threshold is honored (10 min is fresh at 30, stale at 5)", () => {
+  const gen = 0;
+  const now = gen + 10 * 60 * 1000;
+  assert.equal(stalenessText(gen, now), null, "fresh at the 30-min default");
+  const out = stalenessText(gen, now, 5 * 60 * 1000);
+  assert.ok(out && /defasad/.test(out), "stale under a 5-min threshold");
+});
+
+test("A1: stalenessText is deterministic — no Date.now() inside the pure helper", () => {
+  // Same inputs ⇒ same output, always (the browser supplies `now` at view time;
+  // the helper never reads the clock itself).
+  const gen = 1_000_000;
+  assert.equal(stalenessText(gen, gen + 31 * 60 * 1000), stalenessText(gen, gen + 31 * 60 * 1000));
+});
+
+// ── B1: missionContradictions — the pure lint over a mission object ─────────────
+
+test("B1: a clean coherent mission → []", () => {
+  assert.deepEqual(
+    missionContradictions({ status: "Building", gateReason: null, handoffs: 0, lastVerdict: null }),
+    [],
+  );
+  // A Done mission WITH a recorded verdict is coherent — no lint.
+  assert.deepEqual(
+    missionContradictions({
+      status: "Done",
+      gateReason: null,
+      handoffs: 1,
+      lastVerdict: { verdict: "PASS", round: 1 },
+    }),
+    [],
+  );
+});
+
+test("B1 rule 1 mutation gate: Done + null verdict → 'concluída sem veredito registrado'", () => {
+  assert.deepEqual(
+    missionContradictions({ status: "Done", gateReason: null, handoffs: 0, lastVerdict: null }),
+    ["concluída sem veredito registrado"],
+  );
+});
+
+test("B1 rule 1: undefined verdict ⇒ same reason; any verdict (even FAIL) clears it", () => {
+  assert.deepEqual(
+    missionContradictions({ status: "Done", lastVerdict: undefined }),
+    ["concluída sem veredito registrado"],
+  );
+  assert.deepEqual(
+    missionContradictions({ status: "Done", lastVerdict: { verdict: "FAIL", round: 2 } }),
+    [],
+    "a Done mission WITH a verdict is not 'sem veredito'",
+  );
+});
+
+test("B1 rule 2 mutation gate: gate:approve-plan + handoffs>0 ⇒ plan-pending-but-delivered", () => {
+  assert.deepEqual(
+    missionContradictions({
+      status: "Needs Human",
+      gateReason: "gate:approve-plan",
+      handoffs: 2,
+      lastVerdict: null,
+    }),
+    ["aguardando aprovação do plano, mas já há trabalho entregue"],
+  );
+  // The real model label is `gate:approve-plan` — matching a bare `approve-plan`
+  // shorthand would never fire on real data (the exact failure this mission fixes).
+  assert.doesNotMatch(
+    missionContradictions({ status: "Needs Human", gateReason: "approve-plan", handoffs: 2 }).join(""),
+    /trabalho entregue/,
+    "a bare shorthand gateReason must NOT trigger the lint (real data carries gate:)",
+  );
+  // Zero handoffs ⇒ the lane is honest (nothing delivered yet) ⇒ no lint.
+  assert.deepEqual(
+    missionContradictions({ status: "Needs Human", gateReason: "gate:approve-plan", handoffs: 0 }),
+    [],
+  );
+});
+
+test("B1 rule 3 mutation gate: gate:ratify + last verdict FAIL ⇒ ratify-a-FAIL", () => {
+  assert.deepEqual(
+    missionContradictions({
+      status: "Needs Human",
+      gateReason: "gate:ratify",
+      handoffs: 1,
+      lastVerdict: { verdict: "FAIL", round: 3 },
+    }),
+    ["marcada para ratificar com último veredito FAIL"],
+  );
+  // A ratify mission whose last verdict is PASS is the normal bless path — coherent.
+  assert.deepEqual(
+    missionContradictions({
+      status: "Needs Human",
+      gateReason: "gate:ratify",
+      lastVerdict: { verdict: "PASS", round: 1 },
+    }),
+    [],
+  );
+});
+
+test("B1: a mission hitting multiple rules returns every reason in order (1, 2, 3)", () => {
+  // Synthetic (deriveMissionState would not produce Done + gate:approve-plan), but
+  // the lint is pure and must surface each rule independently, joined later by '; '.
+  assert.deepEqual(
+    missionContradictions({
+      status: "Done",
+      gateReason: "gate:approve-plan",
+      handoffs: 4,
+      lastVerdict: null,
+    }),
+    [
+      "concluída sem veredito registrado", // rule 1: Done + null verdict
+      "aguardando aprovação do plano, mas já há trabalho entregue", // rule 2: approve-plan + handoffs
+    ],
+  );
+});
+
+test("B1: robust to null/undefined/empty mission object (returns [], never throws)", () => {
+  assert.doesNotThrow(() => missionContradictions(null));
+  assert.deepEqual(missionContradictions(null), []);
+  assert.deepEqual(missionContradictions(undefined), []);
+  assert.deepEqual(missionContradictions({}), []);
+});
+
+// ── A2: the staleness banner container + the client-side reveal ────────────────
+
+test("A2: a staleness banner container sits at the top of <body>, above the tabs", () => {
+  const html = renderDashboardHtml(EMPTY_MODEL);
+  const bodyOpen = html.indexOf("<body>");
+  const banner = html.indexOf('id="staleness-banner"');
+  const header = html.indexOf('header class="site"');
+  assert.ok(bodyOpen > -1, "<body> present");
+  assert.ok(banner > bodyOpen, "banner is inside <body>");
+  assert.ok(banner < header, "banner is above the header/tabs");
+});
+
+test("A2: banner is hidden by default and carries data-generated-at + role=status", () => {
+  const html = renderDashboardHtml(EMPTY_MODEL);
+  const m = html.match(/<[^>]*id="staleness-banner"[^>]*>/);
+  assert.ok(m, "banner container exists");
+  const tag = m[0];
+  assert.match(tag, /data-generated-at=/, "carries the generation-time hook the client/validator reads");
+  assert.match(tag, /role="status"/, "becomes an ARIA live region when revealed");
+  assert.match(tag, /\bhidden\b/, "hidden by default (a fresh server render never shows it)");
+});
+
+test("A2 churn guard: the banner does NOT bake a volatile server timestamp (autopublish hash stays stable)", () => {
+  // The footer already carries the volatile generatedAt (stripped from the publish
+  // hash by stripTimestampLines). Baking a SECOND live ISO into the banner would
+  // survive the strip and churn the hash on every render — breaking autopublish's
+  // 'identical state hashes identically'. So the server emits the hook empty/stable
+  // and the client mirrors the footer timestamp at view time instead.
+  const html = renderDashboardHtml(EMPTY_MODEL);
+  const tag = html.match(/<[^>]*id="staleness-banner"[^>]*>/)[0];
+  assert.match(tag, /data-generated-at=""/, "server emits an empty, stable hook (no churn)");
+});
+
+test("A2: the board <script> carries the 30-min threshold + client reveal logic", () => {
+  const html = renderDashboardHtml(EMPTY_MODEL);
+  const script = html.slice(html.lastIndexOf("<script>"), html.lastIndexOf("</script>"));
+  assert.match(script, /30\s*\*\s*60\s*\*\s*1000/, "30-minute threshold constant in the client");
+  assert.match(script, /data-generated-at/, "client reads the banner's data-generated-at");
+  assert.match(script, /Date\.now\(\)/, "age is computed at view time in the browser");
+  assert.match(script, /defasad/, "the client warning names the staleness risk (mirrors stalenessText)");
+  assert.match(script, /boardStalenessCheck/, "the staleness init is named");
+  assert.match(
+    script,
+    /window\.\s*boardStalenessCheck|window\["boardStalenessCheck"\]/,
+    "init is exposed on window so a probe can inject an old timestamp and re-run",
+  );
+});
+
+// ── B2: the ⚠ contradiction chip on an impossible-state card ───────────────────
+//
+// Count-based over RENDERED chips (the full `class="chip chip-contradicao"`
+// attribute) — NEVER a match against the `.chip.chip-contradicao` stylesheet rule,
+// which also appears once in <style> (that false-red bit M3 three times).
+
+/** Slice one mission card out of the rendered Missões tab by slug. */
+function missionCardSlice(html, slug) {
+  const panel = html.slice(html.indexOf('id="tab-missoes"'));
+  const open = panel.indexOf(`id="mission-${slug}"`);
+  assert.ok(open > -1, `mission card ${slug} must exist`);
+  return panel.slice(open, panel.indexOf("</details>", open));
+}
+
+test("B2 mutation gate: a contradictory card renders exactly one ⚠ chip + the reason", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      { slug: "bad-done", status: "Done", gateReason: null, requirements: [], features: 1, handoffs: 0, lastVerdict: null, branch: null },
+    ],
+  });
+  const card = missionCardSlice(html, "bad-done");
+  // The full attribute — the CSS rule is `.chip.chip-contradicao` (dots), so this
+  // can only ever match a RENDERED chip, never the stylesheet.
+  assert.equal(
+    (card.match(/class="chip chip-contradicao"/g) ?? []).length,
+    1,
+    "exactly one rendered ⚠ chip",
+  );
+  assert.match(card, /⚠/, "the chip shows the warning glyph");
+  assert.match(card, /concluída sem veredito registrado/, "the reason is in the chip title/aria-label");
+});
+
+test("B2: a clean coherent card renders NO chip-contradicao", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      { slug: "clean", status: "Building", gateReason: null, requirements: [], features: 1, handoffs: 0, lastVerdict: null, branch: null },
+    ],
+  });
+  const card = missionCardSlice(html, "clean");
+  assert.equal(
+    (card.match(/class="chip chip-contradicao"/g) ?? []).length,
+    0,
+    "no chip on a coherent card",
+  );
+});
+
+test("B2: multiple contradictions join their reasons with '; ' in the chip title", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      {
+        slug: "multi",
+        status: "Done",
+        gateReason: "gate:approve-plan",
+        requirements: [],
+        features: 2,
+        handoffs: 3,
+        lastVerdict: null,
+        branch: null,
+      },
+    ],
+  });
+  const card = missionCardSlice(html, "multi");
+  assert.match(
+    card,
+    /concluída sem veredito registrado; aguardando aprovação do plano, mas já há trabalho entregue/,
+  );
+});
+
+test("B2: the chip reason is the title AND the aria-label (mouse hover + screen reader)", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      { slug: "x", status: "Done", gateReason: null, requirements: [], features: 0, handoffs: 0, lastVerdict: null, branch: null },
+    ],
+  });
+  assert.match(html, /title="concluída sem veredito registrado"/);
+  assert.match(html, /aria-label="concluída sem veredito registrado"/);
 });
