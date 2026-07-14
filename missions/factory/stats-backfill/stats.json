@@ -1,0 +1,79 @@
+{
+  "slug": "stats-backfill",
+  "generatedAt": "2026-07-14T12:07:14.037Z",
+  "branch": "agent/stats-backfill",
+  "mergeBase": "ad9c91d53fcc1503323fd7d991844606fccbfeb7",
+  "loc": {
+    "added": 0,
+    "deleted": 0,
+    "files": 0
+  },
+  "testsAdded": 0,
+  "baselineChanged": false,
+  "baselineKeysChanged": [],
+  "durations": {
+    "building": 2177614,
+    "validating": null,
+    "orchestrating": null,
+    "total": 2177614
+  },
+  "tokens": {
+    "worker": {
+      "in": 99240,
+      "out": 63896,
+      "reasoning": null,
+      "cacheRead": 4340800,
+      "cacheWrite": 0,
+      "total": 4503936
+    },
+    "validator": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "total": 0
+    },
+    "orchestrator": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "total": 0
+    },
+    "total": 4503936
+  },
+  "cost": {
+    "worker": {
+      "api": 4.266718,
+      "derived": null,
+      "reported": 4.266718
+    },
+    "validator": {
+      "api": null,
+      "derived": null,
+      "reported": null
+    },
+    "orchestrator": {
+      "api": null,
+      "derived": null,
+      "reported": null
+    },
+    "total": {
+      "api": 4.266718,
+      "derived": null,
+      "reported": 4.266718
+    }
+  },
+  "models": {
+    "worker": "glm-5.2",
+    "validator": null,
+    "orchestrator": null
+  },
+  "rounds": 0,
+  "attention": 0,
+  "escalations": 0,
+  "pr": null,
+  "partial": false
+}

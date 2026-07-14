@@ -850,21 +850,27 @@ function renderMissionCard(m) {
 function renderMissionStatsLine(stats) {
   if (!stats || typeof stats !== "object") return "";
   const cells = [];
-  if (stats.loc && typeof stats.loc === "object") {
+  // Absent, never zero (E1-d law): a stats.json backfilled for a legacy mission whose
+  // git branch is gone carries loc 0/0 and rounds 0 — which is "unrecoverable", NOT a
+  // real zero (a completed mission has ≥1 validation round and nonzero LOC). Rendering
+  // "+0 -0 LOC" / "0 rondas" would be a lie on the card; suppress those to "sem dados".
+  // Cells with genuinely recovered signal (tokens, model, duration) still render.
+  const loc = stats.loc;
+  if (loc && typeof loc === "object" && ((loc.added ?? 0) > 0 || (loc.deleted ?? 0) > 0)) {
     cells.push(
       `<span class="stat-cell" title="linhas adicionadas / removidas">` +
-        `<span class="loc-add">+${esc(stats.loc.added ?? 0)}</span>` +
-        `<span class="loc-del">-${esc(stats.loc.deleted ?? 0)}</span> LOC</span>`,
+        `<span class="loc-add">+${esc(loc.added ?? 0)}</span>` +
+        `<span class="loc-del">-${esc(loc.deleted ?? 0)}</span> LOC</span>`,
     );
   }
   const model = stats.models?.worker;
   if (model) cells.push(`<span class="stat-cell" title="modelo do worker">${esc(model)}</span>`);
-  if (typeof stats.tokens?.total === "number") {
+  if (typeof stats.tokens?.total === "number" && stats.tokens.total > 0) {
     cells.push(`<span class="stat-cell" title="tokens">${esc(fmtTokens(stats.tokens.total))} tok</span>`);
   }
   const h = statsDurationH(stats.durations);
   if (h !== null) cells.push(`<span class="stat-cell" title="tempo de parede">${esc(fmtStat(h, " h"))}</span>`);
-  if (typeof stats.rounds === "number") {
+  if (typeof stats.rounds === "number" && stats.rounds > 0) {
     const r = stats.rounds;
     cells.push(
       `<span class="stat-cell" title="rondas de validação">${esc(r)} ${r === 1 ? "ronda" : "rondas"}</span>`,

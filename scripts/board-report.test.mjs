@@ -2298,3 +2298,30 @@ test("audit M1/M2/A2: renderStyles emits the mobile-overflow guards and AA-safe 
   assert.match(html, /\.tab-panel\s*{\s*overflow-x:\s*auto/); // wide tables scroll inside the panel
   assert.match(html, /--muted:\s*#4b5563/); // WCAG-AA muted grey
 });
+
+test("E1-d honesty: an all-zero backfilled stats.json renders 'sem dados', never +0 -0 LOC / 0 rondas", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      { slug: "legacy", status: "Done", requirements: [], features: 1, handoffs: 1,
+        lastVerdict: null, branch: null,
+        stats: { loc: { added: 0, deleted: 0, files: 0 }, rounds: 0, tokens: { total: 0 }, models: {} } },
+    ],
+  });
+  assert.doesNotMatch(html, /\+0<\/span>/);   // no fake LOC add
+  assert.doesNotMatch(html, /0 rondas/);       // no fake rounds
+  assert.doesNotMatch(html, /0 tok/);          // no fake tokens
+});
+
+test("E1-d honesty: partial recovery still renders the real cells (tokens present, LOC unrecovered)", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      { slug: "partial", status: "Done", requirements: [], features: 1, handoffs: 1,
+        lastVerdict: null, branch: null,
+        stats: { loc: { added: 0, deleted: 0, files: 0 }, rounds: 0, tokens: { total: 204116 }, models: {} } },
+    ],
+  });
+  assert.match(html, /204,?116|204\.?1?k?|204k tok|20[0-9]k tok/); // real recovered tokens render
+  assert.doesNotMatch(html, /\+0<\/span>/);                        // but not the fake zero LOC
+});
