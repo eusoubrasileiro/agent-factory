@@ -1,0 +1,79 @@
+{
+  "slug": "probe-seat",
+  "generatedAt": "2026-07-14T12:07:14.027Z",
+  "branch": "agent/probe-seat",
+  "mergeBase": null,
+  "loc": {
+    "added": 0,
+    "deleted": 0,
+    "files": 0
+  },
+  "testsAdded": 0,
+  "baselineChanged": false,
+  "baselineKeysChanged": [],
+  "durations": {
+    "building": 19137,
+    "validating": null,
+    "orchestrating": null,
+    "total": 19137
+  },
+  "tokens": {
+    "worker": {
+      "in": 23861,
+      "out": 95,
+      "reasoning": null,
+      "cacheRead": 25216,
+      "cacheWrite": 0,
+      "total": 49172
+    },
+    "validator": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "total": 0
+    },
+    "orchestrator": {
+      "in": 0,
+      "out": 0,
+      "reasoning": null,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "total": 0
+    },
+    "total": 49172
+  },
+  "cost": {
+    "worker": {
+      "api": 0.135226,
+      "derived": null,
+      "reported": 0.135226
+    },
+    "validator": {
+      "api": null,
+      "derived": null,
+      "reported": null
+    },
+    "orchestrator": {
+      "api": null,
+      "derived": null,
+      "reported": null
+    },
+    "total": {
+      "api": 0.135226,
+      "derived": null,
+      "reported": 0.135226
+    }
+  },
+  "models": {
+    "worker": "glm-5.2",
+    "validator": null,
+    "orchestrator": null
+  },
+  "rounds": 0,
+  "attention": 0,
+  "escalations": 0,
+  "pr": null,
+  "partial": false
+}
