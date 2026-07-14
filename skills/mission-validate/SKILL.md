@@ -128,6 +128,11 @@ Give Andre a tight verdict: PASS/FAIL, the assertion table with green/red, and �
 if PASS — that the mission is ready for his **ratification → merge → tag →
 upstream**. You never push or deploy; that is Andre's gate.
 
+**RUN the emitter — not optional** (this touchpoint is the "ratify" attention unit in
+the KPI; each fix-round debug you drove in HG-6 must also have recorded an
+`intervention`):
+`echo '{"seat":"orchestrator","type":"touchpoint","detail":"verdict-report"}' | node scripts/metrics.mjs record <slug> --project <project>`
+
 - A PASS sits at `Needs Human (gate:ratify)` — it is **not** `Done` until the owner
   ratifies. On his word, close the loop with the recorder, which is the only thing
   that moves the card to `Done`:
@@ -144,6 +149,6 @@ upstream**. You never push or deploy; that is Andre's gate.
   replied nonsense, the WABA link is broken, the UI is unusable).
 - 99% is a failing grade on anything security/RLS — adversaries retry forever.
 - **Telemetry:** record `false_idle` when an idle alarm proves false, and
-  `intervention` when the orchestrator must debug — `echo '{"seat":"validator","type":"false_idle","detail":"..."}' | node scripts/metrics.mjs record <slug>` (v2 §3.4).
+  `intervention` when the orchestrator must debug — `echo '{"seat":"validator","type":"false_idle","detail":"..."}' | node scripts/metrics.mjs record <slug> --project <project>` (v2 §3.4).
 
 </what-to-do>
