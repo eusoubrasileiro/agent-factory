@@ -1,7 +1,7 @@
 {
   "name": "@amiticia/factory",
   "version": "0.1.0",
-  "description": "AmiticIA software factory \u2014 AI-agent mission engine (plan\u2192build\u2192validate) with a live board, serving any product via projects/<id>/ profiles",
+  "description": "AmiticIA software factory — AI-agent mission engine (plan→build→validate) with a live board, serving any product via projects/<id>/ profiles",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.30.2",
@@ -14,7 +14,8 @@
     "intake": "node scripts/intake-server.mjs",
     "mission:ratify": "node scripts/ratify.mjs",
     "factory:opencode": "node scripts/opencode-worker.mjs",
-    "spend": "node scripts/spend.mjs"
+    "spend": "node scripts/spend.mjs",
+    "kpi": "node scripts/kpi.mjs"
   },
   "engines": {
     "node": ">=20"
