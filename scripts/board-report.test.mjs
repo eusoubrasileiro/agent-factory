@@ -720,6 +720,7 @@ function richModel() {
         features: 4,
         handoffs: 4,
         lastVerdict: { verdict: "PASS", round: 1 },
+        ratified: true,
         branch: {
           name: "agent/inbox-p0",
           slug: "inbox-p0",
@@ -2324,4 +2325,262 @@ test("E1-d honesty: partial recovery still renders the real cells (tokens presen
   });
   assert.match(html, /204,?116|204\.?1?k?|204k tok|20[0-9]k tok/); // real recovered tokens render
   assert.doesNotMatch(html, /\+0<\/span>/);                        // but not the fake zero LOC
+});
+
+// ─── lanes-legibility (M3, plan B §F2/§F3, ratified 2026-07-11) ────────────────
+//
+// "Needs Human" was one lane hiding three unrelated situations; the Intake lane
+// collided with the capture tab; parked work squatted in active lanes; a merged
+// mission sat in Needs Human. These lock the fixes. F2 is presentation-only (the
+// derived status string stays "Needs Human"); C1/B3 touch the model + derivation.
+// Every mutation gate named in the contract has a test here that goes red if the
+// rule is dropped.
+
+/** The nearest lane <h2> heading preceding a mission card, scoped to the Missões tab. */
+function laneHeadingFor(html, slug) {
+  const panel = html.slice(html.indexOf('id="tab-missoes"'));
+  const cardIdx = panel.indexOf(`id="mission-${slug}"`);
+  assert.ok(cardIdx > -1, `mission card ${slug} must exist in the Missões tab`);
+  const headings = [...panel.slice(0, cardIdx).matchAll(/<h2>([^<]+)<\/h2>/g)];
+  return headings.length ? headings[headings.length - 1][1] : null;
+}
+
+/** The text of the Needs-Human counts line atop Missões, or "" when absent. */
+function needsHumanCounts(html) {
+  const m = html.match(/<p class="needs-human-counts">([\s\S]*?)<\/p>/);
+  return m ? m[1] : "";
+}
+
+/** A minimal renderer-model mission row (neutral defaults; override per test). */
+function laneMission(slug, over = {}) {
+  return {
+    slug,
+    status: "Planning",
+    gateReason: null,
+    requirements: [],
+    features: 0,
+    handoffs: 0,
+    lastVerdict: null,
+    branch: null,
+    ratified: true,
+    ...over,
+  };
+}
+
+const mergedBranch = (slug) => ({
+  name: `agent/${slug}`,
+  slug,
+  merged: true,
+  lastCommitISO: "2026-07-10T00:00:00+00:00",
+});
+
+// ── F2 / A1: Needs Human splits into Aprovar plano · Aprovar merge · Escalado ──
+
+test("A1: Needs Human splits into three lanes by gateReason, in that order", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      laneMission("plan-m", { status: "Needs Human", gateReason: "gate:approve-plan" }),
+      laneMission("merge-m", { status: "Needs Human", gateReason: "gate:ratify" }),
+      laneMission("esc-m", { status: "Needs Human", gateReason: "gate:escalated" }),
+    ],
+  });
+  assert.equal(laneHeadingFor(html, "plan-m"), "Aprovar plano");
+  assert.equal(laneHeadingFor(html, "merge-m"), "Aprovar merge");
+  assert.equal(laneHeadingFor(html, "esc-m"), "Escalado");
+  // Sub-lanes render in the ratified order.
+  const i = (s) => html.indexOf(s);
+  assert.ok(i("<h2>Aprovar plano</h2>") < i("<h2>Aprovar merge</h2>"), "plano before merge");
+  assert.ok(i("<h2>Aprovar merge</h2>") < i("<h2>Escalado</h2>"), "merge before escalado");
+  // The derived-status data hook is preserved on every Needs-Human sub-lane.
+  assert.equal((html.match(/data-status="Needs Human"/g) ?? []).length, 3);
+});
+
+test("A1 mutation gate: gate:ratify lands in 'Aprovar merge', NEVER 'Aprovar plano'", () => {
+  // Narrowing/swapping the gate→lane map (ratify → Aprovar plano) turns this red.
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [laneMission("only-ratify", { status: "Needs Human", gateReason: "gate:ratify" })],
+  });
+  assert.equal(laneHeadingFor(html, "only-ratify"), "Aprovar merge");
+  assert.doesNotMatch(html, /<h2>Aprovar plano<\/h2>/);
+});
+
+test("A1: Needs Human with null/unknown gateReason falls into 'Needs Human (outro)' (never dropped)", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [laneMission("weird", { status: "Needs Human", gateReason: null })],
+  });
+  assert.equal(laneHeadingFor(html, "weird"), "Needs Human (outro)");
+  assert.match(html, /data-status="Needs Human"/);
+});
+
+// ── F2 / A2: header counts ────────────────────────────────────────────────────
+
+test("A2: header counts line shows the three sub-counts joined by ' · '", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      laneMission("p1", { status: "Needs Human", gateReason: "gate:approve-plan" }),
+      laneMission("p2", { status: "Needs Human", gateReason: "gate:approve-plan" }),
+      laneMission("r1", { status: "Needs Human", gateReason: "gate:ratify" }),
+      laneMission("e1", { status: "Needs Human", gateReason: "gate:escalated" }),
+      laneMission("e2", { status: "Needs Human", gateReason: "gate:escalated" }),
+      laneMission("e3", { status: "Needs Human", gateReason: "gate:escalated" }),
+    ],
+  });
+  assert.equal(needsHumanCounts(html), "2 para aprovar plano · 1 para aprovar merge · 3 escalados");
+});
+
+test("A2: counts omit zero-count parts and disappear entirely when no Needs Human", () => {
+  const onlyPlan = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [laneMission("p1", { status: "Needs Human", gateReason: "gate:approve-plan" })],
+  });
+  assert.equal(needsHumanCounts(onlyPlan), "1 para aprovar plano");
+
+  const none = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [laneMission("d1", { status: "Done" })],
+  });
+  assert.equal(needsHumanCounts(none), "", "no Needs Human ⇒ no counts line at all");
+});
+
+// ── F3 / B1: the Intake mission lane is 'Sem contrato' ─────────────────────────
+
+test("B1: the Intake mission lane heads as 'Sem contrato' (status string stays 'Intake')", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [laneMission("bare-dossier", { status: "Intake" })],
+  });
+  assert.equal(laneHeadingFor(html, "bare-dossier"), "Sem contrato");
+  assert.doesNotMatch(html, /<h2>Intake<\/h2>/, "the old colliding heading is gone");
+  // Display-only rename: the derived status survives downstream.
+  assert.match(html, /data-status="Intake"/);
+});
+
+// ── F3 / B2: a Sem-contrato card with spend shows 'trabalho iniciado' ──────────
+
+test("B2: a Sem-contrato card with token/LOC spend shows a 'trabalho iniciado' chip", () => {
+  const withSpend = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      laneMission("spent-tok", { status: "Intake", stats: { tokens: { total: 2359696 } } }),
+      laneMission("spent-loc", { status: "Intake", stats: { loc: { added: 10, deleted: 2 } } }),
+    ],
+  });
+  assert.match(withSpend, /trabalho iniciado/);
+  // Count the rendered chip text, not the bare class string (which also appears once
+  // in the <style> block as the `.chip-started` rule — matching that is a false red).
+  assert.equal((withSpend.match(/trabalho iniciado/g) ?? []).length, 2, "one started chip per spending card");
+
+  const bare = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [laneMission("clean", { status: "Intake" })],
+  });
+  assert.doesNotMatch(bare, /trabalho iniciado/, "no spend ⇒ no chip, no misleading 'not started'");
+});
+
+// ── F3 / B3: Parked folds into a collapsed 'Estacionado' below the active lanes ─
+
+test("B3: a Parked mission renders in a collapsed 'Estacionado' section, never inside an active lane", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      laneMission("active-one", { status: "Building", features: 1 }),
+      laneMission("shelved", { status: "Parked" }),
+    ],
+  });
+  const lanesGrid = html.indexOf('<div class="lanes">');
+  const estOpen = html.indexOf('<details class="estacionado"');
+  assert.ok(estOpen > -1, "Estacionado <details> exists");
+  assert.ok(estOpen > lanesGrid, "Estacionado sits below the active lanes grid");
+  const estClose = html.indexOf("</details>", estOpen);
+
+  const shelvedIdx = html.indexOf('id="mission-shelved"');
+  assert.ok(shelvedIdx > estOpen && shelvedIdx < estClose, "Parked mission is folded inside Estacionado");
+
+  const activeIdx = html.indexOf('id="mission-active-one"');
+  assert.ok(activeIdx > lanesGrid && activeIdx < estOpen, "active mission stays in the lanes, above Estacionado");
+});
+
+test("B3: no Parked missions ⇒ no Estacionado section", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [laneMission("d1", { status: "Done" })],
+  });
+  // Scope to the rendered <details> element — the bare word also appears in the
+  // always-present `.estacionado` CSS rule, so `/estacionado/` alone is a false red.
+  assert.doesNotMatch(html, /<details class="estacionado"/);
+});
+
+// ── MERGED ⇒ Done (Plan A ratified decision 1) ────────────────────────────────
+
+test("C1 mutation gate: a merged mission renders in Done regardless of gate (not Aprovar merge)", () => {
+  // PASS ⇒ Needs Human / gate:ratify, BUT the branch is merged. Dropping the
+  // merged⇒Done rule strands it in 'Aprovar merge' and drops the chip → red.
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      laneMission("merged-pass", {
+        status: "Needs Human",
+        gateReason: "gate:ratify",
+        ratified: false,
+        lastVerdict: { verdict: "PASS", round: 2 },
+        branch: mergedBranch("merged-pass"),
+      }),
+    ],
+  });
+  assert.equal(laneHeadingFor(html, "merged-pass"), "Done");
+  assert.doesNotMatch(html, /<h2>Aprovar merge<\/h2>/, "merged left the ratify queue");
+  // Merged without a RATIFIED marker ⇒ the honesty chip.
+  assert.match(html, /não ratificado/);
+  assert.match(html, /title="mergeado sem ratificação registrada"/);
+  // A merged mission is no longer "waiting to merge" — it leaves the counts.
+  assert.equal(needsHumanCounts(html), "");
+});
+
+test("C1: a merged AND ratified mission renders in Done with NO 'não ratificado' chip", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      laneMission("merged-ok", { status: "Done", ratified: true, branch: mergedBranch("merged-ok") }),
+    ],
+  });
+  assert.equal(laneHeadingFor(html, "merged-ok"), "Done");
+  assert.doesNotMatch(html, /não ratificado/);
+});
+
+test("C2: a merged mission's card keeps its last verdict display", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      laneMission("merged-verdict", {
+        status: "Needs Human",
+        gateReason: "gate:ratify",
+        ratified: false,
+        lastVerdict: { verdict: "PASS", round: 3 },
+        branch: mergedBranch("merged-verdict"),
+      }),
+    ],
+  });
+  // The Done-by-merge card still surfaces the verdict (C2: never lose it).
+  assert.match(html, /PASS/);
+  assert.match(html, /rodada\s*3/i);
+});
+
+// ── C1 model contract: the `ratified` flag is read from the RATIFIED marker ────
+
+test("C1 model: RATIFIED marker ⇒ mission.ratified true; absent ⇒ false", () => {
+  const root = makeTmpRoot("lanes-ratified-model-");
+  try {
+    const prd = writePrd(root, []);
+    mkMission(root, "blessed", { "brief.md": "**Requirements:** none\n", RATIFIED: "" });
+    mkMission(root, "plain", { "brief.md": "**Requirements:** none\n" });
+    const model = buildTraceabilityModel({ missionsDir: root, prdPath: prd, gitInfo: { branches: [] } });
+    assert.equal(model.missions.find((m) => m.slug === "blessed").ratified, true);
+    assert.equal(model.missions.find((m) => m.slug === "plain").ratified, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

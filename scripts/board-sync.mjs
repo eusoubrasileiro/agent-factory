@@ -105,6 +105,12 @@ function featureStatus(dir) {
 export function deriveMissionState(missionDirPath) {
   const dir = missionDirPath;
 
+  // PARKED (lanes-legibility B3): an explicit "shelved / wont-do" marker lifts the
+  // mission out of every active lane into the collapsed "Estacionado" section. It
+  // is the strongest human signal here, so it is weighed before BLOCKED/RATIFIED —
+  // a parked mission stops squatting in Needs Human / Building regardless of what
+  // else its dossier claims. Any content counts (the marker is the message).
+  if (has(dir, "PARKED")) return { status: "Parked", gateReason: null };
   if (has(dir, "BLOCKED")) return { status: "Blocked", gateReason: null };
   if (has(dir, "RATIFIED")) return { status: "Done", gateReason: null };
 

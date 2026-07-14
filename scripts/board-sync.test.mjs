@@ -55,6 +55,34 @@ const verdict = (round, v) => ({ slug: "x", round, verdict: v, assertions: [], e
 
 // ─── deriveMissionState (pure) ────────────────────────────────────────────────
 
+// ─── deriveMissionState: PARKED marker (lanes-legibility B3) ──────────────────
+//
+// A dossier carrying a `PARKED` marker (any content) is shelved: it derives
+// `Parked` and is lifted OUT of the active lanes (the renderer folds it into a
+// collapsed "Estacionado" section). The marker is the explicit human signal
+// "stop squatting in an active lane", so it takes precedence over every derived
+// build/plan state. MUTATION GATE: drop the PARKED check → these go red.
+
+test("derive: PARKED marker → Parked (lifted out of active lanes)", () => {
+  const root = makeMissionsRoot();
+  try {
+    const dir = mkMission(root, "m", { PARKED: "shelved 2026-07 — waiting on vendor" });
+    assert.deepEqual(deriveMissionState(dir), { status: "Parked", gateReason: null });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("derive: PARKED marker wins over brief+contract (never an active Needs Human)", () => {
+  const root = makeMissionsRoot();
+  try {
+    const dir = mkMission(root, "m", { PARKED: "", "brief.md": "x", "contract.md": "x" });
+    assert.deepEqual(deriveMissionState(dir), { status: "Parked", gateReason: null });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("derive: BLOCKED marker wins over everything", () => {
   const root = makeMissionsRoot();
   try {
