@@ -591,6 +591,133 @@ test("root index: self-contained — zero external http(s) resource loads", () =
   }
 });
 
+// ─── Client status page (M5 — client-view) ───────────────────────────────────
+//
+// The funnel renders the published client page ONLY when a project declares an
+// `intake[]` source with a parseable `client-labels.json` beside it. No labels ⇒
+// no cliente/ dir (fail-closed). The page shows curated labels, NEVER the intake
+// gist — verified here by seeding a leaky gist and asserting it never arrives.
+
+test("stripTimestampLines removes the client-page 'atualizado em' footer line", () => {
+  // The cliente footer regenerates its timestamp every render; it must be stripped
+  // so an identical re-render does not move the hash (republish loop).
+  const html = [
+    "<body>",
+    '    atualizado em <time datetime="2026-07-14T10:00:00Z">14/07/2026 10:00</time>',
+    "</body>",
+  ].join("\n");
+  const stripped = stripTimestampLines(html);
+  assert.ok(!stripped.includes("atualizado em"), "atualizado em line must be stripped");
+  assert.ok(!stripped.includes("14/07/2026 10:00"), "the volatile timestamp must be stripped");
+  assert.ok(stripped.includes("<body>"), "non-timestamp content preserved");
+});
+
+/** A fixture project that declares an `intake[]` source beside a labels file. */
+function makeClienteFixture({ withLabels }) {
+  const root = mkdtempSync(path.join(tmpdir(), "autopublish-cliente-"));
+  // Minimal PRD (one backlog row) so the project dashboard still renders.
+  mkdirSync(path.join(root, "docs", "prd"), { recursive: true });
+  writeFileSync(
+    path.join(root, "docs", "prd", "nexus-build-backlog.md"),
+    ["# backlog", "", HEADER, SEPARATOR, "| A1 | **alpha** | porquê | prova | low | todo |", ""].join("\n"),
+  );
+  mkdirSync(path.join(root, "missions", "wahub"), { recursive: true });
+  // Profile declaring intake → a client intake log (labels live beside it).
+  mkdirSync(path.join(root, "projects", "wahub"), { recursive: true });
+  writeFileSync(
+    path.join(root, "projects", "wahub", "project.json"),
+    JSON.stringify({
+      id: "wahub",
+      name: "Nexus CRM / WaHub",
+      path: ".",
+      prd: "docs/prd/nexus-build-backlog.md",
+      intake: [{ file: "clients/tenant-a/requirements-intake.md", prefix: "IN", label: "cliente" }],
+    }),
+  );
+  // The intake log. The GIST is deliberately leaky engineering prose — it must
+  // never reach the cliente page; only the curated label may.
+  mkdirSync(path.join(root, "clients", "tenant-a"), { recursive: true });
+  writeFileSync(
+    path.join(root, "clients", "tenant-a", "requirements-intake.md"),
+    [
+      "# requirements",
+      "",
+      "| ID | Data · Fonte | Tipo | Gist | Situação | Landed in |",
+      "| --- | --- | --- | --- | --- | --- |",
+      "| IN-1 | 2026-07-12 · cliente | feature | via webhook.ts:12 no glm, R$ 900, 2M tok | Landed |  |",
+      "",
+    ].join("\n"),
+  );
+  if (withLabels) {
+    writeFileSync(
+      path.join(root, "clients", "tenant-a", "client-labels.json"),
+      JSON.stringify({
+        "IN-1": { label: "Importar contatos de uma planilha", client_visible: true },
+      }),
+    );
+  }
+  return root;
+}
+
+test("cliente page (E2): labels present → page written, leaky gist never reaches it", () => {
+  const root = makeClienteFixture({ withLabels: true });
+  try {
+    const r = runCli(root, ["--dry-run"]);
+    assert.equal(r.status, 0, `exit 0; stderr=${r.stderr}`);
+    const page = path.join(root, "dist", "factory-board", "cliente", "index.html");
+    assert.ok(existsSync(page), "cliente page written when labels are present");
+    const html = readFileSync(page, "utf8");
+    assert.match(html, /<!doctype html>/i);
+    assert.match(html, /O que estamos construindo/);
+    // The curated label renders; its status is the PT word, not the lifecycle.
+    assert.match(html, /Importar contatos de uma planilha/);
+    assert.match(html, /no ar/);
+    assert.doesNotMatch(html, /<script/i);
+    // The leaky intake gist must NEVER appear — the page is label-only.
+    assert.doesNotMatch(html, /webhook\.ts/);
+    assert.doesNotMatch(html, /\bglm\b/i);
+    assert.doesNotMatch(html, /R\$/);
+    assert.doesNotMatch(html, /\btok\b/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cliente page (E2): labels absent → no cliente/ dir (fail-closed)", () => {
+  const root = makeClienteFixture({ withLabels: false });
+  try {
+    const r = runCli(root, ["--dry-run"]);
+    assert.equal(r.status, 0, `exit 0; stderr=${r.stderr}`);
+    assert.equal(
+      existsSync(path.join(root, "dist", "factory-board", "cliente")),
+      false,
+      "no cliente/ dir must be created when labels are absent",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cliente page: two runs on identical state hash the same (timestamp stripped)", () => {
+  // generatedAt differs between the two runs; only the timestamp strip keeps
+  // the hash stable. A failure here means the cliente footer would loop-publish.
+  const root = makeClienteFixture({ withLabels: true });
+  try {
+    const r1 = runCli(root);
+    assert.equal(r1.status, 0, `run1 exit 0; stderr=${r1.stderr}`);
+    const hash1 = readFileSync(path.join(root, "dist", "factory-board", ".hash"), "utf8").trim();
+
+    const r2 = runCli(root);
+    assert.equal(r2.status, 0, `run2 exit 0; stderr=${r2.stderr}`);
+    const log = readFileSync(path.join(root, ".publish.log"), "utf8");
+    assert.match(log, /sem mudanças/);
+    const hash2 = readFileSync(path.join(root, "dist", "factory-board", ".hash"), "utf8").trim();
+    assert.equal(hash1, hash2, "identical state must hash identically (cliente timestamp stripped)");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // ─── Publish guard: a fixture root must never touch the live board ──────────
 //
 // Regression for a live incident (2026-07-09): `board-publish.sh` runs
