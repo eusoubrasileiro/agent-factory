@@ -82,6 +82,8 @@ product truth, you now know the decisions this feature forces. Extract them:
 - On approval, write the one-line marker `missions/<project>/<slug>/APPROVED`
   (content: `approved <YYYY-MM-DD>`) and run `pnpm board:sync <slug> --project <project>` — the card
   moves to `Building`'s precondition state.
+- **RUN the emitter — not optional** (the attention KPI is unmeasurable without it):
+  `echo '{"seat":"orchestrator","type":"touchpoint","detail":"approval-gate"}' | node scripts/metrics.mjs record <slug> --project <project>`
 
 ## Rules
 - You orchestrate in prose/skills, not a state machine. Keep judgment here; push
@@ -89,6 +91,6 @@ product truth, you now know the decisions this feature forces. Extract them:
 - Never write product code in this seat. You produce specs and contracts only.
 - Serialize features only on a real dependency; mark independents as parallelizable.
 - **Telemetry:** record a `touchpoint` event each time Andre is engaged (intent
-  capture, the grill, the approval gate) — `echo '{"seat":"orchestrator","type":"touchpoint","detail":"..."}' | node scripts/metrics.mjs record <slug>` (v2 §3.4).
+  capture, the grill, the approval gate) — `echo '{"seat":"orchestrator","type":"touchpoint","detail":"..."}' | node scripts/metrics.mjs record <slug> --project <project>` (v2 §3.4).
 
 </what-to-do>

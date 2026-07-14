@@ -139,6 +139,12 @@ worktree; that is what contains them, not the deny rule.
   `/mission-validate <slug>`. Summarize for Andre: features done, any
   `unmet_knowledge` collected, and that it is awaiting validation.
 - Run `pnpm board:sync <slug> --project <project>` so the card tracks into `Validating`.
+- **RUN the emitter — not optional** (tokens/feature and phase durations come from
+  these events; without them the KPI table shows "—"): you must have recorded, per
+  feature, a `phase_start` at worker dispatch and a `phase_end` at handoff review —
+  `echo '{"seat":"orchestrator","type":"phase_start","detail":"NN"}' | node scripts/metrics.mjs record <slug> --project <project>`
+  (same command with `phase_end` when you accept the handoff). If any feature is
+  missing its pair, record them now from the git timestamps before handing off.
 
 ## 6. Fix rounds — keep the PR timeline honest
 Only when `missions/<project>/<slug>/PR` exists (the projection opened a draft PR;
@@ -160,6 +166,6 @@ disk regardless. Never force-push a mission branch.
 - Keep workers small and serial-on-dependency; correctness compounds, speed is
   secondary.
 - **Telemetry:** record `escalation` / `worker_death` / `phase_start` / `phase_end`
-  events per feature — `echo '{"seat":"orchestrator","type":"phase_start","detail":"NN"}' | node scripts/metrics.mjs record <slug>` (v2 §3.4).
+  events per feature — `echo '{"seat":"orchestrator","type":"phase_start","detail":"NN"}' | node scripts/metrics.mjs record <slug> --project <project>` (v2 §3.4).
 
 </what-to-do>
