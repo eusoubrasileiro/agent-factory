@@ -781,12 +781,19 @@ test("renderDashboardHtml: emits a complete <!doctype html> document with inline
   assert.match(html, /<script\b[^>]*>/);
 });
 
-test("renderDashboardHtml: header title + tab bar (Requisitos default, Missões)", () => {
-  const html = renderDashboardHtml(EMPTY_MODEL);
+test("renderDashboardHtml: header title + tab bar (Requisitos default when requirements exist, Missões)", () => {
+  // vocabulary-trust D1: a PRD-less board (0 requirements) renders NO Requisitos
+  // tab at all, so this regression now exercises the WITH-requirements shape.
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    requirements: [
+      { id: "A1", recurso: "feat", risco: "low", situacao: "todo", missionSlug: null, liveStatus: "Intake" },
+    ],
+  });
   assert.match(html, /AmiticIA Factory — rastreabilidade/);
   assert.match(html, /Requisitos/);
   assert.match(html, /Missões/);
-  // Requisitos panel must NOT carry the `hidden` attribute (default tab).
+  // With requirements present, Requisitos is the default tab (not hidden).
   const reqPanel = html.match(/<section[^>]*id="tab-requisitos"[^>]*>/i);
   assert.ok(reqPanel, "Requisitos panel exists");
   assert.doesNotMatch(reqPanel[0], /\bhidden\b/i, "Requisitos is the default (not hidden)");
@@ -2213,8 +2220,32 @@ test("board-report CLI: a prd-less project renders missions with 0 requirements 
 test("renderDashboardHtml: a board with 0 requirements defaults to the Missões tab", () => {
   const html = renderDashboardHtml({ ...EMPTY_MODEL, requirements: [], missions: [] });
   assert.match(html, /data-tab="missoes" aria-selected="true"/);
-  assert.match(html, /data-tab="requisitos" aria-selected="false"/);
   assert.match(html, /activate\('missoes'\)/, "the init script activates missoes on load");
+});
+
+// ─── vocabulary-trust D1: a PRD-less board renders NO Requisitos tab at all ─────
+//
+// Mirror the Intake existence rule (renderIntakeTab → "" when empty): with zero
+// requirements there is no Requisitos tab button and no Requisitos panel — an
+// empty tab on a PRD-less project was a self-inflicted credibility wound (review
+// Q1). The other tabs are unaffected and the default still lands on Missões.
+
+test("D1: a board with 0 requirements renders NO Requisitos tab button and NO panel (mirror Intake)", () => {
+  const html = renderDashboardHtml({ ...EMPTY_MODEL, requirements: [], missions: [] });
+  assert.doesNotMatch(html, /data-tab="requisitos"/, "no Requisitos tab button");
+  assert.doesNotMatch(html, /id="tab-requisitos"/, "no Requisitos panel");
+  // The other tabs are unaffected.
+  assert.match(html, /data-tab="missoes"/);
+  assert.match(html, /data-tab="agentes"/);
+  assert.match(html, /data-tab="historico"/);
+});
+
+test("D1 mutation gate: re-adding the empty Requisitos tab turns this red", () => {
+  // If the button or panel come back for a 0-requirement board, the hide rule
+  // (mirror of renderIntakeTab's empty-collapse) was dropped.
+  const html = renderDashboardHtml({ ...EMPTY_MODEL, requirements: [] });
+  assert.equal((html.match(/data-tab="requisitos"/g) ?? []).length, 0, "zero Requisitos tab buttons");
+  assert.equal((html.match(/id="tab-requisitos"/g) ?? []).length, 0, "zero Requisitos panels");
 });
 
 test("renderDashboardHtml: a board WITH requirements keeps Requisitos as the default tab", () => {
