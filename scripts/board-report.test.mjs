@@ -2640,6 +2640,19 @@ test("agentes-evidence: coverage line shows N of M missions + how many lack mode
     ],
   });
   assert.match(html, /dados de 2 de 3 missões \(1 sem stats de modelo\)/);
+  // F3: the gap is EXPLAINED, so it reads as accounted-for, not broken.
+  assert.match(html, /cobertura-nota/);
+  assert.match(html, /entram no total mas ficam fora da comparação A\/B/);
+});
+
+test("agentes-evidence (F3): no cobertura-nota when every mission has a model (no gap to explain)", () => {
+  const html = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      { slug: "a", status: "Done", requirements: [], features: 1, handoffs: 1, lastVerdict: null, branch: null, stats: { models: { worker: "glm-5.2" } } },
+    ],
+  });
+  assert.doesNotMatch(html, /cobertura-nota/);
 });
 
 test("agentes-evidence: zero-coverage still names the denominator, not a bare empty state", () => {
