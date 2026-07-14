@@ -563,6 +563,65 @@ test("aggregate: duplicate rows do not inflate missõesConcluídas (slug-deduped
   assert.equal(stats.missõesConcluídas, 1, "one unique slug → one concluded");
 });
 
+// ─── aggregate: completion denominator (hist-completion-metrics F7, R1) ────────
+//
+// missõesConcluídas alone is meaningless without "of how many". aggregate now
+// exposes the denominator so the board can render a completion ratio: totalMissões
+// (unique slugs), missõesNãoConcluídas (total − concluídas), taxaConclusão (ratio
+// or null when there is nothing to conclude). Computed in aggregateScope so global
+// and every byProject scope carry all three.
+
+test("aggregate: 3 slugs / 1 Done → total 3, não concluídas 2, taxa 1/3 (R1)", () => {
+  const rows = [
+    row("a", { ts: "2026-07-01T00:00:00Z", state: "Planning" }),
+    row("a", { ts: "2026-07-03T00:00:00Z", state: "Done" }),
+    row("b", { ts: "2026-07-02T00:00:00Z", state: "Building" }),
+    row("c", { ts: "2026-07-02T00:00:00Z", state: "Planning" }),
+  ];
+  const stats = aggregate(rows, { now: "2026-07-08T00:00:00Z" });
+  assert.equal(stats.totalMissões, 3, "3 unique slugs");
+  assert.equal(stats.missõesConcluídas, 1, "only a reached Done");
+  assert.equal(stats.missõesNãoConcluídas, 2, "b + c never reached Done");
+  assert.equal(stats.taxaConclusão, 1 / 3, "1 concluded of 3 total");
+  // The identity the board's honesty rests on: concluídas + não-concluídas = total.
+  assert.equal(stats.missõesConcluídas + stats.missõesNãoConcluídas, stats.totalMissões);
+});
+
+test("aggregate: byProject scopes carry the denominator too (R1)", () => {
+  const rows = [
+    row("a", { project: "wahub", ts: "2026-07-01T00:00:00Z", state: "Done" }),
+    row("b", { project: "wahub", ts: "2026-07-01T00:00:00Z", state: "Building" }),
+    row("c", { project: "other", ts: "2026-07-01T00:00:00Z", state: "Planning" }),
+  ];
+  const stats = aggregate(rows, { now: "2026-07-08T00:00:00Z" });
+  assert.equal(stats.byProject.wahub.totalMissões, 2);
+  assert.equal(stats.byProject.wahub.missõesNãoConcluídas, 1);
+  assert.equal(stats.byProject.wahub.taxaConclusão, 0.5);
+  assert.equal(stats.byProject.other.totalMissões, 1);
+  assert.equal(stats.byProject.other.missõesNãoConcluídas, 1);
+  assert.equal(stats.byProject.other.taxaConclusão, 0);
+});
+
+test("aggregate: zero rows → totalMissões 0, não concluídas 0, taxa null (never NaN)", () => {
+  const stats = aggregate([], { now: "2026-07-08T00:00:00Z" });
+  assert.equal(stats.totalMissões, 0);
+  assert.equal(stats.missõesNãoConcluídas, 0);
+  assert.equal(stats.taxaConclusão, null, "0/0 is 'sem dados', not NaN/0");
+  // missõesConcluídas + não-concluídas still reconciles to total at the empty edge.
+  assert.equal(stats.missõesConcluídas + stats.missõesNãoConcluídas, stats.totalMissões);
+});
+
+test("aggregate: all Done → não concluídas 0, taxa 1 (no under-count)", () => {
+  const rows = [
+    row("a", { ts: "2026-07-01T00:00:00Z", state: "Done" }),
+    row("b", { ts: "2026-07-01T00:00:00Z", state: "Done" }),
+  ];
+  const stats = aggregate(rows, { now: "2026-07-08T00:00:00Z" });
+  assert.equal(stats.totalMissões, 2);
+  assert.equal(stats.missõesNãoConcluídas, 0);
+  assert.equal(stats.taxaConclusão, 1);
+});
+
 // ─── aggregate: cost + time rollup (factory-cost-metrics) ─────────────────────
 
 test("aggregate: exposes costTotal/timeTotalH/planTotal/savings/featuresTotal (global + byProject)", () => {

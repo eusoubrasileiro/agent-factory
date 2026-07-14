@@ -1457,6 +1457,14 @@ export function aggregateAgents(missions) {
  */
 export const HISTORICO_TERMS = [
   { label: "missões concluídas", def: "missões que chegaram a Done (history.jsonl)" },
+  {
+    label: "missões não concluídas",
+    def: "missões que ainda não chegaram a Done (em Intake, Needs Human, etc.)",
+  },
+  {
+    label: "taxa de conclusão",
+    def: "percentual de missões concluídas sobre o total (concluídas ÷ total)",
+  },
   { label: "missões/semana", def: "missões concluídas divididas pelas semanas decorridas (history.jsonl)" },
   { label: "lead time mediano", def: "mediana, criação do dossiê até Done (history.jsonl)" },
   { label: "rondas média", def: "média de rondas de validação por missão concluída (history.jsonl)" },
@@ -1531,6 +1539,58 @@ function infoTipKey(key) {
 }
 
 /**
+ * F7 — the per-stat-card values for the Histórico tab, POSITIONALLY PAIRED with
+ * HISTORICO_TERMS: entry i is the value for term i, so each definition lands on
+ * its intended card. Pure: history → [{value, semDados}]. Exported (not inlined
+ * in renderHistoryTab) so the alignment guard can read the array directly — DOM
+ * counting can see a missing card but never a silently-dropped extra value, and
+ * the positional coupling is the CRITICAL regression to pin.
+ *
+ * The two new cards sit right after "missões concluídas": missões não concluídas
+ * (raw count) and taxa de conclusão (integer percent, or "sem dados" when the
+ * scope has nothing to conclude — 0/0 never renders as NaN or 0%).
+ * @param {object|null|undefined} history — aggregate() output
+ * @returns {Array<{value: string, semDados: boolean}>}
+ */
+export function histCardValues(history) {
+  const h = history && typeof history === "object" ? history : {};
+  const missõesConcluídas = h.missõesConcluídas ?? 0;
+  const missõesPorSemana = fmtStat(h.missõesPorSemana);
+  const leadTimeMediano = fmtStat(h.leadTimeMediano, " dias");
+  const rondasMédia = fmtStat(h.rondasMédia);
+  const tokensTotal =
+    h.tokensTotal !== null && h.tokensTotal !== undefined ? String(h.tokensTotal) : "sem dados";
+  const atençãoPorFeature = fmtStat(h.atençãoPorFeature);
+  const custoTotal = fmtUsd(h.costTotal);
+  const planoTotal = fmtUsd(h.planTotal);
+  const economia = fmtUsd(h.savings);
+  const tempoTotal = fmtHours(h.timeTotalH);
+  const tempoPorFeature =
+    typeof h.timeTotalH === "number" && h.featuresTotal > 0 ? h.timeTotalH / h.featuresTotal : null;
+  const tempoPorFeatureFmt = fmtHours(tempoPorFeature);
+  // F7 — taxa de conclusão as an integer percent; "sem dados" when 0/0 (null).
+  const taxaConclusão =
+    typeof h.taxaConclusão === "number"
+      ? `${Math.round(h.taxaConclusão * 100)}%`
+      : "sem dados";
+  return [
+    { value: String(missõesConcluídas), semDados: false },
+    { value: String(h.missõesNãoConcluídas ?? 0), semDados: false },
+    { value: taxaConclusão, semDados: taxaConclusão === "sem dados" },
+    { value: missõesPorSemana, semDados: missõesPorSemana === "sem dados" },
+    { value: leadTimeMediano, semDados: leadTimeMediano === "sem dados" },
+    { value: rondasMédia, semDados: rondasMédia === "sem dados" },
+    { value: tokensTotal, semDados: tokensTotal === "sem dados" },
+    { value: atençãoPorFeature, semDados: atençãoPorFeature === "sem dados" },
+    { value: custoTotal, semDados: custoTotal === "sem dados" },
+    { value: planoTotal, semDados: planoTotal === "sem dados" },
+    { value: economia, semDados: economia === "sem dados" },
+    { value: tempoTotal, semDados: tempoTotal === "sem dados" },
+    { value: tempoPorFeatureFmt, semDados: tempoPorFeatureFmt === "sem dados" },
+  ];
+}
+
+/**
  * Render the Histórico tab: stat cards + per-mission table, or "sem dados
  * ainda" when there is no history (contract A6, never crash). All values are
  * derived from history.jsonl + metrics.jsonl — deterministic, never wall-clock.
@@ -1560,36 +1620,10 @@ ${legenda}
 <!--hist-end-->`;
   }
 
-  const missõesConcluídas = h.missõesConcluídas ?? 0;
-  const missõesPorSemana = fmtStat(h.missõesPorSemana);
-  const leadTimeMediano = fmtStat(h.leadTimeMediano, " dias");
-  const rondasMédia = fmtStat(h.rondasMédia);
-  const tokensTotal =
-    h.tokensTotal !== null && h.tokensTotal !== undefined ? String(h.tokensTotal) : "sem dados";
-  const atençãoPorFeature = fmtStat(h.atençãoPorFeature);
-  const custoTotal = fmtUsd(h.costTotal);
-  const planoTotal = fmtUsd(h.planTotal);
-  const economia = fmtUsd(h.savings);
-  const tempoTotal = fmtHours(h.timeTotalH);
-  const tempoPorFeature =
-    typeof h.timeTotalH === "number" && h.featuresTotal > 0 ? h.timeTotalH / h.featuresTotal : null;
-  const tempoPorFeatureFmt = fmtHours(tempoPorFeature);
-
-  // F4a/A1 — values paired IN HISTORICO_TERMS ORDER so each term's definition
-  // (`title`) lands on its own card. semDados drives the existing honesty class.
-  const cardValues = [
-    { value: String(missõesConcluídas), semDados: false },
-    { value: missõesPorSemana, semDados: missõesPorSemana === "sem dados" },
-    { value: leadTimeMediano, semDados: leadTimeMediano === "sem dados" },
-    { value: rondasMédia, semDados: rondasMédia === "sem dados" },
-    { value: tokensTotal, semDados: tokensTotal === "sem dados" },
-    { value: atençãoPorFeature, semDados: atençãoPorFeature === "sem dados" },
-    { value: custoTotal, semDados: custoTotal === "sem dados" },
-    { value: planoTotal, semDados: planoTotal === "sem dados" },
-    { value: economia, semDados: economia === "sem dados" },
-    { value: tempoTotal, semDados: tempoTotal === "sem dados" },
-    { value: tempoPorFeatureFmt, semDados: tempoPorFeatureFmt === "sem dados" },
-  ];
+  // F4a/A1 + F7 — values paired IN HISTORICO_TERMS ORDER (incl. the two new
+  // completion cards) so each term's definition (`title`) lands on its own card.
+  // The builder is exported so the positional-coupling guard can read it directly.
+  const cardValues = histCardValues(h);
   const cardsHtml = HISTORICO_TERMS.map((term, i) => {
     const c = cardValues[i];
     const valueClass = c.semDados ? "stat-value sem-dados" : "stat-value";
@@ -1622,17 +1656,30 @@ ${legenda}
     })
     .join("\n");
 
+  // F7/R3 — the Lead time column's "—" is NOT a data gap: it is every mission
+  // that never reached Done (lead time is measured criação → Done only). So the
+  // column header self-explains, and a note beneath the table accounts for every
+  // null — the count reconciles to missõesNãoConcluídas for the global scope.
+  const LEAD_TIME_DEF =
+    'lead time: da criação do dossiê até Done; "—" = missão ainda não concluída';
+  const nullLeadCount = h.perMission.filter((m) => m.leadTime === null).length;
+  const leadNota =
+    nullLeadCount > 0
+      ? `\n    <p class="muted lead-nota">${esc(nullLeadCount)} missões ainda não concluídas não têm lead time — ele é medido da criação até o Done.</p>`
+      : "";
+
   return `<!--hist-start-->
   <section id="tab-historico" class="tab-panel" role="tabpanel" hidden>
     <div class="stat-cards">
 ${cardsHtml}
     </div>
       <table>
-        <thead><tr><th>Missão</th><th>Estado atual</th><th>Lead time</th><th>Rondas</th><th>$</th><th>Tempo</th><th>Último verdict</th><th>Data</th></tr></thead>
+        <thead><tr><th>Missão</th><th>Estado atual</th><th>Lead time${renderInfoTip(LEAD_TIME_DEF, "hist-lead")}</th><th>Rondas</th><th>$</th><th>Tempo</th><th>Último verdict</th><th>Data</th></tr></thead>
         <tbody>
 ${tableBody}
         </tbody>
       </table>
+${leadNota}
 ${legenda}
   </section>
 <!--hist-end-->`;
