@@ -322,6 +322,16 @@ function aggregateScope(rows, missionsDir, planFeeUsd) {
   }
   const missõesConcluídas = doneSlugs.size;
 
+  // F7 — the completion denominator. missõesConcluídas is meaningless without
+  // "of how many": totalMissões is every unique slug in the scope, and the
+  // não-concluídas are the rest (total − concluídas, never negative). taxaConclusão
+  // is the ratio in [0,1], or null when there is nothing to conclude (0/0 →
+  // "sem dados", never NaN). Computed here so global and every byProject scope
+  // carry all three, and so concluídas + não-concluídas reconciles to total.
+  const totalMissões = bySlug.size;
+  const missõesNãoConcluídas = totalMissões - missõesConcluídas;
+  const taxaConclusão = totalMissões > 0 ? missõesConcluídas / totalMissões : null;
+
   // missõesPorSemana: doneSlugs / max(1, weeks(first→last)).
   let missõesPorSemana = null;
   if (missõesConcluídas > 0 && safe.length > 0) {
@@ -403,6 +413,9 @@ function aggregateScope(rows, missionsDir, planFeeUsd) {
 
   return {
     missõesConcluídas,
+    missõesNãoConcluídas,
+    totalMissões,
+    taxaConclusão,
     missõesPorSemana,
     leadTimeMediano,
     rondasMédia,
@@ -432,6 +445,9 @@ function aggregateScope(rows, missionsDir, planFeeUsd) {
  *     unaffected (only `typeof === "number"` counts).
  * @returns {{
  *   missõesConcluídas: number,
+ *   missõesNãoConcluídas: number,
+ *   totalMissões: number,
+ *   taxaConclusão: number|null,
  *   missõesPorSemana: number|null,
  *   leadTimeMediano: number|null,
  *   rondasMédia: number,
