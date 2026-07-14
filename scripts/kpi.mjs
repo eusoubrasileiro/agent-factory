@@ -19,6 +19,9 @@
  *   - coordinator tokens — from `session-cost`'s pure core (the coordinator
  *                          emits no token events; its usage lives in the session
  *                          transcript). Imported, never shelled out. (B3)
+ *                          Factory-global: rendered ONCE as a labeled line, not
+ *                          a per-project column — per-project attribution awaits
+ *                          the session-tag join (F4).
  *   - attention-per-feature — (touchpoints + interventions + escalations) /
  *                          features, from `metrics.jsonl` events. The denominator
  *                          `features` is the merged-mission count — a merged
@@ -326,23 +329,36 @@ function pad(s, w, right) {
   return s.length >= w ? s.slice(0, w) : right ? s.padStart(w) : s.padEnd(w);
 }
 
+// Per-project columns only. The coordinator total is factory-global (F4) — it
+// cannot be attributed to a single project, so it is NOT a per-project column;
+// renderTable prints it once as a labeled global line instead.
 const NUM_COLS = [
   ["MERGED", "merged", 8],
   ["SEAT-TOK", "seatTokens", 12],
-  ["COORD-TOK", "coordinatorTokens", 12],
   ["ATTN", "attention", 8],
   ["ATTN/FEAT", "attentionPerFeature", 10],
 ];
 const PROJECT_W = 16;
 
 /**
- * Render the KPI report as a per-project table. Pure. `—` for every absent cell.
- * @param {{windowDays?: number, rows: Array<object>}} report
+ * Render the KPI report as a per-project table plus ONE factory-global line for
+ * the coordinator total. Pure. `—` for every absent cell (E1-d): a null
+ * `coordinatorGlobal` renders `—`, never 0.
+ *
+ * The coordinator (Opus interactive session) runs factory-global, not
+ * per-project, so its token total is shown ONCE — labeled `coordenador (fábrica,
+ * global)` — rather than repeated on every project row as if each project spent
+ * it (F4).
+ * @param {{windowDays?: number|null, coordinatorGlobal?: number|null,
+ *          rows: Array<object>}} report
  * @returns {string}
  */
 export function renderTable(report) {
   const lines = [];
   if (report.windowDays != null) lines.push(`◆ window: ${report.windowDays}d`);
+  lines.push(
+    `◆ coordenador (fábrica, global): ${fmtCell(report.coordinatorGlobal)} tokens — não atribuível por projeto (v1)`,
+  );
   lines.push(
     [pad("PROJECT", PROJECT_W), ...NUM_COLS.map(([h, , w]) => pad(h, w, true))].join(" "),
   );
@@ -381,20 +397,24 @@ function parseArgs(argv) {
 }
 
 /**
- * Build the report rows for one project: source the four inputs over the window
- * and fold them through `buildKpi`. `coordinatorDir` is factory-global (computed
- * once by the caller).
+ * Build the report row for one project: source its per-project inputs over the
+ * window and fold them through `buildKpi`. The coordinator total is NOT sourced
+ * here — it is factory-global, computed once by the caller and carried on the
+ * report as `coordinatorGlobal` (F4). The per-row `coordinatorTokens` field that
+ * `buildKpi` still emits (pure-core back-compat) is dropped so neither the table
+ * nor `--json` repeats the number per project.
  */
-function rowForProject({ id, missionsRoot, repoRoot, trunk, sinceMs, coordinatorDir, untilMs }) {
+function rowForProject({ id, missionsRoot, repoRoot, trunk, sinceMs }) {
   const merged = countMergedMissions({ repoRoot, missionsRoot, trunk, sinceMs });
-  return buildKpi({
+  const built = buildKpi({
     project: id,
     merged,
     seatTokens: seatTokensForProject({ missionsRoot, sinceMs }),
-    coordinatorTokens: coordinatorTokensForFactory({ transcriptDir: coordinatorDir, sinceMs, untilMs }),
     attention: attentionForProject({ missionsRoot, sinceMs }),
     features: merged, // a merged mission is a delivered feature (B4 denominator)
   });
+  const { coordinatorTokens: _factoryGlobal, ...row } = built;
+  return row;
 }
 
 function main() {
@@ -410,8 +430,10 @@ function main() {
     : loadProjects(FACTORY_ROOT).map((p) => p.id);
 
   // The coordinator session runs in the factory repo → its transcript dir is
-  // derived from the factory root. Factory-global; same dir for every project.
+  // derived from the factory root. Factory-global: sourced ONCE for the whole
+  // report (not once per project) and carried as `coordinatorGlobal` (F4).
   const coordinatorDir = defaultTranscriptDir({ dir: null, cwd: FACTORY_ROOT });
+  const coordinatorGlobal = coordinatorTokensForFactory({ transcriptDir: coordinatorDir, sinceMs, untilMs });
 
   const rows = [];
   for (const id of ids) {
@@ -423,14 +445,12 @@ function main() {
         repoRoot: r.repoRoot,
         trunk: r.profile.trunk,
         sinceMs,
-        untilMs,
-        coordinatorDir,
       }),
     );
   }
   rows.sort((a, b) => String(a.project).localeCompare(String(b.project)));
 
-  const report = { windowDays: days, rows };
+  const report = { windowDays: days, coordinatorGlobal, rows };
   if (opts.json) {
     process.stdout.write(`${JSON.stringify(report)}\n`);
   } else {
