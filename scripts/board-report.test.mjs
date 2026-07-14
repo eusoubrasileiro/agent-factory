@@ -31,6 +31,7 @@ import {
   esc,
   fmtUsd,
   formatDateTime,
+  histCardValues,
   missionContradictions,
   parseRequirementsLine,
   renderDashboardHtml,
@@ -2785,7 +2786,11 @@ test("B1 mutation gate: the tip links its bubble via aria-describedby (id match)
 
 test("A2 mutation gate (Histórico): one visible info-tip per stat card == HISTORICO_TERMS.length", () => {
   const html = renderDashboardHtml({ ...EMPTY_MODEL, history: TOOLTIPS_HISTORY });
-  const panel = html.slice(html.indexOf("<!--hist-start-->"), html.indexOf("<!--hist-end-->"));
+  // Scope to the stat-cards block (up to the first <table>): the per-mission
+  // table's Lead time <th> ALSO carries an info-tip (R3), and must not inflate
+  // this "one tip per card" count.
+  const start = html.indexOf("<!--hist-start-->");
+  const panel = html.slice(start, html.indexOf("<table>", start));
   const count = (panel.match(/class="info-tip"/g) || []).length;
   assert.equal(count, HISTORICO_TERMS.length, `expected ${HISTORICO_TERMS.length} tips, got ${count}`);
 });
@@ -2869,6 +2874,166 @@ test("C2 determinism: tip ids derive from the key — same model renders byte-id
   // Whole-document determinism: a fixed generatedAt must yield byte-identical HTML
   // across renders (guards against random/timestamp ids anywhere, including tips).
   assert.equal(renderDashboardHtml(EMPTY_MODEL), renderDashboardHtml(EMPTY_MODEL));
+});
+
+// ─── hist-completion-metrics (F7): completion ratio + lead-time self-explains ──
+//
+// Two new stat tiles (missões não concluídas, taxa de conclusão) sit right after
+// "missões concluídas" so concluídas → não concluídas → taxa read together, and the
+// per-mission table's "—" lead times stop looking like a bug: the Lead time <th>
+// self-explains, and a note beneath the table accounts for every null. The stat
+// cards are POSITIONALLY coupled to HISTORICO_TERMS, so the alignment guard below
+// pins cardValues.length === HISTORICO_TERMS.length (CRITICAL — a future insert
+// must not silently land a definition on the wrong value).
+
+/** A Histórico fixture with the new completion-denominator fields populated. */
+function completionHistory(over = {}) {
+  return {
+    missõesConcluídas: 1,
+    missõesNãoConcluídas: 2,
+    taxaConclusão: 1 / 3,
+    missõesPorSemana: 0.5,
+    leadTimeMediano: 4,
+    rondasMédia: 1,
+    tokensTotal: 100,
+    atençãoPorFeature: 1,
+    costTotal: 1.5,
+    planTotal: 72,
+    savings: -70.5,
+    timeTotalH: 2,
+    featuresTotal: 1,
+    byProject: {},
+    perMission: [
+      {
+        slug: "alpha",
+        project: "factory",
+        estadoAtual: "Done",
+        leadTime: 4,
+        rondas: 1,
+        últimoVerdict: "PASS",
+        data: "2026-07-05T00:00:00Z",
+      },
+      {
+        slug: "beta",
+        project: "factory",
+        estadoAtual: "Building",
+        leadTime: null,
+        rondas: 1,
+        últimoVerdict: "FAIL",
+        data: "2026-07-06T00:00:00Z",
+      },
+      {
+        slug: "gamma",
+        project: "factory",
+        estadoAtual: "Planning",
+        leadTime: null,
+        rondas: 0,
+        últimoVerdict: null,
+        data: "2026-07-07T00:00:00Z",
+      },
+    ],
+    ...over,
+  };
+}
+
+test("R2: 'missões não concluídas' + 'taxa de conclusão' cards each carry a visible info-tip (V3)", () => {
+  const html = renderDashboardHtml({ ...EMPTY_MODEL, history: completionHistory() });
+  const panel = html.slice(html.indexOf("<!--hist-start-->"), html.indexOf("<!--hist-end-->"));
+  for (const label of ["missões não concluídas", "taxa de conclusão"]) {
+    const term = HISTORICO_TERMS.find((t) => t.label === label);
+    assert.ok(term, `${label} is a HISTORICO_TERMS entry`);
+    assert.ok(panel.includes(esc(term.label)), `panel shows the "${label}" label`);
+    assert.ok(
+      panel.includes(`>${esc(term.def)}</span>`),
+      `"${label}" tip bubble carries its definition`,
+    );
+  }
+});
+
+test("R2 alignment guard: cardValues.length === HISTORICO_TERMS.length (positional coupling pinned)", () => {
+  // CRITICAL: every stat card lands on its intended definition. A future insert
+  // that adds a term without a cardValues entry (or vice-versa) turns this red
+  // before the misalignment ships. Both directions are observable only by reading
+  // the builder directly — DOM counting can't see silently-dropped extra values.
+  const cards = histCardValues(completionHistory());
+  assert.equal(
+    cards.length,
+    HISTORICO_TERMS.length,
+    `cardValues (${cards.length}) must mirror HISTORICO_TERMS (${HISTORICO_TERMS.length})`,
+  );
+  // The two new cards sit right after "missões concluídas" (R2 order).
+  const labels = HISTORICO_TERMS.map((t) => t.label);
+  const i = labels.indexOf("missões concluídas");
+  assert.equal(labels[i + 1], "missões não concluídas", "não concluídas follows concluídas");
+  assert.equal(labels[i + 2], "taxa de conclusão", "taxa follows não concluídas");
+});
+
+test("R2: 'missões não concluídas' value mirrors the aggregate; taxa renders as integer %", () => {
+  const cards = histCardValues(completionHistory());
+  const nãoIdx = HISTORICO_TERMS.findIndex((t) => t.label === "missões não concluídas");
+  const taxaIdx = HISTORICO_TERMS.findIndex((t) => t.label === "taxa de conclusão");
+  assert.equal(cards[nãoIdx].value, "2");
+  assert.equal(cards[nãoIdx].semDados, false);
+  // 1/3 ≈ 0.333 → Math.round(33.3) = 33%
+  assert.equal(cards[taxaIdx].value, "33%");
+  assert.equal(cards[taxaIdx].semDados, false);
+
+  // The percent is visible in the rendered panel too.
+  const html = renderDashboardHtml({ ...EMPTY_MODEL, history: completionHistory() });
+  const panel = html.slice(html.indexOf("<!--hist-start-->"), html.indexOf("<!--hist-end-->"));
+  assert.match(panel, /33%/);
+});
+
+test("R2: taxa de conclusão is 'sem dados' when taxaConclusão === null (0/0, never NaN)", () => {
+  const cards = histCardValues(completionHistory({ taxaConclusão: null }));
+  const taxaIdx = HISTORICO_TERMS.findIndex((t) => t.label === "taxa de conclusão");
+  assert.equal(cards[taxaIdx].value, "sem dados");
+  assert.equal(cards[taxaIdx].semDados, true);
+});
+
+test("R3: Lead time <th> carries an info-tip explaining lead time + '—' = não concluída", () => {
+  const html = renderDashboardHtml({ ...EMPTY_MODEL, history: completionHistory() });
+  const panel = html.slice(html.indexOf("<!--hist-start-->"), html.indexOf("<!--hist-end-->"));
+  const th = panel.match(/<th[^>]*>\s*Lead time[\s\S]*?<\/th>/);
+  assert.ok(th, "Lead time <th> exists");
+  assert.match(th[0], /class="info-tip"/, "the <th> carries a visible info-tip");
+  assert.match(th[0], /criação/i, "tip explains lead time = da criação até Done");
+  assert.match(th[0], /n[ãa]o concluí/i, "tip explains '—' = missão ainda não concluída");
+});
+
+test("R3: lead-nota renders beneath the table with the null-leadTime count when ≥1 null", () => {
+  const html = renderDashboardHtml({ ...EMPTY_MODEL, history: completionHistory() });
+  const panel = html.slice(html.indexOf("<!--hist-start-->"), html.indexOf("<!--hist-end-->"));
+  // 2 rows (beta, gamma) have leadTime === null → N = 2.
+  assert.match(panel, /<p class="muted lead-nota">/);
+  assert.match(panel, /2 missões ainda não concluídas não têm lead time/);
+  // The note sits AFTER the table, not inside it.
+  const tableEnd = panel.indexOf("</table>");
+  const notaIdx = panel.indexOf("lead-nota");
+  assert.ok(notaIdx > tableEnd, "the lead-nota is beneath the table");
+});
+
+test("R3: lead-nota is absent when no row has a null lead time", () => {
+  const allDone = {
+    missõesConcluídas: 1,
+    missõesNãoConcluídas: 0,
+    taxaConclusão: 1,
+    byProject: {},
+    perMission: [
+      {
+        slug: "alpha",
+        project: "factory",
+        estadoAtual: "Done",
+        leadTime: 4,
+        rondas: 1,
+        últimoVerdict: "PASS",
+        data: "2026-07-05T00:00:00Z",
+      },
+    ],
+  };
+  const html = renderDashboardHtml({ ...EMPTY_MODEL, history: allDone });
+  const panel = html.slice(html.indexOf("<!--hist-start-->"), html.indexOf("<!--hist-end-->"));
+  assert.doesNotMatch(panel, /lead-nota/, "no null lead times → no note");
 });
 
 // ─── board-banner-lint (F2): the two M4 features that were claimed but never ────
