@@ -358,6 +358,54 @@ test("renderTable: null cells render —, numbers render plainly", () => {
   assert.ok(alphaLine, "a fully-measured project row shows no em-dash");
 });
 
+// ─── F4: the coordinator total is factory-global, rendered ONCE ───────────────
+//
+// coordinatorTokensForFactory is factory-global by its own docstring; printing it
+// as a per-project COORD-TOK column repeats the same large number on every row as
+// if each project spent it. F4 renders it honestly: one labeled global line, no
+// per-project column. These two tests are the mutation gate — reverting the fix
+// (re-adding a per-row COORD-TOK column, or zero-filling a null total) turns them
+// red.
+
+test("renderTable: coordinator total appears exactly once — global line, never per-row (F4 mutation gate)", () => {
+  const COORD = 9999;
+  // Rows deliberately carry the coordinator number in coordinatorTokens to prove
+  // renderTable does NOT render it per row even when present. (Production rows
+  // omit it; this is the adversarial fixture.) ≥2 projects so a per-row column
+  // would repeat the number twice.
+  const report = {
+    windowDays: 30,
+    coordinatorGlobal: COORD,
+    rows: [
+      buildKpi({ project: "alpha", merged: 2, seatTokens: 1000, coordinatorTokens: COORD, attention: 6, features: 2 }),
+      buildKpi({ project: "beta", merged: 3, seatTokens: 2000, coordinatorTokens: COORD, attention: 9, features: 3 }),
+    ],
+  };
+  const out = renderTable(report);
+  const count = out.split(String(COORD)).length - 1;
+  assert.equal(count, 1, "coordinator total rendered exactly once; per-row repetition is the F4 bug");
+  assert.match(out, /coordenador \(fábrica, global\): 9999 tokens — não atribuível por projeto/);
+  // The per-project header carries NO COORD-TOK column.
+  const header = out.split("\n").find((l) => l.includes("PROJECT"));
+  assert.ok(header, "table header present");
+  assert.doesNotMatch(header, /COORD-TOK/, "no per-project COORD-TOK column");
+});
+
+test("renderTable: ATTN/FEAT unchanged (attention/features); null coordinator renders —, never 0 (F4 + E1-d)", () => {
+  // Per-project math must be untouched by this change: ATTN/FEAT = attention/features.
+  const row = buildKpi({ project: "alpha", merged: 4, seatTokens: 1000, attention: 10, features: 4 });
+  assert.equal(row.attentionPerFeature, 2.5, "ATTN/FEAT = attention/features (unchanged)");
+
+  const out = renderTable({
+    windowDays: 30,
+    coordinatorGlobal: null, // no coordinator transcript retained → absence
+    rows: [row],
+  });
+  // E1-d: a null coordinator total renders —, never a zero-fill.
+  assert.match(out, /coordenador \(fábrica, global\): — tokens/);
+  assert.doesNotMatch(out, /coordenador \(fábrica, global\): 0 tokens/);
+});
+
 // ─── end-to-end: a data-less project renders all — through the pipeline ───────
 
 test("pipeline: a project with no git/metrics/transcripts renders every cell as — (B5)", () => {
@@ -436,6 +484,12 @@ test("CLI --json wires git + metrics + transcript into one honest row (B1-B6)", 
     assert.equal(alpha.seatTokens, 120, "worker phase_end tokens summed");
     assert.equal(alpha.attention, 1, "the touchpoint counted");
     assert.equal(alpha.attentionPerFeature, 1, "attention(1) / features(=merged 1)");
+    // F4 (A4): the coordinator total is factory-global — carried ONCE at the top
+    // level as coordinatorGlobal (null here: no transcript retained), never
+    // repeated as a per-row coordinatorTokens field. No transcript was written
+    // under this factory → absence (—), not a fake 0.
+    assert.equal(obj.coordinatorGlobal, null, "single top-level coordinatorGlobal; null with no transcript");
+    assert.ok(!("coordinatorTokens" in alpha), "no per-row coordinator attribution (F4)");
   } finally {
     rmSync(factory, { recursive: true, force: true });
     rmSync(repo, { recursive: true, force: true });
