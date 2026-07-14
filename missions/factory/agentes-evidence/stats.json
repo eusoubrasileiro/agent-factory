@@ -1,6 +1,6 @@
 {
   "slug": "agentes-evidence",
-  "generatedAt": "2026-07-14T12:07:13.942Z",
+  "generatedAt": "2026-07-14T19:50:05.179Z",
   "branch": "agent/agentes-evidence",
   "mergeBase": null,
   "loc": {
@@ -67,7 +67,7 @@
     }
   },
   "models": {
-    "worker": null,
+    "worker": "glm-5.2",
     "validator": null,
     "orchestrator": null
   },

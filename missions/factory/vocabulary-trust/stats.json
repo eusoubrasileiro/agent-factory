@@ -1,6 +1,6 @@
 {
   "slug": "vocabulary-trust",
-  "generatedAt": "2026-07-14T12:07:14.081Z",
+  "generatedAt": "2026-07-14T19:50:05.246Z",
   "branch": "agent/vocabulary-trust",
   "mergeBase": null,
   "loc": {
@@ -12,10 +12,10 @@
   "baselineChanged": false,
   "baselineKeysChanged": [],
   "durations": {
-    "building": null,
+    "building": 3600262,
     "validating": null,
     "orchestrating": null,
-    "total": null
+    "total": 3600262
   },
   "tokens": {
     "worker": {
@@ -67,7 +67,7 @@
     }
   },
   "models": {
-    "worker": null,
+    "worker": "glm-5.2",
     "validator": null,
     "orchestrator": null
   },
