@@ -15,10 +15,54 @@ Any non-zero exit → **FAIL**.
 
 ## Behavioral probes
 
-**None.** The engine has no chat surface, no UI, and no live vendor calls. Its
-behavior is fully covered by `node --test`, which is why `gate[]` is a single
-command. If a future engine change adds a user-facing surface, add its probe here —
-never to a `skills/` file.
+The engine has no chat surface and no live vendor calls, **but it does have a UI**: the
+board (`scripts/board-report.mjs` → per-project HTML). `node --test` proves the HTML
+*string* contains a substring; it does **not** prove a viewer can *see or use* the thing.
+That gap shipped real regressions (2026-07-14: KPI "hover definitions" were native `title=`
+— invisible on hover, dead on mobile; a staleness banner and a contradiction-lint chip were
+claimed in a commit but never rendered). **Any mission that changes `board-report.mjs`,
+`client-view.mjs`, or board CSS/JS MUST clear the rendered-DOM probe below — a green
+`pnpm test` is necessary but NOT sufficient.**
+
+### Probe: board rendered-DOM (Playwright)
+
+Adversarial, from the validator seat. Drives the ACTUAL served page, asserts what a human
+sees — never that an attribute string exists.
+
+```bash
+# 1. Render the touched project(s) from the mission worktree — pure Node, no backlog/rsync.
+#    (board-report.mjs is standalone; autopublish is NOT used here — no VPS side effects.)
+OUT=$(mktemp -d)
+for P in factory wahub; do
+  mkdir -p "$OUT/$P"
+  node scripts/board-report.mjs --repo <worktree> --project "$P" --out "$OUT/$P/index.html"
+done
+# 2. Serve on loopback (detached so it survives the turn; never binds public).
+setsid nohup python3 -m http.server 8799 --bind 127.0.0.1 --directory "$OUT" \
+  >/tmp/board8799.log 2>&1 </dev/null &
+# 3. GLM Playwright drives it. See assertions below.
+```
+
+Then, via the `playwright` MCP (GLM-5.2 validator seat), for **each** touched surface at
+**both** `browser_resize` 390×844 (mobile) and 1440×900 (desktop):
+
+- Navigate `http://127.0.0.1:8799/factory/` and `/wahub/`; open the relevant tab.
+- Assert the mission's contract claim is **visibly true**: e.g. a definition affordance is
+  present AND reveals its text on hover (desktop) and on tap/click (mobile) — a bare `title=`
+  attribute is an automatic **FAIL**; a banner/chip that the contract says must appear under a
+  seeded condition is actually in the snapshot; a data cell reads a real value or an explained
+  "—", never a bare wall of dashes.
+- `browser_snapshot` (accessibility tree) is the assertion surface; `browser_take_screenshot`
+  for the human-legibility judgement. Any claimed-but-not-visible element → **FAIL** with the
+  snapshot as evidence.
+
+**Serialization landmine:** the `playwright` MCP is a **single shared Chrome profile**
+(`[[playwright-mcp-single-instance]]`). Never run two validator seats against it at once —
+run sequentially, or pass `--isolated`. A second concurrent driver dies on a stale
+SingletonLock.
+
+If a future engine change adds another user-facing surface, add its probe here — never to a
+`skills/` file.
 
 ## Standing rules for this project
 
