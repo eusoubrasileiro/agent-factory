@@ -1477,7 +1477,7 @@ export const HISTORICO_TERMS = [
   },
   { label: "missões/semana", def: "missões concluídas divididas pelas semanas decorridas (history.jsonl)" },
   { label: "lead time mediano", def: "mediana, criação do dossiê até Done (history.jsonl)" },
-  { label: "rondas média", def: "média de rondas de validação por missão concluída (history.jsonl)" },
+  { label: "rondas média", def: "média de rondas de validação sobre as missões com ≥1 ronda registrada (history.jsonl)" },
   { label: "tokens", def: "total de tokens consumidos pelas missões (history.jsonl)" },
   { label: "atenção-por-feature", def: "rondas médias por feature — quanto cada feature exigiu de retrabalho (history.jsonl)" },
   { label: "$ API total", def: "custo API estimado de todas as missões (history.jsonl)" },
@@ -1678,12 +1678,24 @@ ${legenda}
       ? `\n    <p class="muted lead-nota">${esc(nullLeadCount)} missões ainda não concluídas não têm lead time — ele é medido da criação até o Done.</p>`
       : "";
 
+  // F10/R4 — rondasMédia now (F8 parity) excludes missions that never recorded a
+  // validation round (rounds 0/null/absent), per aggregateScope. Disclose that
+  // excluded count near the rondas média stat — the same honesty note F8 put on
+  // the Agentes tab (rondas-nota class), phrased for the global scope. Rendered
+  // ONLY when at least one mission was excluded (missõesSemRonda > 0); never an
+  // empty note.
+  const missõesSemRonda = h.missõesSemRonda ?? 0;
+  const rondasNota =
+    missõesSemRonda > 0
+      ? `    <p class="muted rondas-nota">${esc(missõesSemRonda)} missões sem ronda de validação registrada (anteriores ao loop de validação ou mescladas direto em Done) ficam fora da média de rondas.</p>\n`
+      : "";
+
   return `<!--hist-start-->
   <section id="tab-historico" class="tab-panel" role="tabpanel" hidden>
     <div class="stat-cards">
 ${cardsHtml}
     </div>
-      <table>
+${rondasNota}      <table>
         <thead><tr><th>Missão</th><th>Estado atual</th><th>Lead time${renderInfoTip(LEAD_TIME_DEF, "hist-lead")}</th><th>Rondas</th><th>$</th><th>Tempo</th><th>Último verdict</th><th>Data</th></tr></thead>
         <tbody>
 ${tableBody}
