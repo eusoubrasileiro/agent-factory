@@ -404,7 +404,10 @@ test("aggregate: no Done missions → leadTimeMediano null, missõesConcluídas 
   assert.equal(stats.missõesConcluídas, 0);
   assert.equal(stats.leadTimeMediano, null);
   assert.equal(stats.missõesPorSemana, null);
-  assert.equal(stats.rondasMédia, 0);
+  // F10 — both missions have rounds 0 (no ≥1 round recorded), so the mean is
+  // null ("sem dados"), never 0; both are disclosed in missõesSemRonda.
+  assert.equal(stats.rondasMédia, null);
+  assert.equal(stats.missõesSemRonda, 2);
 });
 
 test("aggregate: empty rows → zeros and nulls (contract A6)", () => {
@@ -412,10 +415,67 @@ test("aggregate: empty rows → zeros and nulls (contract A6)", () => {
   assert.equal(stats.missõesConcluídas, 0);
   assert.equal(stats.leadTimeMediano, null);
   assert.equal(stats.missõesPorSemana, null);
-  assert.equal(stats.rondasMédia, 0);
+  assert.equal(stats.rondasMédia, null);
+  assert.equal(stats.missõesSemRonda, 0, "no slugs → nothing to exclude");
   assert.equal(stats.tokensTotal, null);
   assert.equal(stats.atençãoPorFeature, null);
   assert.deepEqual(stats.perMission, []);
+});
+
+// ─── aggregate: rondas-honesty (F10) — ≥1-round mean, mirrors F8's Agentes rule ──
+//
+// F8 already fixed the Agentes per-model column to average rondas ONLY over
+// missions with ≥1 recorded round (a round is one full validation attempt, so a
+// mean below 1 is impossible — rounds 0/null/absent means no round was ever
+// recorded, not "validated in zero rounds"). This mission applies the SAME rule
+// to the Histórico GLOBAL stat: rondasMédia averages ONLY ≥1-round missions; the
+// rest are excluded from numerator AND denominator and disclosed as
+// missõesSemRonda. When NO mission has ≥1 round, rondasMédia is null ("sem
+// dados") — never 0 (a 0 here is the misleading value F8 exists to prevent).
+
+test("aggregate (F10): rondasMédia averages ONLY over ≥1-round missions; 0/null excluded from numerator AND denominator (R1/R2)", () => {
+  // slugs with latest rounds 2, 3, 0, null → mean over the two ≥1 → (2+3)/2 = 2.5.
+  const rows = [
+    row("a", { ts: "2026-07-01T00:00:00Z", state: "Done", rounds: 2 }),
+    row("b", { ts: "2026-07-01T00:00:00Z", state: "Done", rounds: 3 }),
+    row("c", { ts: "2026-07-01T00:00:00Z", state: "Done", rounds: 0 }),
+    row("d", { ts: "2026-07-01T00:00:00Z", state: "Done", rounds: null }),
+  ];
+  const stats = aggregate(rows, { now: "2026-07-08T00:00:00Z" });
+  assert.equal(stats.rondasMédia, 2.5, "(2+3)/2 — the 0 and null out of both num and denom");
+  assert.equal(stats.missõesSemRonda, 2, "c (0) and d (null) are disclosed");
+});
+
+test("aggregate (F10): a scope with NO ≥1-round mission → rondasMédia null (never 0/NaN), all counted in missõesSemRonda (R1/R2)", () => {
+  const rows = [
+    row("a", { ts: "2026-07-01T00:00:00Z", state: "Done", rounds: 0 }),
+    row("b", { ts: "2026-07-01T00:00:00Z", state: "Building", rounds: null }),
+    row("c", { ts: "2026-07-01T00:00:00Z", state: "Planning" }), // rounds 0 (default)
+  ];
+  const stats = aggregate(rows, { now: "2026-07-08T00:00:00Z" });
+  assert.equal(stats.rondasMédia, null, "no ≥1 rounds → null (renders 'sem dados'), never 0");
+  assert.equal(stats.missõesSemRonda, 3);
+});
+
+test("aggregate (F10): missõesSemRonda present on global + every byProject scope; ≥1-round + semRonda = total (R2)", () => {
+  const rows = [
+    row("a", { project: "wahub", ts: "2026-07-01T00:00:00Z", state: "Done", rounds: 1 }),
+    row("b", { project: "wahub", ts: "2026-07-01T00:00:00Z", state: "Done", rounds: 0 }),
+    row("c", { project: "other", ts: "2026-07-01T00:00:00Z", state: "Planning" }),
+  ];
+  const stats = aggregate(rows, { now: "2026-07-08T00:00:00Z" });
+  // global: 3 missions, only a has ≥1 round → b + c excluded → semRonda 2.
+  assert.equal(stats.totalMissões, 3);
+  assert.equal(stats.missõesSemRonda, 2);
+  // Present + correct on each byProject scope (not just the global).
+  assert.equal(stats.byProject.wahub.missõesSemRonda, 1, "wahub: b (0) excluded");
+  assert.equal(stats.byProject.other.missõesSemRonda, 1, "other: c (0) excluded");
+  // The reconciliation semRonda actually backs: ≥1-round missions + semRonda = total,
+  // per scope. (semRonda is orthogonal to concluídas/não-concluídas — a Done mission
+  // merged straight in has rounds 0; a Building one can have run a round.)
+  assert.equal(stats.totalMissões - stats.missõesSemRonda, 1, "global: 1 mission with ≥1 round");
+  assert.equal(stats.byProject.wahub.totalMissões - stats.byProject.wahub.missõesSemRonda, 1);
+  assert.equal(stats.byProject.other.totalMissões - stats.byProject.other.missõesSemRonda, 0);
 });
 
 test("aggregate: missõesPorSemana = doneSlugs / max(1, weeks(first→last))", () => {
