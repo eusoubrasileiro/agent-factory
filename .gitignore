@@ -18,3 +18,9 @@ node_modules/
 
 # Engine self-hosting: git worktrees for factory missions.
 .worktrees/
+
+# Playwright MCP transient dumps (console logs + page snapshots) and scratch
+# board screenshots — regenerated on every validator run, never repo content.
+.playwright-mcp/
+/factory-board.png
+/factory-missions.png
