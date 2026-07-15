@@ -35,6 +35,7 @@ import {
   loadSeatCredentials,
   makeSeatConfigDir,
   parseClaudeResult,
+  writePlaywrightMcpConfig,
 } from "./claude-worker.mjs";
 
 // ─── credentials ─────────────────────────────────────────────────────────────
@@ -560,4 +561,95 @@ test("detectRateLimit: a z.ai 429 / code 1308 result is detected, with reset whe
 
 test("detectRateLimit: a clean successful result is not flagged (F03)", () => {
   assert.equal(detectRateLimit(JSON.stringify({ is_error: false, result: "OK", total_cost_usd: 0.1 }), ""), null);
+});
+
+// ─── F9 cage-vision: the --with-playwright visual-validator seat ──────────────
+
+/** Put a fake `claude` on PATH that dumps its argv to `argvDumpPath`, then prints one result. */
+function stubClaudeCapturingArgs(resultJson, argvDumpPath) {
+  const dir = mkdtempSync(path.join(tmpdir(), "stub-claude-argv-"));
+  const bin = path.join(dir, "claude");
+  writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' "$@" > "${argvDumpPath}"\ncat <<'JSON'\n${resultJson}\nJSON\n`, { mode: 0o755 });
+  return dir;
+}
+
+test("writePlaywrightMcpConfig: writes exactly one playwright server, --isolated", () => {
+  const wt = mkdtempSync(path.join(tmpdir(), "cw-mcp-"));
+  try {
+    const p = writePlaywrightMcpConfig(wt);
+    assert.ok(p.endsWith(path.join(".claude", "mcp-playwright.json")), `unexpected path: ${p}`);
+    const cfg = JSON.parse(readFileSync(p, "utf8"));
+    assert.deepEqual(Object.keys(cfg.mcpServers), ["playwright"], "exactly one MCP server");
+    assert.equal(cfg.mcpServers.playwright.command, "npx");
+    assert.ok(cfg.mcpServers.playwright.args.includes("--isolated"), "must run --isolated (single-instance profile)");
+    assert.ok(cfg.mcpServers.playwright.args.some((a) => a.includes("@playwright/mcp")), "must launch @playwright/mcp");
+  } finally {
+    rmSync(wt, { recursive: true, force: true });
+  }
+});
+
+test("CLI: --with-playwright adds --mcp-config + --strict-mcp-config and writes the config", () => {
+  const wt = mkdtempSync(path.join(tmpdir(), "cw-pw-on-"));
+  const argvDump = path.join(wt, "argv.txt");
+  const stub = stubClaudeCapturingArgs(
+    JSON.stringify({ type: "result", is_error: false, session_id: "s", usage: { input_tokens: 1, output_tokens: 1 } }),
+    argvDump,
+  );
+  try {
+    const r = runCli(
+      ["--dir", wt, "--allow-any-dir", "--model", "sonnet", "--project", "factory", "--prompt", "hi",
+        "--allow-anthropic", "--creds", "/nonexistent", "--metric-seat", "validator", "--with-playwright"],
+      { PATH: `${stub}:${process.env.PATH}` },
+    );
+    assert.equal(r.status, 0, `expected success, got ${r.status}\n${r.stderr}`);
+    const argv = readFileSync(argvDump, "utf8").split("\n");
+    assert.ok(argv.includes("--mcp-config"), "must pass --mcp-config");
+    assert.ok(argv.includes("--strict-mcp-config"), "must pass --strict-mcp-config (drop operator MCPs)");
+    const cfgArg = argv[argv.indexOf("--mcp-config") + 1];
+    assert.ok(cfgArg.endsWith("mcp-playwright.json"), `--mcp-config points at the playwright config, got ${cfgArg}`);
+    assert.ok(existsSync(path.join(wt, ".claude", "mcp-playwright.json")), "the MCP config file must be written");
+    // The cage rendered as a visual-validator: browser + verdict allow present.
+    const settings = JSON.parse(readFileSync(path.join(wt, ".claude", "settings.external.json"), "utf8"));
+    assert.ok(settings.permissions.allow.includes("mcp__playwright"), "cage must allow the Playwright tools");
+  } finally {
+    rmSync(wt, { recursive: true, force: true });
+    rmSync(stub, { recursive: true, force: true });
+  }
+});
+
+test("CLI: without --with-playwright, no MCP flags and no config file (unchanged)", () => {
+  const wt = mkdtempSync(path.join(tmpdir(), "cw-pw-off-"));
+  const argvDump = path.join(wt, "argv.txt");
+  const stub = stubClaudeCapturingArgs(
+    JSON.stringify({ type: "result", is_error: false, session_id: "s", usage: { input_tokens: 1, output_tokens: 1 } }),
+    argvDump,
+  );
+  try {
+    const r = runCli(
+      ["--dir", wt, "--allow-any-dir", "--model", "sonnet", "--project", "factory", "--prompt", "hi",
+        "--allow-anthropic", "--creds", "/nonexistent"],
+      { PATH: `${stub}:${process.env.PATH}` },
+    );
+    assert.equal(r.status, 0, `expected success, got ${r.status}\n${r.stderr}`);
+    const argv = readFileSync(argvDump, "utf8").split("\n");
+    assert.ok(!argv.includes("--mcp-config"), "no MCP config without the flag");
+    assert.ok(!argv.includes("--strict-mcp-config"), "no strict-mcp without the flag");
+    assert.ok(!existsSync(path.join(wt, ".claude", "mcp-playwright.json")), "no MCP config file without the flag");
+  } finally {
+    rmSync(wt, { recursive: true, force: true });
+    rmSync(stub, { recursive: true, force: true });
+  }
+});
+
+test("buildClaudeEnv: R3 — named product secrets never reach the visual-validator seat", () => {
+  const source = {
+    PATH: "/usr/bin", HOME: "/home/a",
+    SUPABASE_SERVICE_ROLE_KEY: "sk", WABA_TOKEN_KEY: "aes", OPENROUTER_API_KEY: "or",
+    DATABASE_URL: "postgres://x", JWT_SECRET: "j",
+  };
+  const env = buildClaudeEnv(source, { ANTHROPIC_AUTH_TOKEN: "tok", ANTHROPIC_BASE_URL: "https://api.z.ai/x" }, "/tmp/wt");
+  for (const k of ["SUPABASE_SERVICE_ROLE_KEY", "WABA_TOKEN_KEY", "OPENROUTER_API_KEY", "DATABASE_URL", "JWT_SECRET"]) {
+    assert.equal(env[k], undefined, `secret ${k} must never reach the seat`);
+  }
+  assert.equal(env.ANTHROPIC_AUTH_TOKEN, "tok", "the z.ai seat credential must be present");
 });
