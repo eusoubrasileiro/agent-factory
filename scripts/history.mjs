@@ -350,17 +350,29 @@ function aggregateScope(rows, missionsDir, planFeeUsd) {
     .filter((v) => typeof v === "number");
   const leadTimeMediano = median(leadTimes);
 
-  // rondasMédia: mean of `rounds` across the latest snapshot of each slug.
+  // rondasMédia: mean of `rounds` over ONLY missions whose latest snapshot
+  // recorded ≥1 validation round (F10 — the same honest rule F8 applied to the
+  // Agentes per-model column). A round is one full validation attempt, so rounds
+  // 0 / null / absent means NO round was ever recorded (legacy / pre-loop /
+  // merged straight to Done), not "validated in zero rounds"; counting them
+  // dilutes real effort and can drag the mean below 1. They are excluded from
+  // both numerator and denominator and disclosed as missõesSemRonda. When no
+  // mission has ≥1 round, the mean is null ("sem dados") — never 0, the
+  // misleading value F8/F10 exist to prevent (mirrors sumNonNull / spend.mjs).
   let rondasSum = 0;
   let rondasCount = 0;
+  let missõesSemRonda = 0;
   for (const slugRows of bySlug.values()) {
     const latest = slugRows[slugRows.length - 1];
-    if (latest && typeof latest.rounds === "number") {
-      rondasSum += latest.rounds;
+    const rounds = latest && typeof latest.rounds === "number" ? latest.rounds : null;
+    if (rounds !== null && rounds >= 1) {
+      rondasSum += rounds;
       rondasCount++;
+    } else {
+      missõesSemRonda++;
     }
   }
-  const rondasMédia = rondasCount > 0 ? rondasSum / rondasCount : 0;
+  const rondasMédia = rondasCount > 0 ? rondasSum / rondasCount : null;
 
   // featuresTotal / costTotal / timeTotalH: over the LATEST snapshot per slug.
   // Unconditional (not gated on missionsDir) — the cost/time/features cards
@@ -419,6 +431,7 @@ function aggregateScope(rows, missionsDir, planFeeUsd) {
     missõesPorSemana,
     leadTimeMediano,
     rondasMédia,
+    missõesSemRonda,
     tokensTotal,
     atençãoPorFeature,
     costTotal,
@@ -450,7 +463,8 @@ function aggregateScope(rows, missionsDir, planFeeUsd) {
  *   taxaConclusão: number|null,
  *   missõesPorSemana: number|null,
  *   leadTimeMediano: number|null,
- *   rondasMédia: number,
+ *   rondasMédia: number|null,
+ *   missõesSemRonda: number,
  *   tokensTotal: number|null,
  *   atençãoPorFeature: number|null,
  *   costTotal: number|null,
