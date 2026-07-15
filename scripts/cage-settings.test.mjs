@@ -22,11 +22,14 @@ import {
   denyRules,
   gateCommandRules,
   loadTemplate,
+  mcpConfigDenyRules,
+  mcpConfigPath,
   parentEnvRules,
   renderBashHook,
   renderCageSettings,
   machineSandboxEnabled,
   unmatchedCriticalGlobs,
+  visualValidatorAllowRules,
   writeCageSettings,
 } from "./cage-settings.mjs";
 import { fileURLToPath } from "node:url";
@@ -575,5 +578,54 @@ test("writeCageSettings: the written cage file, re-read from disk, passes its ow
     assert.ok(onDisk.permissions.deny.length > 0, "the fresh cage must carry Critical-File rules");
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ─── F9 cage-vision: the visual-validator seat (browser + verdict, nothing more) ──
+
+test("visualValidatorAllowRules: exactly mcp__playwright + verdict, no git-write", () => {
+  const rules = visualValidatorAllowRules();
+  assert.deepEqual(rules, ["mcp__playwright", "Bash(node scripts/verdict.mjs)", "Bash(node scripts/verdict.mjs *)"]);
+  assert.ok(!rules.some((r) => /git (add|commit|push)/.test(r)), "a validator must get no git-write allow");
+});
+
+test("mcpConfigPath: lands the Playwright MCP config inside the worktree .claude/", () => {
+  assert.equal(mcpConfigPath(WT), `${WT}/.claude/mcp-playwright.json`);
+});
+
+test("renderCageSettings: visualValidator adds browser+verdict allow (base off)", () => {
+  const base = renderCageSettings(loadTemplate(), WT);
+  const vv = renderCageSettings(loadTemplate(), WT, { visualValidator: true });
+  for (const want of visualValidatorAllowRules()) {
+    assert.ok(allowRules(vv).includes(want), `visual-validator allow must include ${want}`);
+    assert.ok(!allowRules(base).includes(want), `base cage must NOT include ${want}`);
+  }
+});
+
+test("renderCageSettings: visualValidator denies rewriting its own mcp-playwright.json", () => {
+  const vv = renderCageSettings(loadTemplate(), WT, { visualValidator: true });
+  for (const want of mcpConfigDenyRules(WT)) {
+    assert.ok(denyRules(vv).includes(want), `visual-validator must deny ${want}`);
+  }
+});
+
+test("renderCageSettings: visualValidator keeps every base deny + audits clean", () => {
+  const base = renderCageSettings(loadTemplate(), WT);
+  const vv = renderCageSettings(loadTemplate(), WT, { visualValidator: true });
+  for (const d of denyRules(base)) {
+    assert.ok(denyRules(vv).includes(d), `visual-validator dropped a base deny: ${d}`);
+  }
+  assert.deepEqual(auditCageSettings(vv), [], "the visual-validator cage must audit clean (anchoring intact)");
+});
+
+test("renderCageSettings: visualValidator STILL denies the secret-read path (R4 plant-and-prove)", () => {
+  // The canary is planted under ~/.config/amiticia (the z.ai creds dir). The tool /
+  // recognized-bash path to it must be denied even for the browser-bearing seat.
+  // (A python one-liner bypasses this — the documented Tier-A residual — no OS sandbox here.)
+  const vv = renderCageSettings(loadTemplate(), WT, { visualValidator: true });
+  assert.ok(denyRules(vv).includes("Read(~/.config/amiticia/**)"), "creds/canary dir Read must stay denied");
+  assert.ok(denyRules(vv).includes("WebFetch"), "WebFetch must stay denied");
+  for (const net of ["Bash(curl:*)", "Bash(wget:*)", "Bash(nc:*)"]) {
+    assert.ok(denyRules(vv).includes(net), `network exfil path ${net} must stay denied`);
   }
 });

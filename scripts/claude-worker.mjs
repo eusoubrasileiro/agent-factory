@@ -56,7 +56,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { cageSettingsPath, writeCageSettings } from "./cage-settings.mjs";
+import { cageSettingsPath, mcpConfigPath, writeCageSettings } from "./cage-settings.mjs";
 import { isMainModule } from "./lib/is-main.mjs";
 import { resolveProject } from "./lib/project.mjs";
 import { assertKnownProject, DEFAULT_GRACE_MS, killGracefully } from "./lib/worker-common.mjs";
@@ -356,9 +356,36 @@ function recordMetric(slug, event, project) {
   }
 }
 
+/**
+ * Playwright-only MCP config for a VISUAL-VALIDATOR seat (F9 cage-vision).
+ *
+ * Written fresh into `<worktree>/.claude/mcp-playwright.json` at spawn (the seat
+ * cannot author or edit it — see `mcpConfigDenyRules`). Declares exactly ONE
+ * stdio server, `playwright`, run `--isolated` so its ephemeral Chrome profile
+ * never collides with the operator's own single-instance driver
+ * (`[[playwright-mcp-single-instance]]`). Combined with `--strict-mcp-config` on
+ * the spawn, this is the seat's ENTIRE MCP surface — no whatsapp/supabase/etc.
+ *
+ * @param {string} worktreeAbs @returns {string} the config path
+ */
+export function writePlaywrightMcpConfig(worktreeAbs) {
+  const out = mcpConfigPath(worktreeAbs);
+  const config = {
+    mcpServers: {
+      playwright: { type: "stdio", command: "npx", args: ["@playwright/mcp@latest", "--isolated"], env: {} },
+    },
+  };
+  mkdirSync(path.dirname(out), { recursive: true });
+  writeFileSync(out, `${JSON.stringify(config, null, 2)}\n`);
+  return out;
+}
+
 function runClaude(opts, env, settingsPath) {
   return new Promise((resolve) => {
     const args = ["-p", "--output-format", "json", "--settings", settingsPath, "--model", opts.model];
+    // F9: a visual-validator seat drives ONLY Playwright, and only that server —
+    // --strict-mcp-config drops every other MCP the operator has configured.
+    if (opts.mcpConfigPath) args.push("--mcp-config", opts.mcpConfigPath, "--strict-mcp-config");
     if (opts.session) args.push("--resume", opts.session);
     else if (opts.continue) args.push("--continue");
     args.push(opts.prompt);
@@ -399,7 +426,7 @@ function usage() {
     "Usage:\n" +
       "  node scripts/claude-worker.mjs --dir <worktree> --model <model> --project <id>\n" +
       "    (--prompt <text> | --prompt-file <path>) [--slug <slug>]\n" +
-      "    [--metric-seat worker|validator] [--session <id>] [--continue]\n" +
+      "    [--metric-seat worker|validator] [--with-playwright] [--session <id>] [--continue]\n" +
       "    [--timeout <ms>] [--json-out <path>] [--allow-any-dir] [--allow-uncaged]\n" +
       "    [--allow-anthropic] [--creds <path>]\n",
   );
@@ -417,6 +444,7 @@ function parseArgs(argv) {
       case "--slug": opts.slug = args[++i]; break;
       case "--project": opts.project = args[++i]; break;
       case "--metric-seat": opts.metricSeat = args[++i]; break;
+      case "--with-playwright": opts.withPlaywright = true; break;
       case "--session": opts.session = args[++i]; break;
       case "--continue": opts.continue = true; break;
       case "--timeout": opts.timeout = Number(args[++i]); break;
@@ -472,10 +500,13 @@ async function main() {
     return 2;
   }
 
-  // Guard 2: a fresh cage at every spawn, or no spawn.
+  // Guard 2: a fresh cage at every spawn, or no spawn. A --with-playwright seat
+  // renders the visual-validator variant (browser+verdict allow, MCP self-edit
+  // deny) and gets its Playwright-only MCP config written alongside (F9).
   let settingsPath;
   try {
-    settingsPath = writeCageSettings(dirAbs, { project: opts.project });
+    settingsPath = writeCageSettings(dirAbs, { project: opts.project, visualValidator: opts.withPlaywright === true });
+    if (opts.withPlaywright) opts.mcpConfigPath = writePlaywrightMcpConfig(dirAbs);
   } catch (err) {
     process.stderr.write(`claude-worker: CAGE NOT INSTALLED — ${err?.message ?? err}\n`);
     if (!opts.allowUncaged) {
