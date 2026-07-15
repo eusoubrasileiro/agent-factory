@@ -1378,7 +1378,7 @@ function statsDurationH(durations) {
  *   - tokensTotal: Σ tokens.total
  *
  * @param {Array<object>} missions — board model missions (with optional `stats`)
- * @returns {Array<{ model: string, missoes: number, passPrimeiraRate: number|null, rondasMedia: number|null, tokensPorFeature: number|null, custoPorFeature: number|null, escalations: number, tokensTotal: number }>}
+ * @returns {Array<{ model: string, missoes: number, passPrimeiraRate: number|null, rondasMedia: number|null, semRonda: number, tokensPorFeature: number|null, custoPorFeature: number|null, escalations: number, tokensTotal: number }>}
  */
 /**
  * Canonical model id for A/B grouping: strip a provider/plan prefix (everything
@@ -1412,6 +1412,7 @@ export function aggregateAgents(missions) {
     let passFirst = 0;
     let roundsSum = 0;
     let roundsCount = 0;
+    let semRonda = 0; // F8: missions excluded from rondasMedia (rounds 0/null/absent)
     let tokensSum = 0;
     let featuresSum = 0;
     let escalations = 0;
@@ -1420,10 +1421,18 @@ export function aggregateAgents(missions) {
     for (const m of ms) {
       const rounds = typeof m.stats?.rounds === "number" ? m.stats.rounds : null;
       const passed = m.lastVerdict?.verdict === "PASS";
-      if (passed && rounds === 1) passFirst++;
-      if (rounds !== null) {
+      if (passed && rounds === 1) passFirst++; // R4: PASS de 1ª denominator stays ms.length — F8 never touches it
+      // F8/R1: a round is one full validation attempt, so a média averages ONLY
+      // missions that actually ran ≥1 recorded round. rounds 0/null/absent means NO
+      // round was ever recorded (legacy / pre-validation-loop / direct merge) —
+      // summing them dilutes real effort and collapses the média below 1 (the
+      // "not-measured conflated with measured-as-zero" disease). Exclude them from
+      // BOTH numerator and denominator; disclose the count as semRonda (R2).
+      if (rounds !== null && rounds >= 1) {
         roundsSum += rounds;
         roundsCount++;
+      } else {
+        semRonda++;
       }
       if (typeof m.stats?.tokens?.total === "number") tokensSum += m.stats.tokens.total;
       if (typeof m.features === "number") featuresSum += m.features;
@@ -1438,6 +1447,7 @@ export function aggregateAgents(missions) {
       missoes: ms.length,
       passPrimeiraRate: ms.length > 0 ? passFirst / ms.length : null,
       rondasMedia: roundsCount > 0 ? roundsSum / roundsCount : null,
+      semRonda, // F8/R2: count excluded from rondasMedia (rounds 0/null/absent)
       tokensPorFeature: featuresSum > 0 ? tokensSum / featuresSum : null,
       custoPorFeature: sawCost && featuresSum > 0 ? costSum / featuresSum : null,
       escalations,
@@ -1694,7 +1704,7 @@ export const AGENTES_TERMS = [
   { label: "Modelo", def: "modelo do worker que executou as missões (stats.json)" },
   { label: "Missões", def: "quantas missões rodaram neste modelo (stats.json)" },
   { label: "PASS de 1ª", def: "fração das missões que passaram na validação na primeira ronda (validate.log)" },
-  { label: "Rondas médias", def: "média de rondas de validação por missão neste modelo (validate.log)" },
+  { label: "Rondas médias", def: "média de rondas de validação sobre as missões com ≥1 ronda registrada neste modelo (validate.log)" },
   { label: "Tokens/feature", def: "tokens totais divididos pelas features neste modelo (stats.json)" },
   { label: "$/feature", def: "custo API total dividido pelas features neste modelo (stats.json)" },
   { label: "Escalações", def: "quantas vezes o validador escalou para humano neste modelo (stats.json)" },
@@ -1733,6 +1743,15 @@ function renderAgentsTab(missions) {
   // agentes-evidence C1: per-project boards aggregate per-project missions (the
   // post-scoping truth) — say so, once, near the numbers.
   const escopo = `    <p class="muted escopo">Só missões deste projeto.</p>`;
+  // F8/R3 — rondasMedia now excludes missions that never recorded a validation
+  // round (rounds 0/null/absent). Disclose the total excluded across the table so
+  // "Rondas médias 1" reads true AND legible — not as if the zeros were hidden.
+  // Rendered ONLY when at least one mission was excluded (Σ semRonda > 0).
+  const semRondaTotal = agents.reduce((sum, a) => sum + (a.semRonda ?? 0), 0);
+  const rondasNota =
+    semRondaTotal > 0
+      ? `    <p class="muted rondas-nota">${esc(semRondaTotal)} missões sem ronda de validação registrada (anteriores ao loop de validação ou mescladas direto) ficam fora da média de rondas.</p>`
+      : "";
   // F4a/A2+A3 — headers + legenda from the one column vocabulary constant.
   // F1/A2 — each header carries a VISIBLE ⓘ tip (title= kept as fallback). The
   // header row renders in BOTH branches so a project with no agent stats (e.g.
@@ -1775,6 +1794,7 @@ ${rows}
         </tbody>
       </table>
 ${escopo}
+${rondasNota}
 ${legenda}
   </section>`;
 }

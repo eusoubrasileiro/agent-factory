@@ -1702,6 +1702,99 @@ test("aggregateAgents: the same model under two ids merges into ONE row (canonic
   assert.equal(byModel["claude-sonnet-4-6"], 1);
 });
 
+// ─── rondas-honesty (F8): rondas-média excludes never-validated missions ───────
+//
+// A round is one full validation attempt, so a per-model *average* below 1 is
+// nonsensical. `rounds: 0` / null / absent does NOT mean "validated in zero
+// rounds" — it means no validation round was ever recorded (legacy/pre-loop/direct
+// merge). The média must therefore average ONLY over missions with ≥1 recorded
+// round (R1), disclose the excluded count as `semRonda` (R2), and the Agentes tab
+// must say so (R3). PASS de 1ª is a different question and stays untouched (R4).
+
+test("aggregateAgents (F8): rondasMedia averages ONLY over missions with rounds ≥ 1; zeros excluded from numerator AND denominator (R1/R2)", () => {
+  // rounds [0,0,1,1]: média over the two ≥1 → (1+1)/2 = 1, not the old 0.5.
+  const glm = aggregateAgents([
+    missionWithStats("a", { models: { worker: "glm-5.2" }, rounds: 0 }),
+    missionWithStats("b", { models: { worker: "glm-5.2" }, rounds: 0 }),
+    missionWithStats("c", { models: { worker: "glm-5.2" }, rounds: 1 }),
+    missionWithStats("d", { models: { worker: "glm-5.2" }, rounds: 1 }),
+  ]).find((x) => x.model === "glm-5.2");
+  assert.equal(glm.rondasMedia, 1, "(1+1)/2 — zeros out of both numerator and denominator");
+  assert.equal(glm.semRonda, 2, "the two rounds:0 missions are disclosed");
+  assert.equal(glm.missoes, 4, "ms.length unchanged — only the média's denominator narrowed");
+});
+
+test("aggregateAgents (F8): a model with NO recorded rounds (all 0/null/absent) → rondasMedia null, all counted in semRonda — never 0, never NaN", () => {
+  const allZero = aggregateAgents([
+    missionWithStats("a", { models: { worker: "glm-5.2" }, rounds: 0 }),
+    missionWithStats("b", { models: { worker: "glm-5.2" }, rounds: 0 }),
+    missionWithStats("c", { models: { worker: "glm-5.2" }, rounds: 0 }),
+  ]).find((x) => x.model === "glm-5.2");
+  assert.equal(allZero.rondasMedia, null, "no ≥1 rounds → null (renders 'sem dados')");
+  assert.equal(allZero.semRonda, 3);
+
+  const allAbsentish = aggregateAgents([
+    missionWithStats("a", { models: { worker: "glm-5.2" } }),              // absent
+    missionWithStats("b", { models: { worker: "glm-5.2" }, rounds: null }), // null
+    missionWithStats("c", { models: { worker: "glm-5.2" }, rounds: "n/a" }), // non-number
+  ]).find((x) => x.model === "glm-5.2");
+  assert.equal(allAbsentish.rondasMedia, null);
+  assert.equal(allAbsentish.semRonda, 3);
+});
+
+test("aggregateAgents (F8): mixed rounds [2,0,1] → rondasMedia 1.5 (3÷2), semRonda 1", () => {
+  const glm = aggregateAgents([
+    missionWithStats("a", { models: { worker: "glm-5.2" }, rounds: 2 }),
+    missionWithStats("b", { models: { worker: "glm-5.2" }, rounds: 0 }),
+    missionWithStats("c", { models: { worker: "glm-5.2" }, rounds: 1 }),
+  ]).find((x) => x.model === "glm-5.2");
+  assert.equal(glm.rondasMedia, 1.5, "(2+1)/2 — the 0 excluded");
+  assert.equal(glm.semRonda, 1);
+});
+
+test("aggregateAgents (F8): PASS de 1ª denominator stays ms.length (R4 — the fix must not touch it)", () => {
+  // rounds [0,1,3]: exactly one pass-clean-on-round-1. The rate divides by ALL
+  // three missions (ms.length), NOT by the two with rounds ≥ 1 — pinning R4.
+  const glm = aggregateAgents([
+    missionWithStats("a", { models: { worker: "glm-5.2" }, rounds: 0 }, { lastVerdict: { verdict: "PASS", round: 0 } }),
+    missionWithStats("b", { models: { worker: "glm-5.2" }, rounds: 1 }, { lastVerdict: { verdict: "PASS", round: 1 } }),
+    missionWithStats("c", { models: { worker: "glm-5.2" }, rounds: 3 }, { lastVerdict: { verdict: "PASS", round: 3 } }),
+  ]).find((x) => x.model === "glm-5.2");
+  assert.equal(glm.passPrimeiraRate, 1 / 3, "1 pass-first ÷ 3 (ms.length) — unchanged by F8");
+  assert.equal(glm.rondasMedia, 2, "(1+3)/2 — rounds-0 excluded from THIS metric only");
+  assert.equal(glm.semRonda, 1);
+});
+
+test("Agentes (F8): a 'fora da média' note renders with the Σ semRonda total when > 0, and is absent when 0 (R3)", () => {
+  // Two models; 2 + 1 = 3 missions excluded in total.
+  const withExcluded = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      missionWithStats("a", { models: { worker: "glm-5.2" }, rounds: 0 }),
+      missionWithStats("b", { models: { worker: "glm-5.2" }, rounds: 0 }),
+      missionWithStats("c", { models: { worker: "glm-5.2" }, rounds: 1 }),
+      missionWithStats("d", { models: { worker: "claude-sonnet-5" }, rounds: 0 }),
+      missionWithStats("e", { models: { worker: "claude-sonnet-5" }, rounds: 1 }),
+    ],
+  });
+  const panelWith = slicePanel(withExcluded, 'id="tab-agentes"');
+  assert.match(panelWith, /<p class="muted rondas-nota">/);
+  assert.match(panelWith, /3 missões sem ronda de validação registrada/);
+  assert.match(panelWith, /fora da média de rondas\./);
+
+  // No excluded missions anywhere → the note MUST NOT render.
+  const noneExcluded = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    missions: [
+      missionWithStats("a", { models: { worker: "glm-5.2" }, rounds: 1 }),
+      missionWithStats("b", { models: { worker: "glm-5.2" }, rounds: 2 }),
+    ],
+  });
+  const panelNone = slicePanel(noneExcluded, 'id="tab-agentes"');
+  assert.doesNotMatch(panelNone, /rondas-nota/);
+  assert.doesNotMatch(panelNone, /fora da média de rondas/);
+});
+
 test("canonicalModelId: strips provider/plan prefix, keeps distinct models distinct", () => {
   assert.equal(canonicalModelId("zai-coding-plan/glm-5.2"), "glm-5.2");
   assert.equal(canonicalModelId("glm-5.2"), "glm-5.2");
