@@ -1795,6 +1795,62 @@ test("Agentes (F8): a 'fora da média' note renders with the Σ semRonda total w
   assert.doesNotMatch(panelNone, /fora da média de rondas/);
 });
 
+// ─── hist-rondas-honesty (F10): the GLOBAL Histórico stat obeys F8's rule ──────
+//
+// F8 made the Agentes per-model "Rondas médias" column average only over missions
+// with ≥1 recorded round. This finishes the job for the Histórico GLOBAL stat:
+// the "rondas média" card's definition must NAME that ≥1-round denominator (not
+// the misleading "por missão concluída", which matched neither the old all-missions
+// computation nor F8's rule), and the panel must disclose the excluded missions
+// with the same rondas-nota F8 put on the Agentes tab.
+
+test("Histórico (F10): the 'rondas média' def names the ≥1-round denominator and drops 'por missão concluída' (R3)", () => {
+  const term = HISTORICO_TERMS.find((t) => t.label === "rondas média");
+  assert.ok(term, "rondas média is a Histórico term");
+  assert.match(term.def, /≥1 ronda registrada/, "def names the ≥1-round denominator");
+  assert.doesNotMatch(term.def, /por missão concluída/);
+  // The relabelled def lands on the card tip + the legenda (one constant, two surfaces).
+  const html = renderDashboardHtml({ ...EMPTY_MODEL, history: completionHistory() });
+  const panel = html.slice(html.indexOf("<!--hist-start-->"), html.indexOf("<!--hist-end-->"));
+  assert.ok(panel.includes(esc(term.def)), "panel carries the relabelled def");
+});
+
+test("Histórico (F10): rondasMédia null renders 'sem dados' for the card, never '0' (R1/R5)", () => {
+  // fmtStat(null) already yields "sem dados" — this pins that the card reuses it
+  // rather than special-casing a fake 0 (the misleading value F8/F10 exist to kill).
+  const cards = histCardValues(completionHistory({ rondasMédia: null }));
+  const idx = HISTORICO_TERMS.findIndex((t) => t.label === "rondas média");
+  assert.equal(cards[idx].value, "sem dados");
+  assert.equal(cards[idx].semDados, true);
+});
+
+test("Histórico (F10): a 'fora da média' rondas-nota renders when missõesSemRonda > 0, absent when 0 (R4)", () => {
+  // missõesSemRonda > 0 → the Histórico panel discloses the excluded missions.
+  const withExcluded = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    history: completionHistory({ missõesSemRonda: 2 }),
+  });
+  const panelWith = withExcluded.slice(
+    withExcluded.indexOf("<!--hist-start-->"),
+    withExcluded.indexOf("<!--hist-end-->"),
+  );
+  assert.match(panelWith, /<p class="muted rondas-nota">/);
+  assert.match(panelWith, /2 missões sem ronda de validação registrada/);
+  assert.match(panelWith, /fora da média de rondas\./);
+
+  // missõesSemRonda === 0 → the note MUST NOT render (no empty note).
+  const noneExcluded = renderDashboardHtml({
+    ...EMPTY_MODEL,
+    history: completionHistory({ missõesSemRonda: 0 }),
+  });
+  const panelNone = noneExcluded.slice(
+    noneExcluded.indexOf("<!--hist-start-->"),
+    noneExcluded.indexOf("<!--hist-end-->"),
+  );
+  assert.doesNotMatch(panelNone, /rondas-nota/);
+  assert.doesNotMatch(panelNone, /fora da média de rondas/);
+});
+
 test("canonicalModelId: strips provider/plan prefix, keeps distinct models distinct", () => {
   assert.equal(canonicalModelId("zai-coding-plan/glm-5.2"), "glm-5.2");
   assert.equal(canonicalModelId("glm-5.2"), "glm-5.2");
