@@ -165,6 +165,43 @@ export function cageHookPath(worktreeAbs) {
   return path.join(worktreeAbs, ".claude", "cage-bash-hook.mjs");
 }
 
+/**
+ * Where the Playwright-only MCP config lands inside a worktree (F9 cage-vision).
+ * A visual-validator seat is spawned with `--mcp-config <this> --strict-mcp-config`
+ * so it can drive the served board, and ONLY that — the operator's other MCP
+ * servers (whatsapp, supabase, …) are never loaded into an untrusted seat.
+ */
+export function mcpConfigPath(worktreeAbs) {
+  return path.join(worktreeAbs, ".claude", "mcp-playwright.json");
+}
+
+/**
+ * Extra `permissions.allow` rules for a VISUAL-VALIDATOR seat (F9 cage-vision).
+ *
+ * The seat drives Playwright headlessly (`claude -p`), so it must not stall on a
+ * permission prompt for the browser tools — `mcp__playwright` allow-lists every
+ * tool of that one server (and only that server; `--strict-mcp-config` guarantees
+ * no other server is even loaded). It also needs to record its verdict. It gets
+ * NO git-write beyond the base: a validator validates, it does not commit.
+ *
+ * @returns {string[]}
+ */
+export function visualValidatorAllowRules() {
+  return ["mcp__playwright", "Bash(node scripts/verdict.mjs)", "Bash(node scripts/verdict.mjs *)"];
+}
+
+/**
+ * Deny rules protecting the seat's own MCP wiring (F9). The seat must not be able
+ * to rewrite `mcp-playwright.json` and re-point itself at another server — same
+ * discipline the template already applies to `.mcp.json` and `settings*.json`.
+ * @param {string} worktreeAbs @returns {string[]}
+ */
+export function mcpConfigDenyRules(worktreeAbs) {
+  const anchor = path.normalize(worktreeAbs).replace(/\/+$/, "").replace(/^\//, "");
+  const p = `//${anchor}/.claude/mcp-playwright.json`;
+  return [`Edit(${p})`, `Write(${p})`];
+}
+
 /** Render the Bash hook script with {{WORKTREE}} substituted. */
 export function renderBashHook(worktreeAbs, templatePath = HOOK_TEMPLATE_PATH) {
   const anchor = path.normalize(worktreeAbs).replace(/\/+$/, "");
@@ -197,7 +234,11 @@ function bashHookConfig(worktreeAbs) {
  * A trailing slash on `worktreeAbs` would yield `//path//backend` — normalize.
  * @param {object} template — parsed templates/settings-external.json
  * @param {string} worktreeAbs — absolute path, no trailing slash required
- * @param {{criticalFiles?: string[], gateCommands?: string[]}} [opts]
+ * When `opts.visualValidator` is true (F9), the render adds the browser+verdict
+ * allow rules (`visualValidatorAllowRules`) and the MCP-config self-edit denies
+ * (`mcpConfigDenyRules`). This is the ONLY seat kind that carries a browser.
+ *
+ * @param {{criticalFiles?: string[], gateCommands?: string[], sandboxEnabled?: boolean, visualValidator?: boolean}} [opts]
  * @returns {object} the settings object to serialize
  */
 export function renderCageSettings(template, worktreeAbs, opts = {}) {
@@ -205,9 +246,24 @@ export function renderCageSettings(template, worktreeAbs, opts = {}) {
   if (typeof worktreeAbs !== "string" || !path.isAbsolute(worktreeAbs)) {
     throw new Error(`worktree must be an absolute path, got: ${worktreeAbs}`);
   }
-  const { criticalFiles = [], gateCommands = [], sandboxEnabled = machineSandboxEnabled() } = opts || {};
-  const extraDeny = [...criticalFileRules(criticalFiles), ...parentEnvRules(worktreeAbs)];
-  const extraAllow = gateCommandRules(gateCommands);
+  const {
+    criticalFiles = [],
+    gateCommands = [],
+    sandboxEnabled = machineSandboxEnabled(),
+    visualValidator = false,
+  } = opts || {};
+  const extraDeny = [
+    ...criticalFileRules(criticalFiles),
+    ...parentEnvRules(worktreeAbs),
+    // F9: a visual-validator seat is the one seat that carries a browser; deny it
+    // rewriting its own MCP wiring, same as the .mcp.json/settings self-edit denies.
+    ...(visualValidator ? mcpConfigDenyRules(worktreeAbs) : []),
+  ];
+  const extraAllow = [
+    ...gateCommandRules(gateCommands),
+    // F9: allow the browser tools + verdict for a visual-validator; no git-write.
+    ...(visualValidator ? visualValidatorAllowRules() : []),
+  ];
   let merged = {
     ...template,
     permissions: {
@@ -341,7 +397,8 @@ export function writeCageSettings(worktreeAbs, opts = {}) {
   const sandboxEnabled = typeof opts === "object" && opts !== null && "sandboxEnabled" in opts
     ? opts.sandboxEnabled
     : machineSandboxEnabled();
-  const settings = renderCageSettings(template, worktreeAbs, { criticalFiles, gateCommands, sandboxEnabled });
+  const visualValidator = typeof opts === "object" && opts !== null && opts.visualValidator === true;
+  const settings = renderCageSettings(template, worktreeAbs, { criticalFiles, gateCommands, sandboxEnabled, visualValidator });
   const problems = auditCageSettings(settings);
   if (problems.length > 0) throw new Error(`refusing to write a broken cage:\n- ${problems.join("\n- ")}`);
   const out = cageSettingsPath(worktreeAbs);
