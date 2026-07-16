@@ -1,6 +1,23 @@
 # Architect Briefing — Caging the Factory's External Agent Seat (`glm-cage`)
 
-> **Status:** exploration + data-gathering only. This document exists so an architect can
+> **⚠️ SUPERSEDED (2026-07-15) — historical problem-statement, NOT current guidance.**
+> The cage this briefing scopes has since been **built and shipped**. The architecture it
+> deliberately left open was decided:
+> - **The default external seat is Claude Code pointed at z.ai**, driven by
+>   **`scripts/claude-worker.mjs`** — this is what a GLM 5.2 worker runs on today, and it
+>   carries the Critical-File deny cage (the one boundary we have actually proven).
+> - **`scripts/opencode-worker.mjs` is the FALLBACK only** — for providers with no
+>   Anthropic-compatible endpoint. It is NOT the driver; do not reach for it by default.
+> - **To dispatch a worker, follow the shipped procedure, not this doc:** the `mission-build`
+>   skill (`skills/mission-build/SKILL.md`) and RUNBOOK § "The external seat and its cage".
+>   The implemented result and its empirical cage checks live in
+>   [`cage-research-2026-07-09.md`](cage-research-2026-07-09.md).
+>
+> This file is retained **only** as the historical threat-model / building-block survey that
+> informed that design. Everything below §0 was written before the decision and reflects the
+> reality of 2026-07-08 (opencode as the then-driver) — read it as history, act on the RUNBOOK.
+
+> **Status (original, 2026-07-08):** exploration + data-gathering only. This document exists so an architect can
 > write the real implementation plan. It states the problem, the current reality, the
 > threat model, and the building blocks with their trade-offs. It deliberately does **not**
 > pick an architecture — that is the architect's job. Compiled 2026-07-08 from three
