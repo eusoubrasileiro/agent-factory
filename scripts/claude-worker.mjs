@@ -211,6 +211,25 @@ export function makeSeatConfigDir(dirAbs) {
   if (existsSync(operatorCreds)) {
     copyFileSync(operatorCreds, path.join(seatConfig, ".credentials.json"));
   }
+  // Mark the worktree trusted. Without this the CLI treats the fresh config dir as a
+  // never-seen workspace, DISCARDS every `permissions.allow` entry the cage rendered,
+  // and then blocks on an interactive trust dialog no headless seat can answer — the
+  // seat burns its whole timeout at 0 tokens (observed: two 45-min spawns, exit 1).
+  // Trust is not permission: it only says "this directory is not untrusted content".
+  // The cage's deny rules and `--settings` remain the sole authority on what the seat
+  // may touch, so this cannot widen it. A worktree we just dispatched is by definition
+  // ours. Both paths are marked because a worktree's git dir resolves to the main repo.
+  const trusted = { hasTrustDialogAccepted: true, hasCompletedProjectOnboarding: true };
+  const projects = { [dirAbs]: { ...trusted } };
+  const gitCommon = spawnSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
+    cwd: dirAbs,
+    encoding: "utf8",
+  });
+  if (gitCommon.status === 0) {
+    const mainRoot = path.dirname((gitCommon.stdout || "").trim());
+    if (mainRoot && mainRoot !== "." && mainRoot !== dirAbs) projects[mainRoot] = { ...trusted };
+  }
+  writeFileSync(path.join(seatConfig, ".claude.json"), JSON.stringify({ projects }, null, 2));
   return seatConfig;
 }
 
