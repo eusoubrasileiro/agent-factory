@@ -1,0 +1,2 @@
+{"seat":"validator","type":"phase_start","detail":"external:glm-5.2","model":"glm-5.2","ts":"2026-07-15T22:47:15.873Z"}
+{"seat":"validator","type":"phase_end","detail":"external:glm-5.2","model":"glm-5.2","tokens":1160003,"tokensIn":55055,"tokensOut":16052,"tokensReasoning":null,"tokensCacheRead":1088896,"tokensCacheWrite":0,"durationMs":822798,"apiCostUsd":1.226821,"costUsd":1.226821,"ts":"2026-07-15T23:00:58.708Z"}
