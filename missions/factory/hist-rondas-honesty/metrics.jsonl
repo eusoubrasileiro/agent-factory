@@ -1,0 +1,4 @@
+{"seat":"worker","type":"phase_start","detail":"external:glm-5.2","model":"glm-5.2","ts":"2026-07-15T23:12:05.334Z"}
+{"seat":"worker","type":"phase_end","detail":"external:glm-5.2","model":"glm-5.2","tokens":3312747,"tokensIn":260191,"tokensOut":26444,"tokensReasoning":null,"tokensCacheRead":3026112,"tokensCacheWrite":0,"durationMs":1427299,"apiCostUsd":3.4806589999999997,"costUsd":3.4806589999999997,"ts":"2026-07-15T23:35:52.670Z"}
+{"seat":"validator","type":"phase_start","detail":"external:glm-5.2","model":"glm-5.2","ts":"2026-07-15T23:41:15.393Z"}
+{"seat":"validator","type":"phase_end","detail":"external:glm-5.2","model":"glm-5.2","tokens":263151,"tokensIn":47312,"tokensOut":1951,"tokensReasoning":null,"tokensCacheRead":213888,"tokensCacheWrite":0,"durationMs":81837,"apiCostUsd":0.39564199999999994,"costUsd":0.39564199999999994,"ts":"2026-07-15T23:42:37.276Z"}
