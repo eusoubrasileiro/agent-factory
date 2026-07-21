@@ -1,4 +1,5 @@
 [
+  "**/*.md",
   "scripts/verdict.mjs",
   "scripts/ratify.mjs",
   "scripts/metrics.mjs",
