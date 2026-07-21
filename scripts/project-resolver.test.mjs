@@ -74,11 +74,19 @@ test("resolveProject: wahub profile exposes gate, criticalFiles, seat.env, valid
   assert.equal(r.id, "wahub");
   assert.ok(r.profile, "profile key must exist");
 
-  // gate from projects/wahub/project.json (5 commands, verbatim first/last).
+  // gate from projects/wahub/project.json, exposed verbatim and in order.
   assert.ok(Array.isArray(r.profile.gate));
-  assert.equal(r.profile.gate.length, 5);
-  assert.equal(r.profile.gate[0], "pnpm quality-gate");
-  assert.equal(r.profile.gate.at(-1), "pnpm lint");
+  assert.equal(r.profile.gate.length, 7);
+  assert.equal(r.profile.gate[0], "pnpm test");
+  // quality-gate READS the coverage reports the test:coverage commands write, so it
+  // must run LAST. Asserted because the ordering is load-bearing: with quality-gate
+  // first (the pre-2026-07-16 order) every coverage metric read 0 in a fresh worktree
+  // and the gate was unpassable from a caged seat. See project.json `_gate_note`.
+  assert.equal(r.profile.gate.at(-1), "pnpm quality-gate");
+  assert.ok(
+    r.profile.gate.indexOf("pnpm test:coverage") < r.profile.gate.indexOf("pnpm quality-gate"),
+    "test:coverage must precede quality-gate — it writes the report quality-gate reads",
+  );
 
   // trunk / branchPrefix from project.json.
   assert.equal(r.profile.trunk, "main");
