@@ -86,10 +86,23 @@ Then, via the `playwright` MCP (GLM-5.2 validator seat, spawned `--with-playwrig
   for the human-legibility judgement. Any claimed-but-not-visible element → **FAIL** with the
   snapshot as evidence.
 
-**Serialization landmine:** the `playwright` MCP is a **single shared Chrome profile**
-(`[[playwright-mcp-single-instance]]`). Never run two validator seats against it at once —
-run sequentially, or pass `--isolated`. A second concurrent driver dies on a stale
-SingletonLock.
+**Parallelism (validator seats run concurrently — measured 2026-07-15).** The old
+"single shared Chrome profile, run sequentially" caveat does **not** apply to caged
+validator seats: `--with-playwright` writes an MCP config that launches
+`@playwright/mcp@latest --isolated` (`claude-worker.mjs:375`). `--isolated` keeps the
+profile **in memory** — Playwright's `IsolatedContextFactory` calls `browserType.launch()`
+with **no `user-data-dir`**, so there is no on-disk profile and no `SingletonLock`. Two (or N)
+`--with-playwright` seats therefore drive N independent browsers **at the same time**; fan them
+out in parallel (one per surface × viewport) to keep the eyes-on regression fast. Measured
+directly: two `--isolated` launches concurrent → both PASS; two persistent launches on the
+**same** `--user-data-dir` → `ProcessSingleton` collision; two persistent on **different** dirs →
+both PASS. The single-instance trap survives in exactly one place: the **operator's own**
+`~/.claude.json` driver still uses the persistent shared profile
+(`~/.playwright-mcp-profile/profile`, `[[playwright-mcp-single-instance]]`), so two *operator*
+sessions still collide — but that profile is a **different** profile from every `--isolated`
+seat, so a validator fleet never contends with the operator's browser either. If you ever point a
+validator at a persistent `--user-data-dir` (you should not), the stale-lock fix is
+`rm -f <dir>/Singleton{Lock,Cookie,Socket}` after confirming its PID is dead.
 
 If a future engine change adds another user-facing surface, add its probe here — never to a
 `skills/` file.
