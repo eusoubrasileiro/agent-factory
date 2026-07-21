@@ -19,8 +19,24 @@ node_modules/
 # Engine self-hosting: git worktrees for factory missions.
 .worktrees/
 
-# Playwright MCP transient dumps (console logs + page snapshots) and scratch
-# board screenshots — regenerated on every validator run, never repo content.
-.playwright-mcp/
-/factory-board.png
-/factory-missions.png
+# ── Rendered artifacts: screenshots, diagrams, mockups ──────────────────────
+# Ratified 2026-07-21. Validators and playwright probes generate these by design —
+# they SHOULD exist on disk, they must never enter git.
+# .gitignore is a CRITICAL FILE — do not weaken without Andre's approval.
+# Location-based, not `*.png`: this repo has no source images today, but a board
+# asset or a doc diagram would be a legitimate future addition.
+# Supersedes the old per-file board-screenshot denies (/factory-board.png, …).
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif
+/*.webp
+/*.pdf
+docs/**/*.png
+docs/**/*.jpg
+docs/**/*.jpeg
+docs/**/*.html
+missions/**/screenshots/
+**/screenshots/
+**/.playwright-mcp/
+test-results/
