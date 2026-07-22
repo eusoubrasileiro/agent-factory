@@ -278,7 +278,7 @@ appending snapshots never triggers a republish loop.
 **Intake tab.** A project whose profile declares `intake[]` gets a fourth tab: the
 requirement as the client stated it, followed forward to its verdict.
 ```json
-"intake": [{ "file": "../../../clients/tenant-a/requirements-intake.md",
+"intake": [{ "file": "../../../clients/tenant-a/requirements.md",
              "prefix": "IN", "label": "Tenant A — WaHub / Nexus" }]
 ```
 `file` is relative to the factory root, like `path`. The chain is
