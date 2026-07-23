@@ -22,6 +22,10 @@
 ## House-standard gate (always applies)
 - `pnpm quality-gate` exits 0 (size/complexity/dup/types/coverage vs baseline).
 - `pnpm test` + `tsc --noEmit` (backend & frontend) + `pnpm lint` all green.
+- `pnpm test:coverage` (backend & frontend) green — quality-gate reads their output.
+- The project's **canonical `pnpm test:e2e`** green — it must include the project's
+  real-infra layer (e.g. a real local Supabase stack). Mocked-green alone is never "done":
+  mocked units pass SQL that real Postgres rejects.
 - No edit to a Critical File unless this mission's plan named it.
 
 ## Robustness (where relevant)

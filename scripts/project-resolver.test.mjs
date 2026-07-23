@@ -76,8 +76,11 @@ test("resolveProject: wahub profile exposes gate, criticalFiles, seat.env, valid
 
   // gate from projects/wahub/project.json, exposed verbatim and in order.
   assert.ok(Array.isArray(r.profile.gate));
-  assert.equal(r.profile.gate.length, 7);
+  assert.equal(r.profile.gate.length, 8);
   assert.equal(r.profile.gate[0], "pnpm test");
+  // The canonical e2e umbrella (house standard, templates/validation.md): its
+  // presence is what the conformance suite's e2e-XOR-exemption test keys on.
+  assert.ok(r.profile.gate.includes("pnpm test:e2e"), "gate must carry the canonical pnpm test:e2e");
   // quality-gate READS the coverage reports the test:coverage commands write, so it
   // must run LAST. Asserted because the ordering is load-bearing: with quality-gate
   // first (the pre-2026-07-16 order) every coverage metric read 0 in a fresh worktree

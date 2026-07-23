@@ -61,6 +61,17 @@ product truth, you now know the decisions this feature forces. Extract them:
   E2E command, MCP probe or UI driver proves each kind of claim for this project.
   Every assertion also carries the house-standard gate (`project.json → gate[]`).
 - The worker will NOT see these run. You own "done", not the worker.
+- **AI-engineering lane (bot / prompt / agent-graph missions).** When the mission
+  touches the project's agent surfaces (e.g. `backend/src/bot/**`, prompts, tool
+  schemas), the contract MUST additionally include a **design brief in markdown** —
+  graph delta, prompt/tool-description diffs, and the SDK-pattern citation the
+  knowledge protocol requires (Context7 / docs-langchain checked FIRST) — and Andre
+  ratifies that brief **before** build. Fire-and-forget is suspended in this lane:
+  Andre is in the design loop (his stated exception — AI-engineering architecture
+  he reviews personally), the **eval gate** is the lane's real-stack proof (evals,
+  not e2e, catch doctrine violations), and every bot-path commit carries a
+  `Ratified-by: Andre` trailer so the product's integrity reviewer can see the
+  ratification. Rationale page: `docs/ai-lane-2026-07-23.md`.
 - Once `brief.md` + `contract.md` both exist, `pnpm board:sync <slug> --project <project>` reflects
   the card as `Needs Human (gate:approve-plan)` — the board, not you, tells Andre
   a plan is waiting on him.

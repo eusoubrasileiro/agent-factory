@@ -7,5 +7,6 @@
   "branchPrefix": "agent/",
   "worktreeMarker": "/.worktrees/",
   "gate": ["pnpm test"],
+  "noCanonicalE2E": "pending onboarding review — no canonical e2e defined yet (flagged 2026-07-23)",
   "dispatch": "git worktree add .worktrees/{slug} -b agent/{slug}"
 }
