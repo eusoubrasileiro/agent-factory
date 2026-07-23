@@ -304,6 +304,47 @@ for (const id of PROFILE_IDS) {
       assert.ok(existsSync(it.file), `intake file does not exist: ${it.file}`);
     }
   });
+
+  // 12 — canonical e2e gate XOR explicit exemption. House standard
+  // (templates/validation.md): every profile's gate[] MUST include its canonical
+  // `pnpm test:e2e` (the umbrella that covers the real-infra layer), OR
+  // project.json declares a non-empty string `noCanonicalE2E` explaining why the
+  // project has none. Exactly one — both present means the exemption went stale;
+  // both absent means mocked-green can masquerade as "done".
+  test(`profile ${id}: gate[] carries a canonical test:e2e XOR project.json declares noCanonicalE2E`, () => {
+    assert.ok(projectJson, "project.json missing or unparseable");
+    const gate = Array.isArray(projectJson.gate) ? projectJson.gate : [];
+    const hasE2E = gate.some((g) => typeof g === "string" && g.includes("test:e2e"));
+
+    if ("noCanonicalE2E" in projectJson) {
+      assert.equal(
+        typeof projectJson.noCanonicalE2E,
+        "string",
+        `noCanonicalE2E is not a string: ${typeof projectJson.noCanonicalE2E}`,
+      );
+      assert.ok(
+        projectJson.noCanonicalE2E.length > 0,
+        "noCanonicalE2E is the empty string — an exemption must state its reason",
+      );
+    }
+    const hasExemption =
+      typeof projectJson.noCanonicalE2E === "string" && projectJson.noCanonicalE2E.length > 0;
+
+    if (hasE2E) {
+      assert.ok(
+        !hasExemption,
+        "gate[] includes a test:e2e command AND project.json declares noCanonicalE2E — " +
+          "the exemption is stale; remove it (rationale: templates/validation.md)",
+      );
+    } else {
+      assert.ok(
+        hasExemption,
+        "gate[] has no test:e2e command and project.json declares no noCanonicalE2E — " +
+          "every profile must run its canonical e2e umbrella or exempt itself explicitly " +
+          "(rationale: templates/validation.md)",
+      );
+    }
+  });
 }
 
 // ─── Resolver robustness: a corrupt intake[] must never throw ─────────────────
