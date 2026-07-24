@@ -1,0 +1,15 @@
+[
+  ".gitignore",
+  "**/*.md",
+  "docs/PRD.md",
+  "docs/PLAN.md",
+  "docs/EXECUTION_PLAN.md",
+  "CLAUDE.md",
+  "scripts/openwrt/**",
+  "scripts/dispatch-worktree.sh",
+  "scripts/streamguard.service",
+  "scripts/streamguard-web.service",
+  "test/pcaps/**",
+  "test/run_tests.sh",
+  ".claude/settings.json"
+]
