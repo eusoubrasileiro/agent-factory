@@ -1,0 +1,15 @@
+{
+  "id": "streamguard",
+  "name": "StreamGuard — family streaming quota + schedule enforcement (C/nDPI)",
+  "path": "../../../../side-projects/stream_guard",
+  "prd": "docs/PRD.md",
+  "trunk": "streamguard",
+  "branchPrefix": "agent/",
+  "worktreeMarker": "/.worktrees/",
+  "gate": [
+    "make -C src",
+    "make -C src test-unit"
+  ],
+  "noCanonicalE2E": "no chat/UI surface; the deterministic gate (C build + unit tests) plus pcap-replay probes in validation.md carry the behavioral load. Integration tests are excluded from the gate because they replay multi-GB captures.",
+  "dispatch": "bash scripts/dispatch-worktree.sh {slug}"
+}
