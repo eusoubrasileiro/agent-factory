@@ -26,14 +26,14 @@ fault, not a mission failure.
 
 ## Behavioral probes (pcap replay)
 
-Fixtures live in `test/pcaps/` (gitignored, symlinked into worktrees):
+Fixtures live in `test/integration/pcaps/` (gitignored, symlinked into worktrees):
 `youtube_45sec.pcap`, `instagram_45sec.pcap`, `browsing_30sec.pcap`,
 `multi_client.pcap`.
 
 Replay runs need no root and no router:
 
 ```bash
-./src/streamguard -r test/pcaps/youtube_45sec.pcap -d
+./src/streamguard -r test/integration/pcaps/youtube_45sec.pcap -d
 ```
 
 Assertions a validator should make, per mission scope:

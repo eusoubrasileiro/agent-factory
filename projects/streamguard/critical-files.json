@@ -8,8 +8,7 @@
   "scripts/openwrt/**",
   "scripts/dispatch-worktree.sh",
   "scripts/streamguard.service",
-  "scripts/streamguard-web.service",
-  "test/pcaps/**",
-  "test/run_tests.sh",
+  "test/integration/pcaps/**",
+  "test/integration/run_tests.sh",
   ".claude/settings.json"
 ]

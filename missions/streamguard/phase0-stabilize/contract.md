@@ -25,16 +25,16 @@ replay accounting otherwise unchanged.
 | A7 | A corrupt/unparseable state file is reported at WARN level and does not silently present as "zero clients blocked". | unit test asserting the log level/`state_load` return path |
 | A8 | Startup resync of a client whose block is inconsistent with its quota issues a firewall `del` before clearing local state (enforce mode). | unit test with the enforcer stub recording the ops issued |
 | A9 | No `system()` call is reachable from `packet_handler`; firewall effects are enqueued and executed off the capture path. | `grep`/call-graph inspection: no direct or transitive `system(`/`firewall_execute(` call from `packet_handler`; plus a unit test that enqueuing from the packet path performs no immediate execution |
-| A10 | Startup refuses a netmask other than /24 with an explanatory error instead of silently mis-indexing clients. | run `./src/streamguard -r test/pcaps/browsing_30sec.pcap -m 255.255.254.0` → non-zero exit, message names the /24 limitation |
+| A10 | Startup refuses a netmask other than /24 with an explanatory error instead of silently mis-indexing clients. | run `./src/streamguard -r test/integration/pcaps/browsing_30sec.pcap -m 255.255.254.0` → non-zero exit, message names the /24 limitation |
 | A11 | The web dashboard binds `127.0.0.1` by default and honours `STREAMGUARD_BIND`; a non-localhost bind without `STREAMGUARD_WEB_PASSWORD` logs a warning. | inspection of `scripts/web/app.py` + run with env overrides |
-| A12 | Replaying `test/pcaps/youtube_45sec.pcap` still logs `STREAMING:` lines and a non-zero session total; `browsing_30sec.pcap` logs none. Session accounting is unchanged vs. the pre-mission binary. | pcap replay probe, compared against baseline output captured before the change |
+| A12 | Replaying `test/integration/pcaps/youtube_45sec.pcap` still logs `STREAMING:` lines and a non-zero session total; `browsing_30sec.pcap` logs none. Session accounting is unchanged vs. the pre-mission binary. | pcap replay probe, compared against baseline output captured before the change |
 
 ## House-standard gate (always applies)
 
 - `make -C src` exits 0 with no new compiler warnings (`-Wall -Wextra`).
 - `make -C src test-unit` exits 0; all pre-existing unit tests still pass.
 - No edit to a Critical File (`docs/**`, `CLAUDE.md`, `scripts/openwrt/**`,
-  `test/pcaps/**`, `.gitignore`) — none are needed by this mission.
+  `test/integration/pcaps/**`, `.gitignore`) — none are needed by this mission.
 - No new runtime dependency beyond what `src/Makefile` already links.
 
 ## Robustness

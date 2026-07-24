@@ -54,11 +54,50 @@ Build: `make -C src` then `make -C src test-unit`. The vendored `nDPI/` and
 `libpcap/` trees are symlinked into the worktree by the dispatch script;
 never modify them.
 
-Unit tests live in `test/unit/*.c`, one binary per file, registered in
-`test/Makefile`. Static functions are exposed to tests via the `STATIC` macro
-(`src/streamguard.h:146` — `#ifdef TESTING` makes them non-static). Follow
-that existing pattern: add new testable functions to the `#ifdef TESTING`
-block in `src/streamguard.h`.
+### The test harness — read this before writing a single test
+
+Unit tests use the **Criterion** framework (`libcriterion-dev`), NOT plain C
+`main()`. One binary per `test/unit/*.c` file, **auto-discovered by glob**
+(`UNIT_SRCS = $(wildcard unit/*.c)` in `test/Makefile:44`) — adding a new
+`.c` file there is all that is required. Do **not** add it to `test/Makefile`;
+there is nothing to register.
+
+Idiom, from `test/unit/test_state.c`:
+
+```c
+#include <criterion/criterion.h>
+#include "streamguard_test.h"          /* test helpers, see below */
+
+static void setup(void)    { test_clear_clients(); }
+static void teardown(void) { /* remove temp files */ }
+
+TestSuite(state, .init = setup, .fini = teardown);
+
+Test(state, load_restores_clients) {
+    cr_assert(test_client_in_use(50) == 1, "Client 50 should be in use");
+    cr_assert_eq(seconds, 5000, "Streaming seconds should be 5000");
+    cr_assert_not_null(f, "State file should be created");
+}
+```
+
+Each test binary links the **whole daemon**: `test/Makefile:52-53` compiles
+`../src/streamguard.c` with `-Dmain=streamguard_main` so its `main()` does not
+clash with Criterion's. `CFLAGS` includes `-DTESTING`, which flips the
+`STATIC` macro so static functions become externally visible
+(`src/streamguard.h:141-166`). Declare any new testable function inside that
+`#ifdef TESTING` block.
+
+Existing test helpers available via `streamguard_test.h`:
+`test_clear_clients()`, `test_init_client(idx, ip, seconds, date)`,
+`test_get_client(idx, &ip, &seconds, &blocked)`, `test_client_in_use(idx)`,
+`test_set_lan_network(net, mask)`, `test_set_state_file_path(path)`,
+`test_set_video_only_mode(mode)`.
+
+`MODULE_OBJS` (`test/Makefile:41`) lists the module objects linked into every
+test binary — if a feature deletes a module, remove it there too.
+
+Static functions are exposed to tests via the `STATIC` macro; follow that
+existing pattern rather than inventing a new seam.
 
 Key structures (`src/streamguard.h:70-86`), abbreviated:
 
