@@ -135,7 +135,8 @@ export function loadProjects(factoryRoot = FACTORY_ROOT) {
  * @returns {{gate: string[], trunk: string, branchPrefix: string,
  *            criticalFiles: string[], seatEnvPath: string|null,
  *            validationPath: string|null,
- *            intake: Array<{file: string, prefix: string, label: string}>}}
+ *            intake: Array<{file: string, prefix: string, label: string}>,
+ *            legacyReqMap: Record<string, string[]>}}
  */
 function buildProfile(entry, factoryRoot) {
   const projectDir = path.join(factoryRoot, "projects", entry.id);
@@ -162,6 +163,26 @@ function buildProfile(entry, factoryRoot) {
     }
   }
 
+  // legacy-req-map.json maps a RETIRED requirement id to the intake ids it came
+  // from — the migration seam for a project whose id grammar changed but whose
+  // pre-migration mission briefs still declare the old ids. Object of
+  // id → string[]; missing/corrupt → {}. `_`-prefixed keys are prose, not data.
+  let legacyReqMap = {};
+  const lrmPath = path.join(projectDir, "legacy-req-map.json");
+  if (existsSync(lrmPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(lrmPath, "utf8"));
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        for (const [k, v] of Object.entries(parsed)) {
+          if (k.startsWith("_") || !Array.isArray(v)) continue;
+          legacyReqMap[k] = v.filter((x) => typeof x === "string");
+        }
+      }
+    } catch {
+      legacyReqMap = {}; // corrupt file → no aliases, never throw
+    }
+  }
+
   // seat.env + validation.md resolve to ABS paths when present, null otherwise.
   const seatEnv = path.join(projectDir, "seat.env");
   const seatEnvPath = existsSync(seatEnv) ? seatEnv : null;
@@ -182,7 +203,17 @@ function buildProfile(entry, factoryRoot) {
       }));
   }
 
-  return { gate, trunk, branchPrefix, worktreeMarker, criticalFiles, seatEnvPath, validationPath, intake };
+  return {
+    gate,
+    trunk,
+    branchPrefix,
+    worktreeMarker,
+    criticalFiles,
+    seatEnvPath,
+    validationPath,
+    intake,
+    legacyReqMap,
+  };
 }
 
 /**
@@ -208,7 +239,8 @@ function buildProfile(entry, factoryRoot) {
  *            profile: {gate: string[], trunk: string, branchPrefix: string,
  *                      criticalFiles: string[], seatEnvPath: string|null,
  *                      validationPath: string|null,
- *                      intake: Array<{file: string, prefix: string, label: string}>}}}
+ *                      intake: Array<{file: string, prefix: string, label: string}>,
+ *                      legacyReqMap: Record<string, string[]>}}}
  */
 export function resolveProject(opts = {}, factoryRoot = FACTORY_ROOT) {
   const { project, dir, repo } = typeof opts === "string" ? { project: opts } : opts;

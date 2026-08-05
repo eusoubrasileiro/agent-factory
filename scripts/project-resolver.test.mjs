@@ -51,6 +51,7 @@ function assertDefaultProfile(actual) {
     seatEnvPath: null,
     validationPath: null,
     intake: [],
+    legacyReqMap: {},
   });
 }
 
@@ -127,6 +128,58 @@ test("resolveProject: wahub profile exposes gate, criticalFiles, seat.env, valid
     r.profile.validationPath,
     path.join(REAL_FACTORY_ROOT, "projects", "wahub", "validation.md"),
   );
+});
+
+// ─── 1b. legacy-req-map.json → the retired-id migration seam ──────────────────
+//
+// Soft-fail like every other profile sibling: the board must render whether the
+// file is present, absent, or garbage. `_`-prefixed keys are prose for the human
+// reading the file, never aliases.
+
+test("profile: legacy-req-map.json loads as id → intake ids, skipping `_` prose keys", () => {
+  const root = makeTmpDir("project-legacy-map-");
+  try {
+    writeProject(
+      root,
+      "p",
+      { id: "p", path: "." },
+      {
+        "legacy-req-map.json": JSON.stringify({
+          _why: ["prose, not an alias"],
+          D5: ["IN-45"],
+          C8: ["IN-31", "IN-32"],
+          bad: "not an array",
+          alsoBad: ["IN-1", 42],
+        }),
+      },
+    );
+
+    const { profile } = resolveProject({ project: "p" }, root);
+    assert.deepEqual(profile.legacyReqMap, {
+      D5: ["IN-45"],
+      C8: ["IN-31", "IN-32"],
+      alsoBad: ["IN-1"], // non-string members dropped, the entry survives
+    });
+    assert.ok(!("_why" in profile.legacyReqMap), "prose key must not become an alias");
+    assert.ok(!("bad" in profile.legacyReqMap), "a non-array value is not an alias list");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("profile: a corrupt or absent legacy-req-map.json degrades to {}, never throws", () => {
+  const root = makeTmpDir("project-legacy-map-bad-");
+  try {
+    writeProject(root, "corrupt", { id: "corrupt", path: "." }, {
+      "legacy-req-map.json": "{ this is not json",
+    });
+    writeProject(root, "absent", { id: "absent", path: "." });
+
+    assert.deepEqual(resolveProject({ project: "corrupt" }, root).profile.legacyReqMap, {});
+    assert.deepEqual(resolveProject({ project: "absent" }, root).profile.legacyReqMap, {});
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 // ─── 2. Profile-less entry → synthesized defaults, never throws ────────────────
