@@ -1,0 +1,2 @@
+{"seat":"worker","type":"phase_start","detail":"external:glm-5.2","model":"glm-5.2","ts":"2026-07-24T13:26:26.933Z"}
+{"seat":"worker","type":"phase_end","detail":"external:glm-5.2","model":"glm-5.2","tokens":2090884,"tokensIn":56016,"tokensOut":32308,"tokensReasoning":null,"tokensCacheRead":2002560,"tokensCacheWrite":0,"durationMs":849573,"apiCostUsd":2.101908,"costUsd":2.101908,"ts":"2026-07-24T13:40:36.541Z"}
