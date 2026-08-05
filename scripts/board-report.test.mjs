@@ -104,6 +104,48 @@ test("parseRequirementsLine: `none` (any case) → empty array", () => {
   assert.deepEqual(parseRequirementsLine("**Requirements:** None"), []);
 });
 
+// Real briefs annotate the id they claim — `IN-16 (Epic B / US-11)`. Requiring
+// the whole comma-segment to BE an id silently dropped every such claim, which
+// is how the two briefs already on the IN-NN contract ended up invisible to the
+// board. Take the LEADING id of each segment; prose after it is commentary.
+test("parseRequirementsLine: an annotated id still claims (prose after it is commentary)", () => {
+  assert.deepEqual(parseRequirementsLine("**Requirements:** IN-16 (Epic B / US-11)"), ["IN-16"]);
+  assert.deepEqual(
+    parseRequirementsLine("**Requirements:** IN-22 (nexus §7 — faster loop). Follow-up to `x`."),
+    ["IN-22"],
+  );
+  assert.deepEqual(
+    parseRequirementsLine(
+      "**Requirements:** B2 (Detalhe Lead 360), C3 (non-lead gate), C7 (intent-label)",
+    ),
+    ["B2", "C3", "C7"],
+  );
+});
+
+// The HARD RULE still holds: only the LEADING id of a segment is a claim. Ids
+// merely NAMED in the prose are references, not claims — otherwise a brief that
+// says "completes the LLM halves of C7 and D4" would silently seize both.
+test("parseRequirementsLine: ids mentioned inside a segment's prose are NOT claimed", () => {
+  assert.deepEqual(
+    parseRequirementsLine("**Requirements:** D5 (Mineração → runtime) · completa C7 e D4."),
+    ["D5"],
+  );
+});
+
+// `none` with a trailing justification is still `none` — the leading word wins,
+// so an id named in the explanation cannot turn a no-op brief into a claim.
+test("parseRequirementsLine: `none` followed by prose naming an id → still empty", () => {
+  assert.deepEqual(
+    parseRequirementsLine('**Requirements:** none (no backlog ID covers this; A5 is adjacent)'),
+    [],
+  );
+});
+
+test("parseRequirementsLine: an unfilled `<...>` placeholder claims nothing", () => {
+  assert.deepEqual(parseRequirementsLine('**Requirements:** <A1, B2 — or "none">'), []);
+  assert.deepEqual(parseRequirementsLine("**Requirements:** <IN-NN or none>"), []);
+});
+
 test("parseRequirementsLine: absent line → null", () => {
   assert.equal(parseRequirementsLine("# Brief\n\nNo requirements line here.\n"), null);
 });
@@ -2059,6 +2101,105 @@ test("I9: each backlog entry carries {id, missionSlug, liveStatus, verdict} from
     assert.equal(entry.verdict, "PASS", "the mission's last verdict flows onto the chain");
     // liveStatus is the mission's derived board status (PASS → Needs Human).
     assert.equal(entry.liveStatus, "Needs Human");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ── L1–L3: the ledger IS the catalog (two-authority contract, 2026-07-21) ─────
+//
+// `nexus-build-backlog.md` — the A1..D6 body tables this model was first written
+// against — was deleted on purpose (wahub 135042b): the PRD and the `IN-NN`
+// intake ledger are the only two requirement authorities, and the A/B/C/D ids
+// are retired. A project on that contract therefore has NO parseable PRD, and
+// its requirement catalog has to come from the ledger it already declares.
+
+test("L1: a project with no PRD builds its requirements catalog from the intake ledger", () => {
+  const root = makeTmpRoot("board-report-ledger-l1-");
+  try {
+    const intakePath = writeIntakeDoc(root, [
+      { id: "IN-16", date: "2026-06-16", summary: "classificação de contatos", status: "Ratified" },
+      { id: "IN-22", date: "2026-06-20", summary: "loop de validação", status: "Distilled" },
+    ]);
+    const missionsDir = path.join(root, "missions");
+    mkdirSync(missionsDir, { recursive: true });
+
+    const model = buildTraceabilityModel({
+      missionsDir,
+      prdPath: null, // the contract's shape: no backlog doc at all
+      gitInfo: { branches: [] },
+      intakeSources: [{ file: intakePath, prefix: "IN", label: "tenant-a" }],
+    });
+
+    assert.equal(model.requirements.length, 2, "the ledger rows ARE the requirements");
+    const in16 = model.requirements.find((r) => r.id === "IN-16");
+    assert.ok(in16, "IN-16 is in the catalog");
+    assert.equal(in16.recurso, "classificação de contatos", "the ledger Resumo is the Recurso");
+    assert.equal(in16.situacao, "Ratified", "the ledger Situação carries through");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("L2: a brief declaring `**Requirements:** IN-22` joins that ledger row to its mission", () => {
+  const root = makeTmpRoot("board-report-ledger-l2-");
+  try {
+    const intakePath = writeIntakeDoc(root, [{ id: "IN-22", date: "2026-06-20" }]);
+    const missionsDir = path.join(root, "missions");
+    mkMission(missionsDir, "gold-eval-viewer", {
+      "brief.md": "# Brief\n\n**Requirements:** IN-22\n",
+      "validate.log": jsonl(verdict(1, "PASS")),
+    });
+
+    const model = buildTraceabilityModel({
+      missionsDir,
+      prdPath: null,
+      gitInfo: { branches: [] },
+      intakeSources: [{ file: intakePath, prefix: "IN", label: "tenant-a" }],
+    });
+
+    const mission = model.missions.find((m) => m.slug === "gold-eval-viewer");
+    assert.deepEqual(mission.requirements, ["IN-22"], "the intake id parses off the brief");
+
+    const req = model.requirements.find((r) => r.id === "IN-22");
+    assert.equal(req.missionSlug, "gold-eval-viewer", "catalog row points at the claiming mission");
+
+    // …and the forward chain the Intake tab renders is no longer empty.
+    const row = model.intake.find((r) => r.id === "IN-22");
+    assert.equal(row.backlog.length, 1, "IN-22 is dispatched, not 'não despachado'");
+    assert.equal(row.backlog[0].missionSlug, "gold-eval-viewer");
+    assert.equal(row.backlog[0].verdict, "PASS");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("L3: a legacy alias reconnects a ledger row to the mission that claimed its old id", () => {
+  const root = makeTmpRoot("board-report-ledger-l3-");
+  try {
+    // Pre-contract missions declare retired ids (D5) whose catalog row is gone.
+    // The project-scoped alias map is the only surviving record that D5 came
+    // from IN-45, so without it a SHIPPED requirement reads as undispatched.
+    const intakePath = writeIntakeDoc(root, [{ id: "IN-45", date: "2026-07-01" }]);
+    const missionsDir = path.join(root, "missions");
+    mkMission(missionsDir, "mining-runtime", {
+      "brief.md": "# Brief\n\n**Requirements:** D5\n",
+      "validate.log": jsonl(verdict(1, "PASS")),
+    });
+
+    const model = buildTraceabilityModel({
+      missionsDir,
+      prdPath: null,
+      gitInfo: { branches: [] },
+      intakeSources: [{ file: intakePath, prefix: "IN", label: "tenant-a" }],
+      legacyReqMap: { D5: ["IN-45"] },
+    });
+
+    const row = model.intake.find((r) => r.id === "IN-45");
+    assert.equal(row.backlog.length, 1, "the alias restores the chain");
+    assert.equal(row.backlog[0].id, "D5", "the chip keeps the historical id");
+    assert.equal(row.backlog[0].missionSlug, "mining-runtime");
+    assert.equal(row.backlog[0].verdict, "PASS");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

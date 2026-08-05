@@ -89,6 +89,9 @@ export function buildModel(projectId) {
       prdPath: resolved.prdPath ?? "",
       gitInfo: { branches: [] },
       intakeSources: resolved.profile.intake,
+      // The same aliases the board uses — otherwise this local viewer and
+      // `pnpm board:report` disagree about which rows are dispatched.
+      legacyReqMap: resolved.profile.legacyReqMap,
     });
     rows.push(...model.intake);
   }

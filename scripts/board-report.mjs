@@ -44,8 +44,24 @@ const DEFAULT_OUT = path.join("dist", "factory-board", "index.html");
 
 // ─── Pure core ────────────────────────────────────────────────────────────────
 
-/** Valid backlog id: a single letter A–D followed by one or more digits. */
-const REQ_ID_RE = /^[A-D]\d+$/;
+/**
+ * Valid requirement id, in either grammar a brief may legitimately carry:
+ *
+ *   - `A1`…`D6` — the retired backlog ids. Pre-2026-07-21 briefs still declare
+ *     them and those dossiers are dated records, so they keep parsing; they just
+ *     no longer resolve against a catalog (see `buildTraceabilityModel`).
+ *   - `IN-16`, `CIDS-05`, `CIPE-07` — an intake-ledger id. `<PREFIX>-<n>`, where
+ *     the prefix is whatever a project's `intake[].prefix` declares. Kept generic
+ *     rather than enumerated so `scripts/` stays free of product literals (D-15).
+ */
+const REQ_ID_RE = /^([A-D]\d+|[A-Z]{2,6}-\d+)$/;
+
+/**
+ * The same grammar anchored at the START of a comma-segment, so an id carrying an
+ * annotation (`IN-16 (Epic B / US-11)`) still reads as a claim. The trailing `\b`
+ * keeps `IN-160` from being read as `IN-16`.
+ */
+const REQ_ID_LEAD_RE = /^([A-D]\d+|[A-Z]{2,6}-\d+)\b/;
 
 /**
  * Pull the canonical requirement list out of a brief.md body.
@@ -53,12 +69,17 @@ const REQ_ID_RE = /^[A-D]\d+$/;
  * Scans for the first line matching `**Requirements:** <value>` (tolerates a
  * leading blockquote `>` and any leading whitespace; the key is case-insensitive).
  * `<value>` grammar:
- *   - `none` (any case) → `[]` (mission explicitly declares no backlog row).
- *   - comma-separated backlog IDs (`A1`…`D3`); tokens that don't match
- *     `/^[A-D]\d+$/` after trim are silently skipped, never thrown.
+ *   - a leading `none` (any case) → `[]`. The rest of the line is a justification
+ *     and is NOT scanned: `none (no backlog ID covers this; A5 is adjacent)` claims
+ *     nothing, which is the opposite of what a naive id-scan would conclude.
+ *   - otherwise, comma-separated segments. Each segment claims the id it STARTS
+ *     with (`IN-22`, or a legacy `A1`…`D6`); anything after that id is commentary.
+ *     A segment starting with no id is silently skipped, never thrown.
  *
- * HARD RULE: this is the ONLY source of requirement↔mission mapping. Contract /
- * plan local IDs are NEVER scanned — that's the role-funcionario C1–C3 collision.
+ * HARD RULE: this is the ONLY source of requirement↔mission mapping, and only the
+ * LEADING id of a segment is a claim. Ids merely named in the prose are references
+ * — `D5 (Mineração → runtime) · completa C7 e D4` claims D5 alone. Contract / plan
+ * local IDs are never scanned at all; that's the role-funcionario C1–C3 collision.
  *
  * @param {string} briefMarkdown — raw brief.md text (null/undefined → null).
  * @returns {string[] | null} — `null` when no Requirements line is present.
@@ -72,12 +93,17 @@ export function parseRequirementsLine(briefMarkdown) {
     if (!m) continue;
 
     const value = m[1].trim();
-    if (value.toLowerCase() === "none") return [];
+    if (/^none\b/i.test(value)) return [];
+    // An UNFILLED template placeholder — `<A1, B2 — or "none">`. Since a segment
+    // now claims the id it merely starts with, `B2 — or "none">` would otherwise
+    // read as a real claim and a brand-new brief would seize a requirement it has
+    // not even been written against. Angle-wrapped means "not filled in yet".
+    if (/^<.*>$/s.test(value)) return [];
 
     return value
       .split(",")
-      .map((tok) => tok.trim())
-      .filter((tok) => REQ_ID_RE.test(tok));
+      .map((seg) => seg.trim().match(REQ_ID_LEAD_RE)?.[1])
+      .filter((id) => id !== undefined);
   }
   return null;
 }
@@ -254,11 +280,25 @@ function countFeatures(missionDirPath) {
  * no requirement-capture log simply gets `intake: []`, and the renderer omits the
  * tab entirely.
  *
+ * THE CATALOG HAS TWO SOURCES, and which one a project uses is a fact about that
+ * project's docs, not a mode to configure:
+ *
+ *   - the **intake ledger** (`<PREFIX>-NN`) — the requirement authority for a
+ *     project on the two-authority doc contract (2026-07-21), where the spec doc
+ *     is prose and carries no id grammar. The ledger row IS the requirement.
+ *   - the **PRD body tables** (`A1`…`D6`) — for a project that still keeps a
+ *     parseable backlog doc and declares no ledger.
+ *
+ * They are unioned, never merged: the id grammars cannot collide, so a project
+ * with both simply gets both, and one with neither gets an empty catalog rather
+ * than an error. `legacyReqMap` is the migration seam — see `buildChain`.
+ *
  * @param {{
  *   missionsDir: string,
- *   prdPath: string,
+ *   prdPath: string|null,
  *   gitInfo: { branches: Array<{ name: string, slug: string, merged: boolean, lastCommitISO: string|null }> },
  *   intakeSources?: Array<{ file: string, prefix?: string, label?: string }>,
+ *   legacyReqMap?: Record<string, string[]>,
  * }} args
  * @returns {{
  *   generatedAt: string,
@@ -268,7 +308,13 @@ function countFeatures(missionDirPath) {
  *   intake: Array<{ id: string, date: string, type: string, summary: string, status: string, detail: string, backlog: Array<{id: string, missionSlug: string|null, liveStatus: string|null, verdict: string|null}> }>,
  * }}
  */
-export function buildTraceabilityModel({ missionsDir, prdPath, gitInfo, intakeSources = [] }) {
+export function buildTraceabilityModel({
+  missionsDir,
+  prdPath,
+  gitInfo,
+  intakeSources = [],
+  legacyReqMap = {},
+}) {
   const generatedAt = new Date().toISOString();
   const branches = gitInfo && Array.isArray(gitInfo.branches) ? gitInfo.branches : [];
   const branchBySlug = new Map();
@@ -276,9 +322,14 @@ export function buildTraceabilityModel({ missionsDir, prdPath, gitInfo, intakeSo
     if (b && typeof b.slug === "string") branchBySlug.set(b.slug, b);
   }
 
-  // ── PRD rows (the canonical requirement catalog).
+  // ── PRD rows — the catalog for a project that still keeps a backlog doc.
+  //    A `null` prdPath is normal, not a degraded state: a project whose backlog
+  //    doc was retired on purpose gets its catalog from the ledger read below.
   const prdText = readMaybe(prdPath);
   const prdRows = prdText !== null ? parseBacklogTables(prdText) : [];
+
+  // ── Ledger rows — the catalog under the two-authority contract.
+  const { rows: intakeRows } = readIntake(intakeSources);
 
   // ── Mission dirs (read-only; tolerate missing dir).
   const missionSlugs = [];
@@ -325,46 +376,55 @@ export function buildTraceabilityModel({ missionsDir, prdPath, gitInfo, intakeSo
   const missionSlugSet = new Set(missionSlugs);
   const orphanBranches = branches.filter((b) => b && !missionSlugSet.has(b.slug));
 
-  // ── Requirements: PRD rows joined to the (at most one) mission claiming them.
-  const requirements = prdRows.map((row) => {
-    const missionSlug = reqToMission.get(row.id) ?? null;
-    let liveStatus;
-    if (missionSlug !== null) {
-      const m = missions.find((x) => x.slug === missionSlug);
-      liveStatus = m ? m.status : normalizeSituacao(row.situacao).status;
-    } else {
-      liveStatus = normalizeSituacao(row.situacao).status;
-    }
+  // ── Requirements: every catalog row joined to the (at most one) mission
+  //    claiming it. `liveStatus` prefers the mission's derived state — a running
+  //    mission is fresher evidence than a hand-typed Situação — and falls back to
+  //    the row's own column when nothing claims it.
+  const toRequirement = ({ id, recurso, risco, situacao }) => {
+    const missionSlug = reqToMission.get(id) ?? null;
+    const claimed = missionSlug !== null ? missions.find((x) => x.slug === missionSlug) : null;
     return {
-      id: row.id,
-      recurso: row.recurso,
-      risco: row.risco,
-      situacao: row.situacao,
+      id,
+      recurso,
+      risco,
+      situacao,
       missionSlug,
-      liveStatus,
+      liveStatus: claimed ? claimed.status : normalizeSituacao(situacao).status,
     };
-  });
+  };
 
-  // ── Intake: the requirement as the client stated it, joined FORWARD to the
-  // backlog rows that cite it, and through them to mission + verdict. This is
-  // the half of the chain the board could not see: `IN-NN` is prose in the PRD's
-  // `Porquê / fonte` column, never a parsed id. An intake row that no backlog row
-  // cites keeps an empty `backlog` — the renderer calls that "não despachado",
-  // which is the truth, rather than hiding the row.
-  const { rows: intakeRows } = readIntake(intakeSources);
-  const chain = buildChain(prdRows, intakeRows.map((r) => r.id));
+  const requirements = [
+    // The ledger's Resumo is the feature description; it carries no risk column,
+    // and the renderer's `riskClass` already renders an unknown risk as neutral.
+    ...intakeRows.map((row) =>
+      toRequirement({ id: row.id, recurso: row.summary, risco: "", situacao: row.status }),
+    ),
+    ...prdRows.map(toRequirement),
+  ];
+
+  // ── Intake: the requirement as the client stated it, joined FORWARD to
+  // mission + verdict. A row nothing dispatched keeps an empty `backlog` — the
+  // renderer calls that "não despachado", which is the truth, rather than hiding
+  // the row. See `buildChain` for the three ways an edge can be established.
+  const chain = buildChain(prdRows, intakeRows.map((r) => r.id), {
+    claimedIds: new Set(reqToMission.keys()),
+    legacyReqMap,
+  });
   const reqById = new Map(requirements.map((r) => [r.id, r]));
   const missionBySlug = new Map(missions.map((m) => [m.slug, m]));
 
   const intake = intakeRows.map((row) => ({
     ...row,
     backlog: (chain[row.id] ?? []).map((backlogId) => {
+      // A legacy chip (`D5`) has no catalog row — its doc was deleted — but the
+      // brief that claims it still exists, so the mission join stays reachable.
       const req = reqById.get(backlogId) ?? null;
-      const mission = req?.missionSlug ? missionBySlug.get(req.missionSlug) : null;
+      const missionSlug = req?.missionSlug ?? reqToMission.get(backlogId) ?? null;
+      const mission = missionSlug ? missionBySlug.get(missionSlug) : null;
       return {
         id: backlogId,
-        missionSlug: req?.missionSlug ?? null,
-        liveStatus: req?.liveStatus ?? null,
+        missionSlug,
+        liveStatus: req?.liveStatus ?? mission?.status ?? null,
         verdict: mission?.lastVerdict?.verdict ?? null,
       };
     }),
@@ -1972,6 +2032,7 @@ function main() {
     prdPath,
     gitInfo,
     intakeSources: resolved.profile.intake,
+    legacyReqMap: resolved.profile.legacyReqMap,
   });
 
   // History aggregation (feature 04): read JSONL, aggregate stats, pass to

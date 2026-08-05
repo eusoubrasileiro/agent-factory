@@ -1,7 +1,7 @@
 # Mission Brief — <slug>
 
-<!-- Backlog IDs from docs/prd/nexus-build-backlog.md (e.g. A1, B2 — or "none"). Feeds the factory-dashboard traceability join at `pnpm board:report`. -->
-**Requirements:** <A1, B2 — or "none">
+<!-- Requirement IDs from the project's intake ledger (e.g. IN-22 — or "none"). Feeds the traceability join at `pnpm board:report`: an id named here is what makes the ledger row read as dispatched instead of pending. Only the id each comma-segment STARTS with is a claim; annotate freely after it. Legacy A1/B2-style ids still parse for pre-2026-07-21 missions but resolve against no catalog. -->
+**Requirements:** <IN-NN, IN-NN — or "none">
 
 > **Author: Andre** (the owner's seat). **Reader: orchestrator.** ≤ 1 page.
 > WHAT + WHY only — never HOW. Be loose and careful here; precision lives in the

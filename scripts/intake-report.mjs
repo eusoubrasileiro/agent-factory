@@ -316,31 +316,62 @@ export function deleteRow(text, id) {
 }
 
 /**
- * Which backlog rows cite which intake id.
+ * What dispatched each intake id — the forward half of the traceability chain.
  *
- * The citation lives in the PRD's free-text `Porquê / fonte` column — the intake
- * id is prose there, which is exactly why nothing read it before. An id cited by
- * no row maps to `[]`, and the renderer says "não despachado" rather than
+ * An id reaches a mission by one of three routes. All are unioned; an id reached
+ * by none maps to `[]`, and the renderer says "não despachado" rather than
  * pretending the requirement does not exist.
  *
- * Citations are read with `citedIds`, so a compressed run (`IN-33/35/38/40a`)
- * yields all four rows and a sub-part suffix collapses onto its row.
+ *  1. **Direct** (`claimedIds`) — a mission brief's `**Requirements:**` line names
+ *     the intake id itself. This is the route under the two-authority contract
+ *     (2026-07-21), where the ledger row IS the requirement and there is no
+ *     backlog doc to hop through. The chip is then the id itself.
+ *
+ *  2. **PRD citation** — a backlog row's free-text `Porquê / fonte` column cites
+ *     the id. Read with `citedIds`, so a compressed run (`IN-33/35/38/40a`) yields
+ *     all four rows and a sub-part suffix collapses onto its row. Still live for
+ *     projects that keep a parseable backlog doc.
+ *
+ *  3. **Legacy alias** (`legacyReqMap`) — the migration seam. Pre-contract briefs
+ *     declare retired ids (`D5`) whose catalog row was deleted along with its doc;
+ *     the map is the surviving record that `D5` came from `IN-45`. Without it a
+ *     SHIPPED requirement reads as undispatched, which is worse than silence.
+ *     Keyed legacy-id → intake ids, and applied ONLY when a brief actually claims
+ *     the legacy id — an alias on its own never invents a chain.
  *
  * @param {Array<{id: string, porque: string}>} prdRows — from `parseBacklogTables`.
  * @param {string[]} intakeIds
- * @returns {Record<string, string[]>} intake id → backlog ids, in PRD order.
+ * @param {{claimedIds?: Set<string>, legacyReqMap?: Record<string, string[]>}} [opts]
+ * @returns {Record<string, string[]>} intake id → the ids that dispatched it.
  */
-export function buildChain(prdRows, intakeIds) {
+export function buildChain(prdRows, intakeIds, opts = {}) {
+  const { claimedIds = new Set(), legacyReqMap = {} } = opts;
   const known = new Set(intakeIds);
   /** @type {Record<string, string[]>} */
   const chain = {};
   for (const id of intakeIds) chain[id] = [];
 
-  for (const row of prdRows ?? []) {
-    for (const cited of citedIds(row.porque)) {
-      if (known.has(cited) && !chain[cited].includes(row.id)) chain[cited].push(row.id);
-    }
+  const link = (intakeId, chipId) => {
+    if (!known.has(intakeId)) return;
+    if (!chain[intakeId].includes(chipId)) chain[intakeId].push(chipId);
+  };
+
+  // 1. Direct: a brief names the ledger id.
+  for (const id of intakeIds) {
+    if (claimedIds.has(id)) link(id, id);
   }
+
+  // 2. PRD citation.
+  for (const row of prdRows ?? []) {
+    for (const cited of citedIds(row.porque)) link(cited, row.id);
+  }
+
+  // 3. Legacy alias, only for a legacy id some brief actually claims.
+  for (const [legacyId, aliased] of Object.entries(legacyReqMap ?? {})) {
+    if (!claimedIds.has(legacyId)) continue;
+    for (const intakeId of aliased ?? []) link(intakeId, legacyId);
+  }
+
   return chain;
 }
 
