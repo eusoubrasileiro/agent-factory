@@ -30,6 +30,8 @@ import {
   assertExternalEndpoint,
   assertNoAliasTrap,
   assertSeatEndpoint,
+  buildClaudeArgs,
+  resolveIdleTimeout,
   buildClaudeEnv,
   detectRateLimit,
   loadSeatCredentials,
@@ -84,6 +86,36 @@ test("loadSeatCredentials: only the known ANTHROPIC_* keys are lifted", () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ─── third-party-backend escape hatches ──────────────────────────────────────
+// Claude Code's non-Anthropic path is actively regressing: it ships
+// `thinking:{type:"adaptive"}` to model IDs it does not recognise, which several
+// Anthropic-compatible backends answer with a hang, an empty body, or a 400
+// (anthropics/claude-code#68551). CLAUDE_CODE_DISABLE_THINKING is the documented
+// mitigation and is present in the installed 2.1.250 bundle — but an env key the
+// seat allowlist does not carry is silently dropped, so the mitigation would look
+// like it was applied and do nothing.
+
+test("CLAUDE_ENV_KEYS carries the third-party-backend escape hatches", () => {
+  for (const k of [
+    "CLAUDE_CODE_DISABLE_THINKING",
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+    "CLAUDE_CODE_SUBAGENT_MODEL",
+  ]) {
+    assert.ok(CLAUDE_ENV_KEYS.includes(k), `${k} must survive into the seat env`);
+  }
+});
+
+test("buildClaudeEnv forwards the escape hatches when the seat sets them", () => {
+  const env = buildClaudeEnv({ PATH: "/usr/bin" }, {
+    ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic",
+    ANTHROPIC_AUTH_TOKEN: "tok",
+    CLAUDE_CODE_DISABLE_THINKING: "1",
+    CLAUDE_CODE_SUBAGENT_MODEL: "glm-5.3",
+  });
+  assert.equal(env.CLAUDE_CODE_DISABLE_THINKING, "1");
+  assert.equal(env.CLAUDE_CODE_SUBAGENT_MODEL, "glm-5.3");
 });
 
 // ─── the endpoint guard: never spend Anthropic money by accident ─────────────
@@ -224,6 +256,89 @@ test("parseClaudeResult: tolerates a stream of JSON lines, taking the result eve
 // first — which is exactly the property under test. A driver whose fail-closed
 // path is only unit-tested has an untested fail-closed path (we learned this the
 // hard way: a `main()` typo shipped through 381 green tests elsewhere).
+
+// ─── Liveness: streaming output so a hang is distinguishable from work ────────
+// `--output-format json` emits NOTHING until the run completes, so a stalled
+// worker and a busy one look identical for the full 30-minute wall-clock. That
+// is the documented "silent hang" failure mode and the reason external dispatch
+// "fails a lot / I can't tell when it finished". stream-json emits JSONL as the
+// run proceeds, which gives the idle watchdog something to watch.
+
+test("buildClaudeArgs streams JSONL so liveness is observable", () => {
+  const args = buildClaudeArgs({ model: "glm-5.3", prompt: "hi" }, "/tmp/s.json");
+  const i = args.indexOf("--output-format");
+  assert.equal(args[i + 1], "stream-json");
+  assert.ok(args.includes("--verbose"), "stream-json requires --verbose under --print");
+  assert.ok(args.includes("-p"));
+  assert.equal(args.at(-1), "hi", "prompt stays last");
+});
+
+test("buildClaudeArgs keeps model, settings, resume and mcp wiring", () => {
+  const args = buildClaudeArgs(
+    { model: "glm-5.3", prompt: "go", session: "ses_1", mcpConfigPath: "/tmp/mcp.json" },
+    "/tmp/s.json",
+  );
+  assert.equal(args[args.indexOf("--model") + 1], "glm-5.3");
+  assert.equal(args[args.indexOf("--settings") + 1], "/tmp/s.json");
+  assert.equal(args[args.indexOf("--resume") + 1], "ses_1");
+  assert.ok(args.includes("--strict-mcp-config"));
+});
+
+// ─── The watchdog must not kill healthy seats ────────────────────────────────
+// A tool call is SILENT for its whole duration — claude emits the `assistant`
+// event carrying the tool_use, then nothing until the tool returns. A profile
+// whose `gate` includes a browser E2E suite runs one such call for minutes, at
+// zero output, from a perfectly healthy seat. An idle budget tuned for "detect
+// a hang fast" would kill it, and a watchdog that kills good runs is worse than
+// the hang it guards against.
+
+test("resolveIdleTimeout defaults generously enough to survive a long gate command", () => {
+  const idle = resolveIdleTimeout({});
+  assert.ok(
+    idle >= 15 * 60 * 1000,
+    `default idle budget ${idle}ms would kill a healthy seat mid-gate`,
+  );
+});
+
+test("resolveIdleTimeout honours an explicit --idle-timeout", () => {
+  assert.equal(resolveIdleTimeout({ idleTimeout: 90_000 }), 90_000);
+});
+
+test("resolveIdleTimeout never exceeds the wall clock, where it could never fire", () => {
+  assert.equal(resolveIdleTimeout({ idleTimeout: 60 * 60 * 1000, timeout: 120_000 }), 120_000);
+  // The default is likewise clamped by a short --timeout.
+  assert.equal(resolveIdleTimeout({ timeout: 60_000 }), 60_000);
+});
+
+test("resolveIdleTimeout falls back to the default on garbage rather than disarming", () => {
+  // `--idle-timeout abc` parses to NaN; 0 and negatives would fire instantly and
+  // kill every run at spawn. Both must degrade to the default, never to "off".
+  for (const bad of [Number.NaN, 0, -1, undefined, null, "soon"]) {
+    const idle = resolveIdleTimeout({ idleTimeout: bad });
+    assert.equal(idle, resolveIdleTimeout({}), `idleTimeout=${String(bad)} must fall back`);
+  }
+});
+
+test("parseClaudeResult reads a stream-json JSONL transcript, not just a lone blob", () => {
+  const stream = [
+    '{"type":"system","subtype":"init","session_id":"ses_S"}',
+    '{"type":"assistant","message":{"content":[{"type":"text","text":"working"}]}}',
+    '{"type":"result","subtype":"success","is_error":false,"session_id":"ses_S",' +
+      '"total_cost_usd":0.42,"usage":{"input_tokens":10,"output_tokens":5,' +
+      '"cache_read_input_tokens":900,"cache_creation_input_tokens":85}}',
+  ].join("\n");
+  const r = parseClaudeResult(stream);
+  assert.equal(r.sawFinish, true);
+  assert.equal(r.sessionID, "ses_S");
+  assert.equal(r.tokensCacheRead, 900);
+  assert.equal(r.tokens, 10 + 5 + 900 + 85);
+  assert.equal(r.apiCostUsd, 0.42);
+});
+
+test("parseClaudeResult reports sawFinish=false on an errored result event", () => {
+  const r = parseClaudeResult('{"type":"result","is_error":true,"usage":{"input_tokens":1}}');
+  assert.equal(r.sawFinish, false);
+});
 
 function runCli(args, env = {}) {
   const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "claude-worker.mjs");
@@ -561,6 +676,53 @@ test("detectRateLimit: a z.ai 429 / code 1308 result is detected, with reset whe
 
 test("detectRateLimit: a clean successful result is not flagged (F03)", () => {
   assert.equal(detectRateLimit(JSON.stringify({ is_error: false, result: "OK", total_cost_usd: 0.1 }), ""), null);
+});
+
+// Caught by a live Sonnet 5 dispatch, 2026-08-28: the run finished clean
+// (exit 0, sawFinish true, 1.1M tokens) and the driver still exited 3 shouting
+// RATE LIMITED. Claude Code emits a `rate_limit_event` on every healthy stream,
+// carrying `status:"allowed"` — and a substring scan for /rate.limit/ over the
+// whole transcript matches it. Under `--output-format json` that metadata was
+// never in stdout, so the loose regex survived; stream-json puts it there on
+// EVERY run, which would have made exit 3 the normal outcome of success.
+// The status field is the signal. The word is not.
+test("detectRateLimit: Claude Code's healthy `rate_limit_event` is NOT a rate limit", () => {
+  const stream = [
+    '{"type":"system","subtype":"init","session_id":"ses_A"}',
+    '{"type":"system","subtype":"rate_limit_event","rate_limit_info":{"status":"allowed",' +
+      '"resetsAt":1787956800,"rateLimitType":"five_hour","overageStatus":"rejected",' +
+      '"isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":0.12}}}}',
+    '{"type":"result","subtype":"success","is_error":false,"result":"done",' +
+      '"total_cost_usd":0.57,"usage":{"input_tokens":40,"output_tokens":11995}}',
+  ].join("\n");
+  assert.equal(detectRateLimit(stream, ""), null);
+});
+
+test("detectRateLimit: a rate_limit_event that actually BLOCKS is detected, with its reset", () => {
+  const stream = [
+    '{"type":"system","subtype":"rate_limit_event","rate_limit_info":{"status":"rejected",' +
+      '"resetsAt":1787956800,"rateLimitType":"five_hour"}}',
+  ].join("\n");
+  const rl = detectRateLimit(stream, "");
+  assert.ok(rl, "a rejected window is a real rate limit");
+  assert.equal(rl.reset, "1787956800");
+});
+
+test("detectRateLimit: the seat merely TALKING about rate limits is not a rate limit", () => {
+  // A builder seat writing a retry/backoff helper says "rate limit" in its own
+  // prose and code. Under stream-json every one of those tokens is in stdout.
+  const stream = [
+    '{"type":"assistant","message":{"content":[{"type":"text",' +
+      '"text":"I will add a rate_limit guard and handle 1308 from the provider."}]}}',
+    '{"type":"result","subtype":"success","is_error":false,"result":"ok","total_cost_usd":0.1}',
+  ].join("\n");
+  assert.equal(detectRateLimit(stream, ""), null);
+});
+
+test("detectRateLimit: a provider 429 on stderr is still detected (no result event at all)", () => {
+  const rl = detectRateLimit("", "API error: 429 rate_limit_exceeded, reset 2026-07-13T18:00:00Z");
+  assert.ok(rl, "stderr is an error surface — scan it");
+  assert.equal(rl.reset, "2026-07-13T18:00:00Z");
 });
 
 // ─── F9 cage-vision: the --with-playwright visual-validator seat ──────────────

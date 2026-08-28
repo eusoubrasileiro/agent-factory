@@ -114,6 +114,45 @@ test("validateEvent rejects a non-number durationMs", () => {
   assert.match(r.reason, /durationMs must be a number/);
 });
 
+// ─── Run outcome: exitCode / sawFinish / timedOut ─────────────────────────────
+
+test("validateEvent accepts a numeric exitCode and null (unmeasured)", () => {
+  assert.deepEqual(validateEvent({ seat: "worker", type: "phase_end", exitCode: 0 }), { ok: true });
+  assert.deepEqual(validateEvent({ seat: "worker", type: "phase_end", exitCode: null }), {
+    ok: true,
+  });
+});
+
+test("validateEvent rejects a non-number exitCode", () => {
+  const r = validateEvent({ seat: "worker", type: "phase_end", exitCode: "0" });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /exitCode must be a number or null/);
+});
+
+test("validateEvent accepts boolean sawFinish/timedOut and null (unmeasured)", () => {
+  assert.deepEqual(validateEvent({ seat: "worker", type: "phase_end", sawFinish: true }), {
+    ok: true,
+  });
+  assert.deepEqual(validateEvent({ seat: "worker", type: "phase_end", sawFinish: null }), {
+    ok: true,
+  });
+  assert.deepEqual(validateEvent({ seat: "worker", type: "phase_end", timedOut: false }), {
+    ok: true,
+  });
+});
+
+test("validateEvent rejects a non-boolean sawFinish", () => {
+  const r = validateEvent({ seat: "worker", type: "phase_end", sawFinish: "yes" });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /sawFinish must be a boolean or null/);
+});
+
+test("validateEvent rejects a non-boolean timedOut", () => {
+  const r = validateEvent({ seat: "worker", type: "phase_end", timedOut: 1 });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /timedOut must be a boolean or null/);
+});
+
 // ─── Cost attribution: cache tokens + api-basis cost (factory-cost Stage 1b) ───
 
 test("validateEvent accepts a numeric tokensCacheRead", () => {

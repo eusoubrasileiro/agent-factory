@@ -109,6 +109,64 @@ test("buildPhaseEndEvent carries model, durationMs and the token split", () => {
   assert.equal(ev.costUsd, 0);
 });
 
+// ── Run OUTCOME (exitCode / sawFinish / timedOut) ───────────────────────────
+// Without these the meter records cost and wall-time but not whether the run
+// SUCCEEDED, so green-first-try — the primary endpoint of any model comparison —
+// is not computable from the recorded data. A hung worker and a clean pass are
+// indistinguishable in metrics.jsonl.
+
+test("buildPhaseEndEvent carries the run outcome (exitCode, sawFinish, timedOut)", () => {
+  const ev = buildPhaseEndEvent("worker", "glm-5.3", {
+    tokens: 100,
+    durationMs: 1000,
+    exitCode: 0,
+    sawFinish: true,
+    timedOut: false,
+  });
+  assert.equal(ev.exitCode, 0);
+  assert.equal(ev.sawFinish, true);
+  assert.equal(ev.timedOut, false);
+});
+
+test("buildPhaseEndEvent records a failed run distinguishably from a clean one", () => {
+  const ev = buildPhaseEndEvent("worker", "glm-5.3", {
+    tokens: 0,
+    durationMs: 1_800_000,
+    exitCode: 1,
+    sawFinish: false,
+    timedOut: true,
+  });
+  assert.equal(ev.exitCode, 1);
+  assert.equal(ev.sawFinish, false);
+  assert.equal(ev.timedOut, true);
+});
+
+// Absent → null ("unmeasured"), never false/0. Coercing a missing outcome to
+// `sawFinish:false` would invent failures in legacy rows; coercing to `true`
+// would invent successes. Same rule the codebase already applies to
+// tokensReasoning.
+test("buildPhaseEndEvent leaves outcome null when the caller omits it", () => {
+  const ev = buildPhaseEndEvent("worker", "m", { tokens: 1, durationMs: 1 });
+  assert.equal(ev.exitCode, null);
+  assert.equal(ev.sawFinish, null);
+  assert.equal(ev.timedOut, null);
+  assert.equal(ev.stalled, null);
+});
+
+// `stalled` (idle watchdog fired — no output at all) is a DIFFERENT diagnosis
+// from `timedOut` (ran past the wall-clock while still producing output). One
+// says the provider wedged; the other says the task was too big. Collapsing them
+// would hide exactly the failure mode being measured on external seats.
+test("buildPhaseEndEvent separates a wedged run from a merely slow one", () => {
+  const wedged = buildPhaseEndEvent("worker", "glm-5.3", { stalled: true, timedOut: false });
+  assert.equal(wedged.stalled, true);
+  assert.equal(wedged.timedOut, false);
+
+  const slow = buildPhaseEndEvent("worker", "glm-5.3", { stalled: false, timedOut: true });
+  assert.equal(slow.stalled, false);
+  assert.equal(slow.timedOut, true);
+});
+
 test("buildPhaseEndEvent keeps tokensReasoning=null (unknown) when provider omitted it", () => {
   const ev = buildPhaseEndEvent("validator", "m", {
     tokens: 5,
