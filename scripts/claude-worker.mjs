@@ -64,8 +64,15 @@ import { fileURLToPath } from "node:url";
 import { cageSettingsPath, mcpConfigPath, writeCageSettings } from "./cage-settings.mjs";
 import { isMainModule } from "./lib/is-main.mjs";
 import { resolveProject } from "./lib/project.mjs";
-import { assertKnownProject, DEFAULT_GRACE_MS, killGracefully } from "./lib/worker-common.mjs";
-import { buildPhaseEndEvent, buildPhaseStartEvent, buildSpawnEnv, isWorktreeDir } from "./opencode-worker.mjs";
+import {
+  assertKnownProject,
+  buildPhaseEndEvent,
+  buildPhaseStartEvent,
+  buildSpawnEnv,
+  DEFAULT_GRACE_MS,
+  isWorktreeDir,
+  killGracefully,
+} from "./lib/worker-common.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const METRICS_SCRIPT = path.join(__dirname, "metrics.mjs");

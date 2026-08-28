@@ -427,11 +427,12 @@ test("engine sources carry no product literals", () => {
     targets.push(path.join(FACTORY_ROOT, "scripts", ent.name));
   }
 
-  // scripts/lib/*.mjs (lib has no test files today, but the same exemption applies)
+  // scripts/lib/*.mjs EXCLUDING *.test.mjs (same exemption as scripts/ above)
   const libDir = path.join(FACTORY_ROOT, "scripts", "lib");
   if (existsSync(libDir)) {
     for (const ent of readdirSync(libDir, { withFileTypes: true })) {
       if (!ent.isFile() || !ent.name.endsWith(".mjs")) continue;
+      if (ent.name.endsWith(".test.mjs")) continue;
       targets.push(path.join(libDir, ent.name));
     }
   }
