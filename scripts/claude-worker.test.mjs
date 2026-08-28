@@ -815,3 +815,13 @@ test("buildClaudeEnv: R3 — named product secrets never reach the visual-valida
   }
   assert.equal(env.ANTHROPIC_AUTH_TOKEN, "tok", "the z.ai seat credential must be present");
 });
+
+// Weak on purpose: no fake-`claude`-on-PATH harness exists here, and recordMetric
+// forwards --project (not --dir), so an end-to-end dispatch would append to the
+// real mission log. This just catches a merge that drops the worktree-delta
+// wiring. Real verification is a dogfood dispatch after GREEN.
+test("claude-worker imports the worktree-delta helpers", () => {
+  const src = readFileSync(path.join(fileURLToPath(new URL(".", import.meta.url)), "claude-worker.mjs"), "utf8");
+  assert.ok(src.includes("snapshotWorktree"), "must import/use snapshotWorktree");
+  assert.ok(src.includes("countChangedFiles"), "must import/use countChangedFiles");
+});

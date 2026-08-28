@@ -56,9 +56,11 @@ import {
   buildPhaseEndEvent,
   buildPhaseStartEvent,
   buildSpawnEnv,
+  countChangedFiles,
   DEFAULT_GRACE_MS,
   isWorktreeDir,
   killGracefully,
+  snapshotWorktree,
 } from "./lib/worker-common.mjs";
 import { opencodeCagePath, writeOpencodeCage } from "./cage-opencode.mjs";
 
@@ -339,10 +341,13 @@ async function main() {
     recordMetric(opts.slug, buildPhaseStartEvent(opts.metricSeat, opts.model), opts.project);
   }
 
+  const baseline = snapshotWorktree(path.resolve(opts.dir));
+
   const t0 = Date.now();
   const { exitCode, stdout, stderr, timedOut } = await runOpencode(opts);
   const wallMs = Date.now() - t0;
   const parsed = parseOpencodeStream(stdout);
+  const filesChanged = countChangedFiles(path.resolve(opts.dir), baseline);
 
   const ok = exitCode === 0 && parsed.sawFinish;
   process.stdout.write(
@@ -369,6 +374,7 @@ async function main() {
         exitCode,
         sawFinish: parsed.sawFinish === true,
         timedOut: timedOut === true,
+        filesChanged,
       }),
       opts.project,
     );

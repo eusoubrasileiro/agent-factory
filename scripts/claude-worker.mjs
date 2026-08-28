@@ -69,9 +69,11 @@ import {
   buildPhaseEndEvent,
   buildPhaseStartEvent,
   buildSpawnEnv,
+  countChangedFiles,
   DEFAULT_GRACE_MS,
   isWorktreeDir,
   killGracefully,
+  snapshotWorktree,
 } from "./lib/worker-common.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -730,11 +732,13 @@ async function main() {
   const env = buildClaudeEnv(process.env, creds, dirAbs);
 
   if (opts.slug) recordMetric(opts.slug, buildPhaseStartEvent(opts.metricSeat, opts.model), opts.project);
+  const baseline = snapshotWorktree(dirAbs);
   const started = Date.now();
   const res = await runClaude({ ...opts, dir: dirAbs }, env, settingsPath);
   const wallMs = Date.now() - started;
 
   const parsed = parseClaudeResult(res.stdout);
+  const filesChanged = countChangedFiles(dirAbs, baseline);
   if (opts.slug) {
     recordMetric(
       opts.slug,
@@ -750,6 +754,7 @@ async function main() {
         sawFinish: parsed.sawFinish,
         timedOut: res.timedOut === true,
         stalled: res.stalled === true,
+        filesChanged,
       }),
       opts.project,
     );
@@ -761,7 +766,7 @@ async function main() {
   process.stdout.write(
     `claude-worker: model=${opts.model} session=${parsed.sessionID ?? "-"} ` +
       `tokens=${parsed.tokens} apiCost=$${parsed.apiCostUsd.toFixed(4)} wallMs=${wallMs} ` +
-      `timedOut=${res.timedOut} stalled=${res.stalled} exit=${res.exitCode}\n`,
+      `timedOut=${res.timedOut} stalled=${res.stalled} exit=${res.exitCode} files=${filesChanged}\n`,
   );
   if (res.stderr.trim()) process.stderr.write(`${res.stderr.trim()}\n`);
 
