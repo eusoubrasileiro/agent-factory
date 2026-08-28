@@ -16,6 +16,16 @@
  * Exit codes:
  *   record: 0 recorded · 1 malformed/schema/gap/unknown-slug · 2 round bound exhausted (no write)
  *   status: 0 last=PASS · 1 last=FAIL or no rounds · 2 exhausted (3 rounds all FAIL)
+ *
+ * BOUNDARY — what this recorder does NOT check (deliberate, D-54 / E-doc §8.2).
+ * It schema-validates the verdict and enforces the round bound. It does NOT
+ * cross-check `assertions[].id` against the mission's `contract.md`, so a PASS
+ * carrying FABRICATED green assertion ids is recordable and will look identical
+ * to an earned one. That is by design: the VALIDATOR seat reads the contract and
+ * makes the judgment; this recorder only seals it. The integrity of an assertion
+ * id therefore rests on the validator being held-out and adversarial — never on
+ * this file. If that ever stops being true, add required-id matching here; until
+ * then, do not read a recorded PASS as evidence the contract was read.
  */
 
 import { spawn, spawnSync } from "node:child_process";

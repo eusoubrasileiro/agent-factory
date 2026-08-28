@@ -558,6 +558,20 @@ test("unmatchedCriticalGlobs: the factory profile's own critical globs all exist
   assert.deepEqual(dead, [], `factory critical globs must all resolve to a real path: dead=${dead}`);
 });
 
+test("unmatchedCriticalGlobs: the cage file itself is never reported dead (it is written at spawn)", () => {
+  // `.claude/settings.json` IS the rendered cage. It is created inside the worktree
+  // at every spawn, so it is CORRECTLY absent from a main checkout. Flagging it
+  // pressures an operator to delete the one deny rule that stops a seat rewriting
+  // its own permissions — the check would be arguing for its own defeat.
+  const empty = mkdtempSync(path.join(tmpdir(), "cage-absent-"));
+  try {
+    const dead = unmatchedCriticalGlobs([".claude/settings.json", "nope/**"], empty);
+    assert.deepEqual(dead, ["nope/**"], "only the genuinely dead glob is reported");
+  } finally {
+    rmSync(empty, { recursive: true, force: true });
+  }
+});
+
 test("EVERY profile's critical globs match a real path in its repo (D-37, all profiles)", () => {
   for (const proj of loadProjects(FACTORY_ROOT)) {
     const resolved = resolveProject({ project: proj.id }, FACTORY_ROOT);
