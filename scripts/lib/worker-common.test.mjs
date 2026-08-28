@@ -13,8 +13,8 @@
  */
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -24,8 +24,10 @@ import {
   buildPhaseEndEvent,
   buildPhaseStartEvent,
   buildSpawnEnv,
+  countChangedFiles,
   isWorktreeDir,
   killGracefully,
+  snapshotWorktree,
   SPAWN_ENV_ALLOWLIST,
 } from "./worker-common.mjs";
 
@@ -439,4 +441,130 @@ test("buildPhaseEndEvent maps legacy `cost` → apiCostUsd when apiCostUsd is ab
   // cache tiers default to 0 when the provider reports none (opencode/glm)
   assert.equal(ev.tokensCacheRead, 0);
   assert.equal(ev.tokensCacheWrite, 0);
+});
+
+// ── filesChanged: driver-measured tree delta, never read out of model output ──
+// A count of distinct paths whose state differs from the pre-spawn baseline.
+// null means UNMEASURED (git unavailable, not a repo, HEAD unresolvable, or
+// either snapshot failed) — never 0 as a stand-in for "we don't know".
+
+test("buildPhaseEndEvent carries filesChanged when the driver measured it", () => {
+  const ev = buildPhaseEndEvent("worker", "m", { filesChanged: 7 });
+  assert.equal(ev.filesChanged, 7);
+});
+
+test("buildPhaseEndEvent leaves filesChanged null when unmeasured", () => {
+  const ev = buildPhaseEndEvent("worker", "m", { tokens: 1 });
+  assert.strictEqual(ev.filesChanged, null);
+});
+
+// ─── snapshotWorktree / countChangedFiles — real `git init` fixtures ───────────
+// Same idiom as scripts/git-autocommit.test.mjs:24 (mkdtemp, git init, real git,
+// rmSync cleanup) — the point is the real git plumbing, not a mock of it.
+
+function git(cwd, args) {
+  const r = spawnSync("git", args, { cwd, encoding: "utf8" });
+  if (r.error) throw r.error;
+  return r;
+}
+
+/** Minimal `git init` repo with one committed file (`a.txt`). */
+function makeRepo() {
+  const repo = mkdtempSync(path.join(tmpdir(), "worker-common-repo-"));
+  git(repo, ["init", "-q"]);
+  git(repo, ["config", "user.email", "test@example.com"]);
+  git(repo, ["config", "user.name", "Test"]);
+  writeFileSync(path.join(repo, "a.txt"), "one\n");
+  git(repo, ["add", "-A"]);
+  git(repo, ["commit", "-q", "-m", "init"]);
+  return repo;
+}
+
+test("snapshotWorktree returns null outside a git repo", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "worker-common-norepo-"));
+  try {
+    assert.strictEqual(snapshotWorktree(dir), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("countChangedFiles returns null when the baseline is null", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "worker-common-nullbase-"));
+  try {
+    assert.strictEqual(countChangedFiles(dir, null), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("countChangedFiles sees an uncommitted edit", () => {
+  const repo = makeRepo();
+  try {
+    const baseline = snapshotWorktree(repo);
+    writeFileSync(path.join(repo, "a.txt"), "one\ntwo\n");
+    assert.equal(countChangedFiles(repo, baseline), 1);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("countChangedFiles sees work the seat COMMITTED", () => {
+  const repo = makeRepo();
+  try {
+    const baseline = snapshotWorktree(repo);
+    writeFileSync(path.join(repo, "a.txt"), "one\ntwo\n");
+    git(repo, ["add", "-A"]);
+    git(repo, ["commit", "-q", "-m", "seat work"]);
+    assert.equal(countChangedFiles(repo, baseline), 1);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("countChangedFiles counts a new untracked file", () => {
+  const repo = makeRepo();
+  try {
+    const baseline = snapshotWorktree(repo);
+    writeFileSync(path.join(repo, "b.txt"), "new\n");
+    assert.equal(countChangedFiles(repo, baseline), 1);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("countChangedFiles reports 0 for a worktree that was already dirty before the run", () => {
+  const repo = makeRepo();
+  try {
+    writeFileSync(path.join(repo, "a.txt"), "one\ndirty-before-run\n");
+    const baseline = snapshotWorktree(repo);
+    assert.equal(countChangedFiles(repo, baseline), 0);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("countChangedFiles counts a further edit to an already-dirty file", () => {
+  const repo = makeRepo();
+  try {
+    writeFileSync(path.join(repo, "a.txt"), "one\ndirty-before-run\n");
+    const baseline = snapshotWorktree(repo);
+    appendFileSync(path.join(repo, "a.txt"), "line2\nline3\nline4\n");
+    assert.equal(countChangedFiles(repo, baseline), 1);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("countChangedFiles ignores .claude/, so the driver cannot fabricate its own signal", () => {
+  const repo = makeRepo();
+  try {
+    const baseline = snapshotWorktree(repo);
+    mkdirSync(path.join(repo, ".claude", "seat-config-x"), { recursive: true });
+    writeFileSync(path.join(repo, ".claude", "seat-config-x", "history.jsonl"), "{}\n");
+    writeFileSync(path.join(repo, ".claude", "settings.json"), "{}\n");
+    assert.equal(countChangedFiles(repo, baseline), 0);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });
