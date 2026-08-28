@@ -355,6 +355,83 @@ for (const id of PROFILE_IDS) {
 // — never crash a mission. This follows what the code actually does
 // (Array.isArray gate + a `.filter` on `typeof it.file === "string"`).
 
+// ─── Gate-runner profile keys (gate.mjs / D-54) ──────────────────────────────
+// All four are OPTIONAL and additive. The defaults matter more than the values:
+// an undeclared key must mean "unchecked", never "checked and clean" (D-25).
+
+test("buildProfile defaults the four gate-runner keys on a profile that declares none", () => {
+  const { profile } = resolveProject({ project: "factory" }, FACTORY_ROOT);
+  // Shape assertions only — a profile MAY declare these; what is pinned here is
+  // that the keys always exist with the right type so gate.mjs never sees
+  // `undefined` and has to invent a meaning for it.
+  assert.ok(Array.isArray(profile.prepare), "prepare is always an array");
+  assert.ok(Array.isArray(profile.gateExclusive), "gateExclusive is always an array");
+  assert.ok(Array.isArray(profile.gateConfig), "gateConfig is always an array");
+  assert.ok(
+    profile.prepareMarker === null || typeof profile.prepareMarker === "string",
+    "prepareMarker is a string or null, never undefined",
+  );
+});
+
+test("buildProfile round-trips the four gate-runner keys when a profile declares them", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "profile-gatekeys-"));
+  try {
+    const pdir = path.join(dir, "projects", "demo");
+    mkdirSync(pdir, { recursive: true });
+    writeFileSync(
+      path.join(pdir, "project.json"),
+      JSON.stringify({
+        id: "demo",
+        path: ".",
+        gate: ["make test"],
+        prepare: ["pnpm install --frozen-lockfile"],
+        prepareMarker: "node_modules",
+        gateExclusive: ["make test"],
+        gateConfig: ["package.json#/scripts", "src/Makefile"],
+      }),
+    );
+    writeFileSync(path.join(pdir, "critical-files.json"), "[]");
+    const { profile } = resolveProject({ project: "demo" }, dir);
+    assert.deepEqual(profile.prepare, ["pnpm install --frozen-lockfile"]);
+    assert.equal(profile.prepareMarker, "node_modules");
+    assert.deepEqual(profile.gateExclusive, ["make test"]);
+    assert.deepEqual(profile.gateConfig, ["package.json#/scripts", "src/Makefile"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildProfile drops non-string and empty entries from the gate-runner arrays", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "profile-gatekeys-bad-"));
+  try {
+    const pdir = path.join(dir, "projects", "demo");
+    mkdirSync(pdir, { recursive: true });
+    writeFileSync(
+      path.join(pdir, "project.json"),
+      JSON.stringify({
+        id: "demo",
+        path: ".",
+        gate: ["make test"],
+        prepare: ["ok", "", 7, null],
+        prepareMarker: "",
+        gateExclusive: "not-an-array",
+        gateConfig: [{ nope: true }, "src/Makefile"],
+      }),
+    );
+    writeFileSync(path.join(pdir, "critical-files.json"), "[]");
+    const { profile } = resolveProject({ project: "demo" }, dir);
+    assert.deepEqual(profile.prepare, ["ok"], "garbage entries are filtered, not thrown on");
+    // An empty-string marker is NOT a marker. Left as "" it would be joined onto
+    // the worktree path and existsSync would report the worktree ITSELF present,
+    // so every unprovisioned tree would preflight clean — a false pass.
+    assert.equal(profile.prepareMarker, null);
+    assert.deepEqual(profile.gateExclusive, [], "a non-array degrades to [], never throws");
+    assert.deepEqual(profile.gateConfig, ["src/Makefile"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("resolveProject tolerates a corrupt intake[] without throwing", () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "factory-intake-"));
   try {
