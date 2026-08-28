@@ -114,6 +114,105 @@ test("validateEvent rejects a non-number durationMs", () => {
   assert.match(r.reason, /durationMs must be a number/);
 });
 
+// ─── Gate outcome: the gate_result event (D-54 / gate-honest-metric) ──────────
+
+test("validateEvent accepts the gate_result event type", () => {
+  assert.deepEqual(validateEvent({ seat: "worker", type: "gate_result" }), { ok: true });
+});
+
+test("validateEvent accepts a three-valued `passed` — true, false, and null (unmeasured)", () => {
+  // null is NOT a failure. It means the gate could not be executed at all (no gate
+  // declared, deps missing, spawn error, timeout). Coercing it to false would
+  // invent model failures out of environment faults — the exact reason a fresh
+  // worktree with no node_modules must never score as "the seat wrote broken code".
+  for (const v of [true, false, null]) {
+    assert.deepEqual(validateEvent({ seat: "worker", type: "gate_result", passed: v }), {
+      ok: true,
+    });
+  }
+});
+
+test("validateEvent rejects a non-boolean `passed`", () => {
+  const r = validateEvent({ seat: "worker", type: "gate_result", passed: "PASS" });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /passed must be a boolean or null/);
+});
+
+test("validateEvent accepts the gate detail fields, and null for each", () => {
+  assert.deepEqual(
+    validateEvent({
+      seat: "worker",
+      type: "gate_result",
+      passed: false,
+      gateCommand: "pnpm test",
+      gateStep: 1,
+      gateTotal: 4,
+      gateRan: 1,
+      gateReason: null,
+      gateConfigTouched: false,
+    }),
+    { ok: true },
+  );
+  assert.deepEqual(
+    validateEvent({
+      seat: "worker",
+      type: "gate_result",
+      passed: null,
+      gateCommand: null,
+      gateStep: null,
+      gateTotal: null,
+      gateRan: null,
+      gateReason: "deps-missing",
+      gateConfigTouched: null,
+    }),
+    { ok: true },
+  );
+});
+
+test("validateEvent rejects a non-string gateCommand and a non-number gateStep", () => {
+  const a = validateEvent({ seat: "worker", type: "gate_result", gateCommand: 7 });
+  assert.equal(a.ok, false);
+  assert.match(a.reason, /gateCommand must be a string or null/);
+  const b = validateEvent({ seat: "worker", type: "gate_result", gateStep: "1" });
+  assert.equal(b.ok, false);
+  assert.match(b.reason, /gateStep must be a number or null/);
+});
+
+test("validateEvent rejects a non-boolean gateConfigTouched", () => {
+  const r = validateEvent({ seat: "worker", type: "gate_result", gateConfigTouched: "yes" });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /gateConfigTouched must be a boolean or null/);
+});
+
+// ─── runId: the pairing key across phase_start / phase_end / gate_result ──────
+
+test("validateEvent accepts a string runId and null (legacy rows)", () => {
+  assert.deepEqual(validateEvent({ seat: "worker", type: "phase_start", runId: "r-1" }), {
+    ok: true,
+  });
+  assert.deepEqual(validateEvent({ seat: "worker", type: "phase_end", runId: null }), { ok: true });
+});
+
+test("validateEvent rejects a non-string runId", () => {
+  const r = validateEvent({ seat: "worker", type: "gate_result", runId: 12 });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /runId must be a string or null/);
+});
+
+// ─── filesChanged: shipped 2026-08-28 but never actually validated ────────────
+
+test("validateEvent accepts a numeric filesChanged and null, rejects a string", () => {
+  assert.deepEqual(validateEvent({ seat: "worker", type: "phase_end", filesChanged: 0 }), {
+    ok: true,
+  });
+  assert.deepEqual(validateEvent({ seat: "worker", type: "phase_end", filesChanged: null }), {
+    ok: true,
+  });
+  const r = validateEvent({ seat: "worker", type: "phase_end", filesChanged: "3" });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /filesChanged must be a number or null/);
+});
+
 // ─── Run outcome: exitCode / sawFinish / timedOut ─────────────────────────────
 
 test("validateEvent accepts a numeric exitCode and null (unmeasured)", () => {
