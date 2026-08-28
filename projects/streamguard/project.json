@@ -10,6 +10,9 @@
     "make -C src",
     "make -C src test-unit"
   ],
+  "gateConfig": [
+    "src/Makefile"
+  ],
   "noCanonicalE2E": "no chat/UI surface; the deterministic gate (C build + unit tests) plus pcap-replay probes in validation.md carry the behavioral load. Integration tests are excluded from the gate because they replay multi-GB captures.",
   "dispatch": "bash scripts/dispatch-worktree.sh {slug}"
 }

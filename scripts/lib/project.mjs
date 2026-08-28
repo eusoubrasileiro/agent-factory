@@ -133,6 +133,8 @@ export function loadProjects(factoryRoot = FACTORY_ROOT) {
  * @param {{id: string}} entry
  * @param {string} factoryRoot
  * @returns {{gate: string[], trunk: string, branchPrefix: string,
+ *            prepare: string[], prepareMarker: string|null,
+ *            gateExclusive: string[], gateConfig: string[],
  *            criticalFiles: string[], seatEnvPath: string|null,
  *            validationPath: string|null,
  *            intake: Array<{file: string, prefix: string, label: string}>,
@@ -150,6 +152,43 @@ function buildProfile(entry, factoryRoot) {
   // driver used to hardcode one product's `/.claude/worktrees/` and reject other layouts.
   const worktreeMarker =
     typeof entry.worktreeMarker === "string" ? entry.worktreeMarker : "/.claude/worktrees/";
+
+  // ── Gate-runner keys (gate.mjs). All optional and additive; a project that
+  //    declares none behaves exactly as before. The DEFAULTS carry the meaning:
+  //    an undeclared check must read as "unchecked", never "checked and clean".
+  const strings = (v) =>
+    Array.isArray(v) ? v.filter((c) => typeof c === "string" && c.length > 0) : [];
+
+  // `prepare` is the provisioning recipe, `prepareMarker` its liveness test. A
+  // fresh `git worktree add` has no node_modules (gitignored), and `pnpm test`
+  // there fails with a module-resolution error INDISTINGUISHABLE from "the seat
+  // wrote broken code" — so the gate runner refuses to score an unprovisioned
+  // tree at all. These never widen the cage: `gateCommandRules` reads `gate`
+  // only, so a `prepare` command is not something a seat may run.
+  const prepare = strings(entry.prepare);
+  // Empty string is NOT a marker: joined onto the worktree path it would test the
+  // worktree itself, which always exists, so every unprovisioned tree would
+  // preflight clean. Null means "this project needs no provisioning" (a C build).
+  const prepareMarker =
+    typeof entry.prepareMarker === "string" && entry.prepareMarker.length > 0
+      ? entry.prepareMarker
+      : null;
+
+  // Gate commands touching a single machine-global resource (one dev database,
+  // one port). Exact strings, matched against `gate[]`. The motivating case is a
+  // profile whose end-to-end layer runs against ONE global stack: two worktrees
+  // running it concurrently corrupt each other, while the hermetic layers of the
+  // same gate stay safely parallel.
+  const gateExclusive = strings(entry.gateExclusive);
+
+  // Locations whose change means the seat moved its OWN gate — `"test": "exit 0"`
+  // in package.json is a verified live trick (E-doc §8 / D-54). Entry syntax is
+  // `path[#json-pointer]` (RFC 6901), so a JSON sub-key can be addressed without
+  // the engine knowing what any particular manifest is (D-15 — a C project's gate
+  // config is a Makefile, and the engine must stay ignorant of that difference).
+  // Empty ⇒ gateConfigTouched is null (unchecked), never false: reporting clean
+  // for a check that cannot fail is the D-25 violation exactly.
+  const gateConfig = strings(entry.gateConfig);
 
   // critical-files.json is a JSON array of globs; missing/corrupt → [].
   let criticalFiles = [];
@@ -208,6 +247,10 @@ function buildProfile(entry, factoryRoot) {
     trunk,
     branchPrefix,
     worktreeMarker,
+    prepare,
+    prepareMarker,
+    gateExclusive,
+    gateConfig,
     criticalFiles,
     seatEnvPath,
     validationPath,

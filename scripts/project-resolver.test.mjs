@@ -47,6 +47,14 @@ function assertDefaultProfile(actual) {
     trunk: "main",
     branchPrefix: "agent/",
     worktreeMarker: "/.claude/worktrees/",
+    // Gate-runner keys. The defaults are the assertion that matters: an
+    // undeclared gateConfig must read as "unchecked" (gate.mjs → null), never
+    // as "checked and clean", and a null prepareMarker must mean "this project
+    // needs no provisioning" rather than "never provisioned".
+    prepare: [],
+    prepareMarker: null,
+    gateExclusive: [],
+    gateConfig: [],
     criticalFiles: [],
     seatEnvPath: null,
     validationPath: null,
