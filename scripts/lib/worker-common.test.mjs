@@ -19,7 +19,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { assertKnownProject, killGracefully } from "./worker-common.mjs";
+import {
+  assertKnownProject,
+  buildPhaseEndEvent,
+  buildPhaseStartEvent,
+  buildSpawnEnv,
+  isWorktreeDir,
+  killGracefully,
+  SPAWN_ENV_ALLOWLIST,
+} from "./worker-common.mjs";
 
 // `spawn()` is asynchronous: the child is still booting for a few ms after the
 // call returns. Signal it in that window and the handler it has not yet installed
@@ -242,4 +250,193 @@ test("assertKnownProject: the thrown message never carries anything from process
     delete process.env.FACTORY_PROJECT;
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// ─── isWorktreeDir ──────────────────────────────────────────────────────────
+
+test("isWorktreeDir accepts a dispatched worktree, rejects the main tree", () => {
+  assert.equal(
+    isWorktreeDir(
+      "/home/andre/Projects/amiticia/repositories/products/wahub/.claude/worktrees/scrumban-board",
+    ),
+    true,
+  );
+  assert.equal(isWorktreeDir("/home/andre/Projects/amiticia/repositories/products/wahub"), false);
+  assert.equal(isWorktreeDir("/tmp/somewhere"), false);
+});
+
+// ─── F2: spawn env allowlist (W1 — external seats never inherit real secrets) ──
+
+test("buildSpawnEnv drops secrets and keeps only allowlisted vars", () => {
+  const env = buildSpawnEnv({
+    PATH: "/usr/bin",
+    HOME: "/home/andre",
+    LANG: "en_US.UTF-8",
+    XDG_DATA_HOME: "/home/andre/.local/share",
+    XDG_CONFIG_DIRS: "/etc/xdg",
+    // secrets that must NOT pass through:
+    SUPABASE_SERVICE_ROLE_KEY: "real-service-role-key",
+    WABA_TOKEN_KEY: "deadbeef".repeat(8),
+    OPENAI_API_KEY: "sk-real",
+    OPENROUTER_API_KEY: "or-real",
+    DATABASE_URL: "postgresql://real:secret@prod/db",
+  });
+  const keys = Object.keys(env);
+  // every returned key is allowlisted or XDG_*
+  for (const k of keys) {
+    assert.ok(SPAWN_ENV_ALLOWLIST.includes(k) || k.startsWith("XDG_"), `unexpected key: ${k}`);
+  }
+  // secrets are gone
+  assert.equal(env.SUPABASE_SERVICE_ROLE_KEY, undefined);
+  assert.equal(env.WABA_TOKEN_KEY, undefined);
+  assert.equal(env.OPENAI_API_KEY, undefined);
+  assert.equal(env.OPENROUTER_API_KEY, undefined);
+  assert.equal(env.DATABASE_URL, undefined);
+});
+
+test("buildSpawnEnv passes HOME through (z.ai auth is $HOME-relative)", () => {
+  const env = buildSpawnEnv({ HOME: "/home/andre", NOTALLOWED: "x" });
+  assert.equal(env.HOME, "/home/andre");
+  assert.equal(env.NOTALLOWED, undefined);
+});
+
+test("buildSpawnEnv skips undefined values", () => {
+  const env = buildSpawnEnv({ PATH: undefined, HOME: "/h" });
+  assert.equal("PATH" in env, false);
+  assert.equal(env.HOME, "/h");
+});
+
+// ─── F2: metric event builders (phase_start at spawn, model first-class) ────────
+
+test("buildPhaseStartEvent emits a phase_start with model first-class + legacy detail", () => {
+  const ev = buildPhaseStartEvent("worker", "zai-coding-plan/glm-5.2");
+  assert.equal(ev.seat, "worker");
+  assert.equal(ev.type, "phase_start");
+  assert.equal(ev.model, "zai-coding-plan/glm-5.2");
+  assert.equal(ev.detail, "external:zai-coding-plan/glm-5.2");
+});
+
+test("buildPhaseStartEvent maps any non-validator seat to worker", () => {
+  assert.equal(buildPhaseStartEvent("validator", "m").seat, "validator");
+  assert.equal(buildPhaseStartEvent(undefined, "m").seat, "worker");
+});
+
+test("buildPhaseEndEvent carries model, durationMs and the token split", () => {
+  const ev = buildPhaseEndEvent("worker", "zai-coding-plan/glm-5.2", {
+    tokens: 14651,
+    tokensIn: 12343,
+    tokensOut: 4,
+    tokensReasoning: 0,
+    cost: 0,
+    durationMs: 820000,
+  });
+  assert.equal(ev.seat, "worker");
+  assert.equal(ev.type, "phase_end");
+  assert.equal(ev.model, "zai-coding-plan/glm-5.2");
+  assert.equal(ev.detail, "external:zai-coding-plan/glm-5.2");
+  assert.equal(ev.tokens, 14651);
+  assert.equal(ev.tokensIn, 12343);
+  assert.equal(ev.tokensOut, 4);
+  assert.equal(ev.tokensReasoning, 0);
+  assert.equal(ev.durationMs, 820000);
+  assert.equal(ev.costUsd, 0);
+});
+
+// ── Run OUTCOME (exitCode / sawFinish / timedOut) ───────────────────────────
+// Without these the meter records cost and wall-time but not whether the run
+// SUCCEEDED, so green-first-try — the primary endpoint of any model comparison —
+// is not computable from the recorded data. A hung worker and a clean pass are
+// indistinguishable in metrics.jsonl.
+
+test("buildPhaseEndEvent carries the run outcome (exitCode, sawFinish, timedOut)", () => {
+  const ev = buildPhaseEndEvent("worker", "glm-5.3", {
+    tokens: 100,
+    durationMs: 1000,
+    exitCode: 0,
+    sawFinish: true,
+    timedOut: false,
+  });
+  assert.equal(ev.exitCode, 0);
+  assert.equal(ev.sawFinish, true);
+  assert.equal(ev.timedOut, false);
+});
+
+test("buildPhaseEndEvent records a failed run distinguishably from a clean one", () => {
+  const ev = buildPhaseEndEvent("worker", "glm-5.3", {
+    tokens: 0,
+    durationMs: 1_800_000,
+    exitCode: 1,
+    sawFinish: false,
+    timedOut: true,
+  });
+  assert.equal(ev.exitCode, 1);
+  assert.equal(ev.sawFinish, false);
+  assert.equal(ev.timedOut, true);
+});
+
+// Absent → null ("unmeasured"), never false/0. Coercing a missing outcome to
+// `sawFinish:false` would invent failures in legacy rows; coercing to `true`
+// would invent successes. Same rule the codebase already applies to
+// tokensReasoning.
+test("buildPhaseEndEvent leaves outcome null when the caller omits it", () => {
+  const ev = buildPhaseEndEvent("worker", "m", { tokens: 1, durationMs: 1 });
+  assert.equal(ev.exitCode, null);
+  assert.equal(ev.sawFinish, null);
+  assert.equal(ev.timedOut, null);
+  assert.equal(ev.stalled, null);
+});
+
+// `stalled` (idle watchdog fired — no output at all) is a DIFFERENT diagnosis
+// from `timedOut` (ran past the wall-clock while still producing output). One
+// says the provider wedged; the other says the task was too big. Collapsing them
+// would hide exactly the failure mode being measured on external seats.
+test("buildPhaseEndEvent separates a wedged run from a merely slow one", () => {
+  const wedged = buildPhaseEndEvent("worker", "glm-5.3", { stalled: true, timedOut: false });
+  assert.equal(wedged.stalled, true);
+  assert.equal(wedged.timedOut, false);
+
+  const slow = buildPhaseEndEvent("worker", "glm-5.3", { stalled: false, timedOut: true });
+  assert.equal(slow.stalled, false);
+  assert.equal(slow.timedOut, true);
+});
+
+test("buildPhaseEndEvent keeps tokensReasoning=null (unknown) when provider omitted it", () => {
+  const ev = buildPhaseEndEvent("validator", "m", {
+    tokens: 5,
+    tokensIn: 0,
+    tokensOut: 0,
+    tokensReasoning: null,
+    cost: 0,
+    durationMs: 1000,
+  });
+  assert.equal(ev.tokensReasoning, null);
+  assert.equal(ev.seat, "validator");
+});
+
+test("buildPhaseEndEvent carries cache tokens + apiCostUsd (factory-cost Stage 1c)", () => {
+  const ev = buildPhaseEndEvent("worker", "claude-opus-4-8", {
+    tokensIn: 60477,
+    tokensOut: 11881,
+    tokensCacheRead: 19008,
+    tokensCacheWrite: 0,
+    apiCostUsd: 0.4231,
+    durationMs: 820000,
+  });
+  assert.equal(ev.tokensCacheRead, 19008);
+  assert.equal(ev.tokensCacheWrite, 0);
+  assert.equal(ev.apiCostUsd, 0.4231);
+  // legacy mirror stays in sync until old consumers are gone
+  assert.equal(ev.costUsd, 0.4231);
+});
+
+test("buildPhaseEndEvent maps legacy `cost` → apiCostUsd when apiCostUsd is absent", () => {
+  const ev = buildPhaseEndEvent("worker", "zai-coding-plan/glm-5.2", {
+    cost: 0.0012,
+    durationMs: 1000,
+  });
+  assert.equal(ev.apiCostUsd, 0.0012);
+  assert.equal(ev.costUsd, 0.0012);
+  // cache tiers default to 0 when the provider reports none (opencode/glm)
+  assert.equal(ev.tokensCacheRead, 0);
+  assert.equal(ev.tokensCacheWrite, 0);
 });
