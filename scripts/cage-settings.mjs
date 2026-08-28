@@ -147,11 +147,18 @@ export function parentEnvRules(worktreeAbs) {
  * one (D-37). For each glob, the prefix up to the first wildcard must exist as a file or dir.
  * @param {string[]} globs @param {string} repoRoot @returns {string[]} the dead globs
  */
+export const SELF_CAGE_GLOB = ".claude/settings.json";
+
 export function unmatchedCriticalGlobs(globs = [], repoRoot) {
   if (!Array.isArray(globs) || typeof repoRoot !== "string") return [];
   const dead = [];
   for (const g of globs) {
     if (typeof g !== "string" || g.length === 0) continue;
+    // The rendered cage is written INTO the worktree at every spawn, so it is
+    // correctly absent from a main checkout. Flagging it would push an operator to
+    // delete the one deny rule that stops a seat rewriting its own permissions —
+    // the D-37 check arguing for its own defeat. Exempt, always.
+    if (g === SELF_CAGE_GLOB) continue;
     const starIdx = g.search(/[*?[]/);
     const prefix = starIdx === -1 ? g : g.slice(0, starIdx).replace(/\/[^/]*$/, "");
     const probe = prefix.length === 0 ? repoRoot : path.join(repoRoot, prefix);
