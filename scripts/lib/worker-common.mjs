@@ -10,10 +10,126 @@
  * No exit codes — this is a library, not a CLI.
  */
 
+import path from "node:path";
+
 import { FACTORY_ROOT, loadProjects } from "./project.mjs";
 
 /** Default grace period before a stubborn child is killed outright. */
 export const DEFAULT_GRACE_MS = 30_000;
+
+const DEFAULT_WORKTREE_MARKER = "/.claude/worktrees/";
+
+/**
+ * Is `dir` an isolated dispatched worktree? The factory materializes those
+ * under `.claude/worktrees/<slug>/` (see scripts/dispatch-worktree.sh). We
+ * confine the external agent to one so it can never mutate the main tree.
+ * The marker is a per-project FACT from the profile (`project.json → worktreeMarker`,
+ * default `/.claude/worktrees/`), not an engine constant (D-27) — pass the resolved
+ * profile's marker; the default keeps back-compat for callers that don't.
+ * @param {string} dir — already absolute
+ * @param {string} [marker] — the profile's worktree marker
+ * @returns {boolean}
+ */
+export function isWorktreeDir(dir, marker = DEFAULT_WORKTREE_MARKER) {
+  const norm = dir.split(path.sep).join("/");
+  return norm.includes(marker);
+}
+
+// ─── Spawn env allowlist ─────────────────────────────────────────────────────
+
+/**
+ * Env vars the external agent (opencode) is allowed to inherit. Everything else
+ * in `process.env` — every real secret the coordinator's shell holds
+ * (SUPABASE_SERVICE_ROLE_KEY, WABA_TOKEN_KEY, OPENAI/OPENROUTER/… keys) — is
+ * dropped, so a third-party model process never receives them.
+ *
+ * opencode's z.ai credential is FILE-based (`$HOME/.local/share/opencode/auth.json`,
+ * i.e. XDG_DATA_HOME-relative), so passing `HOME` (and the XDG_* vars) is enough
+ * for auth to keep working — no secret env var, no wildcard.
+ */
+export const SPAWN_ENV_ALLOWLIST = ["PATH", "HOME", "LANG", "LC_ALL", "TERM", "TMPDIR"];
+
+/**
+ * Build the child-process env from `sourceEnv`, keeping only allowlisted names
+ * (exact match in SPAWN_ENV_ALLOWLIST, or any `XDG_*` var).
+ * @param {NodeJS.ProcessEnv} sourceEnv
+ * @returns {Record<string, string>}
+ */
+export function buildSpawnEnv(sourceEnv) {
+  const out = {};
+  for (const [k, v] of Object.entries(sourceEnv)) {
+    if (v === undefined) continue;
+    if (SPAWN_ENV_ALLOWLIST.includes(k) || k.startsWith("XDG_")) out[k] = v;
+  }
+  return out;
+}
+
+// ─── Metrics event builders (metrics.mjs schema, W3 full-pipeline observability) ─
+
+/** Map any seat label to the two metrics seats the schema accepts. */
+function metricSeat(seat) {
+  return seat === "validator" ? "validator" : "worker";
+}
+
+/**
+ * Build a `phase_start` event. Emitted at spawn so a mission's metrics.jsonl
+ * carries a start marker (today only phase_end existed — the 142-byte files
+ * prove it), which mission-stats pairs with phase_end to derive wall time.
+ * @param {string} seat @param {string} model
+ * @returns {{seat: string, type: "phase_start", detail: string, model: string}}
+ */
+export function buildPhaseStartEvent(seat, model) {
+  return {
+    seat: metricSeat(seat),
+    type: "phase_start",
+    detail: `external:${model}`,
+    model,
+  };
+}
+
+/**
+ * Build a `phase_end` event with `model` first-class (the legacy `detail`
+ * remains for back-compat), the token split when the stream provided it, and
+ * the driver-measured wall time as `durationMs`.
+ *
+ * Cost attribution (factory-cost Stage 1c): `apiCostUsd` carries the
+ * provider-priced public-API cost (claude -p's `total_cost_usd`; opencode's
+ * `part.cost`). Cache tokens are first-class so priced seats bill at the cache
+ * tiers. The legacy `costUsd` is mirrored for back-compat with old consumers.
+ * @param {string} seat @param {string} model
+ * @param {{tokens?: number, tokensIn?: number, tokensOut?: number, tokensReasoning?: number|null, tokensCacheRead?: number, tokensCacheWrite?: number, cost?: number, apiCostUsd?: number, durationMs?: number}} m
+ */
+export function buildPhaseEndEvent(seat, model, m = {}) {
+  const apiCost = typeof m.apiCostUsd === "number" ? m.apiCostUsd : m.cost ?? 0;
+  return {
+    seat: metricSeat(seat),
+    type: "phase_end",
+    detail: `external:${model}`,
+    model,
+    tokens: m.tokens ?? 0,
+    tokensIn: m.tokensIn ?? 0,
+    tokensOut: m.tokensOut ?? 0,
+    // Preserve an explicit null (provider omitted the split) — never coerce to 0.
+    tokensReasoning: m.tokensReasoning === undefined ? null : m.tokensReasoning,
+    tokensCacheRead: m.tokensCacheRead ?? 0,
+    tokensCacheWrite: m.tokensCacheWrite ?? 0,
+    durationMs: m.durationMs ?? 0,
+    // Run OUTCOME. Without these the meter knows what a run COST but not whether
+    // it WORKED, so green-first-try is not computable and a hung worker reads
+    // identically to a clean pass. Absent → null ("unmeasured"), never false/0:
+    // coercing would invent failures in legacy rows, or successes in broken ones.
+    exitCode: m.exitCode === undefined ? null : m.exitCode,
+    sawFinish: m.sawFinish === undefined ? null : m.sawFinish,
+    timedOut: m.timedOut === undefined ? null : m.timedOut,
+    // Idle watchdog fired (no output at all) — the provider wedged. Distinct
+    // from timedOut, which means "still working, just past the wall-clock".
+    stalled: m.stalled === undefined ? null : m.stalled,
+    // Public-API-basis cost (real $ for priced seats; comparison figure for flat).
+    apiCostUsd: apiCost,
+    // Legacy mirror — old consumers read costUsd; keep it in sync until removed.
+    costUsd: apiCost,
+  };
+}
 
 /**
  * Refuse to run a seat driver without a KNOWN `--project`.
