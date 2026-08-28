@@ -10,6 +10,7 @@
  * No exit codes — this is a library, not a CLI.
  */
 
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 
 import { FACTORY_ROOT, loadProjects } from "./project.mjs";
@@ -71,6 +72,127 @@ function metricSeat(seat) {
   return seat === "validator" ? "validator" : "worker";
 }
 
+// ─── Worktree delta (filesChanged) ──────────────────────────────────────────
+// Driver-measured count of distinct paths touched during a run — the one
+// run-outcome field the seat cannot fabricate, because it comes from git,
+// never from the transcript. See snapshotWorktree/countChangedFiles below.
+
+/**
+ * Run `git`, contained: a call blocked on `index.lock` must not stall the
+ * driver after the run has already finished, and any failure here — non-zero
+ * exit, thrown error, overflowed buffer — degrades to `null` rather than
+ * throwing. A git problem must never fail a run.
+ * @param {string} dirAbs @param {string[]} args
+ * @returns {string|null}
+ */
+function runGit(dirAbs, args) {
+  try {
+    const r = spawnSync("git", args, {
+      cwd: dirAbs,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 10_000,
+      maxBuffer: 16 << 20,
+    });
+    if (r.error || r.status !== 0 || typeof r.stdout !== "string") return null;
+    return r.stdout;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse `git diff --numstat --no-renames -z` output into `path -> "ins,del"`.
+ * With `--no-renames` each record is one NUL-terminated token: `ins\tdel\tpath`.
+ */
+function parseNumstatZ(text, into) {
+  for (const token of text.split("\0")) {
+    if (token.length === 0) continue;
+    const tab1 = token.indexOf("\t");
+    const tab2 = token.indexOf("\t", tab1 + 1);
+    if (tab1 === -1 || tab2 === -1) continue;
+    into.set(token.slice(tab2 + 1), `${token.slice(0, tab1)},${token.slice(tab1 + 1, tab2)}`);
+  }
+}
+
+/**
+ * Fingerprint the worktree relative to `head`: `path -> "ins,del"` for every
+ * committed/staged/unstaged change against `head`, plus `path -> "?"` for
+ * every untracked path. `.claude/` is excluded — Claude Code keeps writing
+ * session state there (CLAUDE_CONFIG_DIR mkdtemp, settings) *during* the run,
+ * so without the exclusion the driver's own plumbing would manufacture a
+ * non-zero signal on every run.
+ * @returns {Map<string,string>|null}
+ */
+function buildFingerprint(dirAbs, head) {
+  const numstatOut = runGit(dirAbs, [
+    "diff",
+    "--numstat",
+    "--no-renames",
+    "-z",
+    head,
+    "--",
+    ".",
+    ":(exclude).claude",
+  ]);
+  if (numstatOut === null) return null;
+  const files = new Map();
+  parseNumstatZ(numstatOut, files);
+  const untrackedOut = runGit(dirAbs, [
+    "ls-files",
+    "--others",
+    "--exclude-standard",
+    "--directory",
+    "--no-empty-directory",
+    "-z",
+    "--",
+    ".",
+    ":(exclude).claude",
+  ]);
+  if (untrackedOut === null) return null;
+  for (const p of untrackedOut.split("\0")) if (p.length > 0) files.set(p, "?");
+  return files;
+}
+
+/**
+ * Snapshot the worktree as late as possible before spawning the seat — after
+ * cage settings + env are written, after `phase_start` is recorded. Diffing
+ * against `head` (not `git status`) is what makes a seat that COMMITS its
+ * work read identically to one that leaves it dirty, and what stops a
+ * re-dispatch from inheriting credit for a prior attempt's leftovers.
+ * @param {string} dirAbs
+ * @returns {{head: string, files: Map<string,string>}|null}
+ */
+export function snapshotWorktree(dirAbs) {
+  const headOut = runGit(dirAbs, ["rev-parse", "HEAD"]);
+  if (headOut === null) return null;
+  const head = headOut.trim();
+  const files = buildFingerprint(dirAbs, head);
+  if (files === null) return null;
+  return { head, files };
+}
+
+/**
+ * Count of distinct paths whose fingerprint differs between `baseline` and
+ * now — the symmetric difference of the two fingerprint maps. Fingerprints
+ * (not bare path sets) so a further edit to an already-dirty file counts:
+ * with `--name-only` the path would sit in both sets and score 0, a false
+ * "did nothing" on exactly the re-dispatch case this exists for.
+ * @param {string} dirAbs
+ * @param {{head:string,files:Map<string,string>}|null} baseline
+ * @returns {number|null} null when unmeasured — never 0 standing in for "unknown"
+ */
+export function countChangedFiles(dirAbs, baseline) {
+  if (baseline === null || baseline === undefined) return null;
+  const after = buildFingerprint(dirAbs, baseline.head);
+  if (after === null) return null;
+  const before = baseline.files;
+  let count = 0;
+  for (const [p, fp] of before) if (after.get(p) !== fp) count++;
+  for (const [p, fp] of after) if (!before.has(p)) count++;
+  return count;
+}
+
 /**
  * Build a `phase_start` event. Emitted at spawn so a mission's metrics.jsonl
  * carries a start marker (today only phase_end existed — the 142-byte files
@@ -97,7 +219,7 @@ export function buildPhaseStartEvent(seat, model) {
  * `part.cost`). Cache tokens are first-class so priced seats bill at the cache
  * tiers. The legacy `costUsd` is mirrored for back-compat with old consumers.
  * @param {string} seat @param {string} model
- * @param {{tokens?: number, tokensIn?: number, tokensOut?: number, tokensReasoning?: number|null, tokensCacheRead?: number, tokensCacheWrite?: number, cost?: number, apiCostUsd?: number, durationMs?: number}} m
+ * @param {{tokens?: number, tokensIn?: number, tokensOut?: number, tokensReasoning?: number|null, tokensCacheRead?: number, tokensCacheWrite?: number, cost?: number, apiCostUsd?: number, durationMs?: number, filesChanged?: number|null}} m
  */
 export function buildPhaseEndEvent(seat, model, m = {}) {
   const apiCost = typeof m.apiCostUsd === "number" ? m.apiCostUsd : m.cost ?? 0;
@@ -128,6 +250,11 @@ export function buildPhaseEndEvent(seat, model, m = {}) {
     apiCostUsd: apiCost,
     // Legacy mirror — old consumers read costUsd; keep it in sync until removed.
     costUsd: apiCost,
+    // Count of distinct paths touched vs. the pre-spawn baseline (committed,
+    // staged, unstaged or untracked). The only run-outcome field the seat
+    // cannot fabricate — the driver computes it from the tree via git, never
+    // from the transcript. null = UNMEASURED, never 0 standing in for "unknown".
+    filesChanged: m.filesChanged === undefined ? null : m.filesChanged,
   };
 }
 
