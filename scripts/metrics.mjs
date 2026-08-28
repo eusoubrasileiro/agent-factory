@@ -37,6 +37,12 @@ const TYPES = new Set([
   "worker_death",
   "phase_start",
   "phase_end",
+  // The deterministic gate's own verdict, recorded by the driver rather than
+  // asserted by the seat. Its own type, not fields on phase_end: the log is
+  // append-only (a gate run later could not amend an earlier row), and folding
+  // gate time into phase_end's durationMs would corrupt the one clean per-seat
+  // wall-clock number we have.
+  "gate_result",
 ]);
 
 /** Event types that count toward the attention-per-feature figure (v2 §3.4). */
@@ -130,6 +136,47 @@ export function validateEvent(obj) {
     if (typeof obj.stalled !== "boolean") {
       return { ok: false, reason: "stalled must be a boolean or null when present" };
     }
+  }
+  // filesChanged: paths touched vs the pre-spawn baseline, computed by the driver
+  // from git. Shipped 2026-08-28 and rode through unvalidated until D-54.
+  if (obj.filesChanged !== undefined && obj.filesChanged !== null) {
+    if (typeof obj.filesChanged !== "number") {
+      return { ok: false, reason: "filesChanged must be a number or null when present" };
+    }
+  }
+  // ── Gate outcome (gate_result). `passed` is deliberately THREE-valued: null
+  //    means the gate could not be run at all (none declared, deps missing, spawn
+  //    error, timeout) — an environment fault, never a model failure. Coercing it
+  //    to false would score every unprovisioned worktree as "the seat wrote broken
+  //    code" and make the metric worse than none, because it would be trusted.
+  if (obj.passed !== undefined && obj.passed !== null) {
+    if (typeof obj.passed !== "boolean") {
+      return { ok: false, reason: "passed must be a boolean or null when present" };
+    }
+  }
+  for (const key of ["gateCommand", "gateReason"]) {
+    if (obj[key] !== undefined && obj[key] !== null && typeof obj[key] !== "string") {
+      return { ok: false, reason: `${key} must be a string or null when present` };
+    }
+  }
+  for (const key of ["gateStep", "gateTotal", "gateRan"]) {
+    if (obj[key] !== undefined && obj[key] !== null && typeof obj[key] !== "number") {
+      return { ok: false, reason: `${key} must be a number or null when present` };
+    }
+  }
+  // The seat moved the gate config (package.json `scripts`, vitest config, CI) and
+  // then went green. Not blocked — blocking costs a builder its legitimate
+  // dependency edits — but such a run is QUARANTINED, never counted as delivered.
+  if (obj.gateConfigTouched !== undefined && obj.gateConfigTouched !== null) {
+    if (typeof obj.gateConfigTouched !== "boolean") {
+      return { ok: false, reason: "gateConfigTouched must be a boolean or null when present" };
+    }
+  }
+  // runId pairs phase_start / phase_end / gate_result for ONE spawn. Without it,
+  // concurrent worktrees on one mission interleave and pairing is a FIFO guess.
+  // Legacy rows have none → null, and consumers fall back to that guess knowingly.
+  if (obj.runId !== undefined && obj.runId !== null && typeof obj.runId !== "string") {
+    return { ok: false, reason: "runId must be a string or null when present" };
   }
   return { ok: true };
 }
