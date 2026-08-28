@@ -287,6 +287,16 @@ export function buildPhaseEndEvent(seat, model, m = {}) {
     tokensCacheRead: m.tokensCacheRead ?? 0,
     tokensCacheWrite: m.tokensCacheWrite ?? 0,
     durationMs: m.durationMs ?? 0,
+    // Run OUTCOME. Without these the meter knows what a run COST but not whether
+    // it WORKED, so green-first-try is not computable and a hung worker reads
+    // identically to a clean pass. Absent → null ("unmeasured"), never false/0:
+    // coercing would invent failures in legacy rows, or successes in broken ones.
+    exitCode: m.exitCode === undefined ? null : m.exitCode,
+    sawFinish: m.sawFinish === undefined ? null : m.sawFinish,
+    timedOut: m.timedOut === undefined ? null : m.timedOut,
+    // Idle watchdog fired (no output at all) — the provider wedged. Distinct
+    // from timedOut, which means "still working, just past the wall-clock".
+    stalled: m.stalled === undefined ? null : m.stalled,
     // Public-API-basis cost (real $ for priced seats; comparison figure for flat).
     apiCostUsd: apiCost,
     // Legacy mirror — old consumers read costUsd; keep it in sync until removed.
@@ -459,6 +469,9 @@ async function main() {
         tokensReasoning: parsed.tokensReasoning,
         cost: parsed.cost,
         durationMs: wallMs,
+        exitCode,
+        sawFinish: parsed.sawFinish === true,
+        timedOut: timedOut === true,
       }),
       opts.project,
     );

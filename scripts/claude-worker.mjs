@@ -30,8 +30,13 @@
  *     --dir <worktree> --model <model> --project <id> \
  *     (--prompt "<text>" | --prompt-file <path>) \
  *     [--slug <slug>] [--metric-seat worker|validator] \
- *     [--session <id>] [--continue] [--timeout <ms>] [--json-out <path>] \
+ *     [--session <id>] [--continue] [--timeout <ms>] [--idle-timeout <ms>] \
+ *     [--json-out <path>] \
  *     [--allow-any-dir] [--allow-uncaged] [--allow-anthropic] [--creds <path>]
+ *
+ * `--timeout` is the wall clock; `--idle-timeout` is the no-output watchdog
+ * (see `resolveIdleTimeout`). `--json-out` now receives the raw stream-json
+ * JSONL transcript, not a single JSON object — parse it line-wise.
  *
  * `--project` is REQUIRED and must name a known profile (`projects/<id>/`): the
  * cage's Critical-File deny rules and this run's telemetry routing both come from
@@ -65,6 +70,8 @@ import { buildPhaseEndEvent, buildPhaseStartEvent, buildSpawnEnv, isWorktreeDir 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const METRICS_SCRIPT = path.join(__dirname, "metrics.mjs");
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
+/** No output at all for this long ⇒ wedged, not working. See `resolveIdleTimeout`. */
+const DEFAULT_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_CREDS_PATH = path.join(homedir(), ".config", "amiticia", "zai.env");
 
 /**
@@ -80,6 +87,20 @@ export const CLAUDE_ENV_KEYS = [
   "ANTHROPIC_DEFAULT_OPUS_MODEL",
   "ANTHROPIC_DEFAULT_HAIKU_MODEL",
   "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+  // Escape hatches for Claude Code's non-Anthropic backend path, which is
+  // actively regressing rather than merely under-tested:
+  //   #68551 — `thinking:{type:"adaptive"}` is sent to unrecognised model IDs;
+  //            some Anthropic-compatible backends hang, return empty, or 400.
+  //            DISABLE_THINKING is the documented mitigation.
+  //   #68522 — no way to declare a >200k window for a custom model, so output
+  //            budgeting has to be forced explicitly.
+  // A key absent from this allowlist is silently dropped, so a mitigation set in
+  // the seat credentials file would appear applied and do nothing.
+  "CLAUDE_CODE_DISABLE_THINKING",
+  "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+  // Without this an external seat's own subagents fall back to Anthropic aliases,
+  // which `assertNoAliasTrap` then refuses — pinning them to the seat's model.
+  "CLAUDE_CODE_SUBAGENT_MODEL",
   "API_TIMEOUT_MS",
 ];
 
@@ -263,19 +284,73 @@ export function assertNoAliasTrap(model, creds) {
   );
 }
 
+/** A reset instant, ISO or unix (s/ms), as providers spell it in an error body. */
+const RESET_RE = /reset[^0-9]{0,12}"?(\d{4}-\d\d-\d\dT[\d:.]+Z?|\d{10,13})/i;
+
+/** Rate-limit vocabulary. Only ever applied to an ERROR surface — see below. */
+function readsAsRateLimit(text) {
+  // 1308 is z.ai's code; 429 is everyone's. Kept broad on purpose: the narrowing
+  // that makes this safe is WHERE we look, not WHAT we look for.
+  return /\b1308\b/.test(text) || /\b429\b/.test(text) || /rate[_\s-]?limit/i.test(text);
+}
+
 /**
- * Feature 03 — z.ai rate-limit detection. A z.ai 429 (`code 1308`) means the run
- * hit the flat plan's rolling window. Return `{reset}` (a timestamp if the body
- * carried one) so the driver can exit 3 with an actionable message — never
- * auto-failover, spend is the owner's call (D-20). null = not rate-limited.
+ * Feature 03 — provider rate-limit detection. A 429 (z.ai spells it `code 1308`)
+ * means the run hit the plan's rolling window. Return `{reset}` (a timestamp if
+ * the body carried one) so the driver can exit 3 with an actionable message —
+ * never auto-failover, spend is the owner's call (D-20). null = not limited.
+ *
+ * This reads the transcript STRUCTURALLY, and that is not fussiness. The old
+ * version scanned the whole blob for /rate.limit/, which was survivable only
+ * because `--output-format json` kept everything but the final message out of
+ * stdout. Under stream-json it is catastrophic, and a live Sonnet 5 dispatch
+ * proved it: Claude Code emits a `rate_limit_event` heartbeat carrying
+ * `status:"allowed"` on EVERY healthy run, so a clean 1.1M-token success exited
+ * 3 shouting RATE LIMITED. A builder seat writing a backoff helper trips it too
+ * — its own prose is in stdout now.
+ *
+ * So: `rate_limit_info.status` decides (only a non-`allowed` status is a limit),
+ * and the text scan is confined to surfaces that are errors BY CONSTRUCTION —
+ * stderr, a `result` with `is_error`, and any stdout line that is not JSON at
+ * all (a driver that died before it could emit an event).
+ *
  * @param {string} stdout @param {string} stderr @returns {{reset: string|null}|null}
  */
 export function detectRateLimit(stdout, stderr) {
-  const blob = `${stdout ?? ""}\n${stderr ?? ""}`;
-  const looksRateLimited =
-    /\bcode\b[^0-9]{0,8}1308\b/.test(blob) || /\b1308\b/.test(blob) || /rate[_\s-]?limit/i.test(blob);
-  if (!looksRateLimited) return null;
-  const m = blob.match(/reset[^0-9]{0,12}(\d{4}-\d\d-\d\dT[\d:.]+Z?|\d{10,13})/i);
+  const errorSurfaces = [];
+
+  for (const line of String(stdout ?? "").split("\n")) {
+    const t = line.trim();
+    if (t.length === 0) continue;
+
+    let obj;
+    try {
+      obj = JSON.parse(t);
+    } catch {
+      errorSurfaces.push(t); // not JSON ⇒ not a transcript event ⇒ a crash spew
+      continue;
+    }
+    if (!obj || typeof obj !== "object") continue;
+
+    const info = obj.rate_limit_info;
+    if (info && typeof info === "object") {
+      const status = typeof info.status === "string" ? info.status.toLowerCase() : "";
+      // "allowed" is the heartbeat — the explicit statement that we are NOT limited.
+      if (status && status !== "allowed") {
+        return { reset: info.resetsAt == null ? null : String(info.resetsAt) };
+      }
+      continue;
+    }
+
+    if (obj.is_error === true) errorSurfaces.push(t);
+  }
+
+  const errText = String(stderr ?? "");
+  if (errText.trim().length > 0) errorSurfaces.push(errText);
+
+  const blob = errorSurfaces.join("\n");
+  if (!readsAsRateLimit(blob)) return null;
+  const m = blob.match(RESET_RE);
   return { reset: m ? m[1] : null };
 }
 
@@ -304,7 +379,7 @@ export function buildClaudeEnv(sourceEnv, creds = {}, dirAbs) {
 }
 
 /**
- * Parse `claude -p --output-format json` output.
+ * Parse `claude -p --output-format stream-json` output.
  *
  * Accepts a bare result object or a stream of JSON lines (we take the `result` event).
  * `total_cost_usd` is captured as `apiCostUsd` (D-XX overturns D-13): it is the
@@ -399,21 +474,88 @@ export function writePlaywrightMcpConfig(worktreeAbs) {
   return out;
 }
 
+/**
+ * Build the `claude` argv for a seat run.
+ *
+ * `--output-format stream-json` (not `json`) is deliberate: `json` buffers and
+ * emits a single blob only when the run ends, so for the whole run a stalled
+ * worker is byte-for-byte indistinguishable from a busy one and the only
+ * backstop is the 30-minute wall-clock. That is the "silent hang" failure mode
+ * behind "external dispatch fails a lot / I can't tell when it finished".
+ * stream-json emits JSONL as work happens, which gives the idle watchdog a
+ * signal — and `parseClaudeResult` already scans line-wise for the terminal
+ * `type:"result"` event, so the parse side is unchanged.
+ *
+ * @param {{model:string, prompt:string, session?:string, continue?:boolean, mcpConfigPath?:string}} opts
+ * @param {string} settingsPath
+ * @returns {string[]}
+ */
+export function buildClaudeArgs(opts, settingsPath) {
+  const args = [
+    "-p",
+    "--output-format",
+    "stream-json",
+    // stream-json under --print is only emitted with --verbose.
+    "--verbose",
+    "--settings",
+    settingsPath,
+    "--model",
+    opts.model,
+  ];
+  // F9: a visual-validator seat drives ONLY Playwright, and only that server —
+  // --strict-mcp-config drops every other MCP the operator has configured.
+  if (opts.mcpConfigPath) args.push("--mcp-config", opts.mcpConfigPath, "--strict-mcp-config");
+  if (opts.session) args.push("--resume", opts.session);
+  else if (opts.continue) args.push("--continue");
+  args.push(opts.prompt);
+  return args;
+}
+
+/**
+ * Idle-watchdog budget for one run, in ms.
+ *
+ * The budget has to clear the longest LEGITIMATE silence, and a tool call is
+ * silent for its whole duration: `claude` emits the `assistant` event carrying
+ * the `tool_use`, then nothing until the tool returns. A profile whose `gate`
+ * includes a browser E2E suite runs one such call for minutes at a time, at zero
+ * output, from a perfectly healthy seat — and killing that is strictly worse
+ * than the hang it guards against. So the default is generous. The win here
+ * is not shaving seconds off detection; it is (a) reclaiming the wall-clock a
+ * wedged provider would otherwise burn at zero tokens, and (b) recording
+ * `stalled` distinctly from `timedOut`, which is what makes "the backend hung"
+ * separable from "the task was too big" in the meter. Tighten per-dispatch with
+ * `--idle-timeout` when the gate is known to be fast.
+ *
+ * Clamped to the wall clock: an idle budget above it can never fire. Garbage
+ * (NaN from `--idle-timeout abc`, or a 0/negative that would kill every run at
+ * spawn) degrades to the default — never to "watchdog off".
+ *
+ * @param {{idleTimeout?:unknown, timeout?:unknown}} [opts]
+ * @returns {number}
+ */
+export function resolveIdleTimeout(opts = {}) {
+  const wall =
+    typeof opts.timeout === "number" && Number.isFinite(opts.timeout) && opts.timeout > 0
+      ? opts.timeout
+      : DEFAULT_TIMEOUT_MS;
+  const asked = opts.idleTimeout;
+  const idle =
+    typeof asked === "number" && Number.isFinite(asked) && asked > 0
+      ? asked
+      : DEFAULT_IDLE_TIMEOUT_MS;
+  return Math.min(idle, wall);
+}
+
 function runClaude(opts, env, settingsPath) {
   return new Promise((resolve) => {
-    const args = ["-p", "--output-format", "json", "--settings", settingsPath, "--model", opts.model];
-    // F9: a visual-validator seat drives ONLY Playwright, and only that server —
-    // --strict-mcp-config drops every other MCP the operator has configured.
-    if (opts.mcpConfigPath) args.push("--mcp-config", opts.mcpConfigPath, "--strict-mcp-config");
-    if (opts.session) args.push("--resume", opts.session);
-    else if (opts.continue) args.push("--continue");
-    args.push(opts.prompt);
+    const args = buildClaudeArgs(opts, settingsPath);
 
     const child = spawn("claude", args, { cwd: opts.dir, stdio: ["ignore", "pipe", "pipe"], env });
 
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let stalled = false;
 
     // Ask, wait, insist. A bare SIGKILL loses whatever the seat was mid-write on.
     const timer = setTimeout(() => {
@@ -421,19 +563,51 @@ function runClaude(opts, env, settingsPath) {
       killGracefully(child, { graceMs: DEFAULT_GRACE_MS });
     }, opts.timeout ?? DEFAULT_TIMEOUT_MS);
 
+    // Idle watchdog: a run that has emitted nothing for `idleMs` is not working,
+    // it is wedged. Recovers the wall-clock the wedge would otherwise burn, and
+    // records WHY (`stalled`) separately from a legitimate overrun (`timedOut`).
+    const idleMs = resolveIdleTimeout(opts);
+    let idleTimer = null;
+    const touch = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        stalled = true;
+        killGracefully(child, { graceMs: DEFAULT_GRACE_MS });
+      }, idleMs);
+    };
+    touch();
+    const done = () => {
+      clearTimeout(timer);
+      if (idleTimer) clearTimeout(idleTimer);
+    };
+
     child.stdout.on("data", (d) => {
       stdout += d;
+      touch();
     });
     child.stderr.on("data", (d) => {
       stderr += d;
+      touch();
     });
     child.on("error", (err) => {
-      clearTimeout(timer);
-      resolve({ exitCode: 1, stdout, stderr: `${stderr}\nspawn error: ${err.message}`, timedOut });
+      done();
+      resolve({
+        exitCode: 1,
+        stdout,
+        stderr: `${stderr}\nspawn error: ${err.message}`,
+        timedOut,
+        stalled,
+      });
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ exitCode: timedOut ? 1 : (code ?? 1), stdout, stderr, timedOut });
+      done();
+      resolve({
+        exitCode: timedOut || stalled ? 1 : (code ?? 1),
+        stdout,
+        stderr: stalled ? `${stderr}\nidle watchdog: no output for ${idleMs}ms` : stderr,
+        timedOut,
+        stalled,
+      });
     });
   });
 }
@@ -446,7 +620,8 @@ function usage() {
       "  node scripts/claude-worker.mjs --dir <worktree> --model <model> --project <id>\n" +
       "    (--prompt <text> | --prompt-file <path>) [--slug <slug>]\n" +
       "    [--metric-seat worker|validator] [--with-playwright] [--session <id>] [--continue]\n" +
-      "    [--timeout <ms>] [--json-out <path>] [--allow-any-dir] [--allow-uncaged]\n" +
+      "    [--timeout <ms>] [--idle-timeout <ms>] [--json-out <path>] [--allow-any-dir]\n" +
+      "    [--allow-uncaged]\n" +
       "    [--allow-anthropic] [--creds <path>]\n",
   );
 }
@@ -467,6 +642,7 @@ function parseArgs(argv) {
       case "--session": opts.session = args[++i]; break;
       case "--continue": opts.continue = true; break;
       case "--timeout": opts.timeout = Number(args[++i]); break;
+      case "--idle-timeout": opts.idleTimeout = Number(args[++i]); break;
       case "--json-out": opts.jsonOut = args[++i]; break;
       case "--creds": opts.creds = args[++i]; break;
       case "--allow-any-dir": opts.allowAnyDir = true; break;
@@ -563,6 +739,10 @@ async function main() {
         tokensCacheWrite: parsed.tokensCacheWrite,
         apiCostUsd: parsed.apiCostUsd,
         durationMs: wallMs,
+        exitCode: res.exitCode,
+        sawFinish: parsed.sawFinish,
+        timedOut: res.timedOut === true,
+        stalled: res.stalled === true,
       }),
       opts.project,
     );
@@ -574,15 +754,15 @@ async function main() {
   process.stdout.write(
     `claude-worker: model=${opts.model} session=${parsed.sessionID ?? "-"} ` +
       `tokens=${parsed.tokens} apiCost=$${parsed.apiCostUsd.toFixed(4)} wallMs=${wallMs} ` +
-      `timedOut=${res.timedOut} exit=${res.exitCode}\n`,
+      `timedOut=${res.timedOut} stalled=${res.stalled} exit=${res.exitCode}\n`,
   );
   if (res.stderr.trim()) process.stderr.write(`${res.stderr.trim()}\n`);
 
-  // Feature 03: z.ai rate-limit → exit 3 with an actionable message, no auto-failover (D-20).
+  // Feature 03: provider rate-limit → exit 3 with an actionable message, no auto-failover (D-20).
   const rl = detectRateLimit(res.stdout, res.stderr);
   if (rl) {
     process.stderr.write(
-      `claude-worker: RATE LIMITED — z.ai 429 (code 1308)${rl.reset ? `, resets ${rl.reset}` : ""}. ` +
+      `claude-worker: RATE LIMITED — provider 429${rl.reset ? `, resets ${rl.reset}` : ""}. ` +
         "No auto-failover (spend is your call). Ready-to-paste Anthropic fallback:\n" +
         `  node scripts/claude-worker.mjs --dir ${opts.dir} --model claude-sonnet-5 ` +
         `--project ${opts.project} --allow-anthropic --creds /dev/null --prompt-file <brief>\n`,

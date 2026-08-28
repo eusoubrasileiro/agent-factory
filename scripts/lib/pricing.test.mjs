@@ -22,9 +22,28 @@ test("apiCost: reasoning tokens bill at the output rate", () => {
   assert.equal(c, 25);
 });
 
-test("apiCost: Sonnet 5 uses standard (non-intro) pricing", () => {
+// The 2026-09-01 rise to $3/$15 was CANCELLED — $2/$10 is Sonnet 5's permanent
+// rate. Pricing it at $3/$15 overstated every Sonnet arm by 50%, which biased
+// model-tiering comparisons toward the flat-plan external seats.
+test("apiCost: Sonnet 5 at its permanent $2/$10 rate", () => {
   const c = apiCost("claude-sonnet-5", { in: M, out: M });
-  assert.equal(c, 3 + 15); // $18, not the $2/$10 intro
+  assert.equal(c, 2 + 10); // $12
+});
+
+test("apiCost: Sonnet 5 cache tiers track the corrected input rate", () => {
+  const c = apiCost("claude-sonnet-5", { in: 0, out: 0, cacheRead: M, cacheWrite: M });
+  assert.equal(c, 0.2 + 2.5);
+});
+
+// Opus 5 was missing from the table entirely, so the Anthropic BASELINE arm of
+// any comparison priced as `null` — the one arm that must never be unpriced.
+test("apiCost: Opus 5 is priced (baseline arm must never be null)", () => {
+  assert.equal(apiCost("claude-opus-5", { in: M, out: M }), 5 + 25); // $30
+  assert.equal(apiCost("claude-opus-5", { in: 0, out: 0, cacheRead: M, cacheWrite: M }), 0.5 + 6.25);
+});
+
+test("apiCost: Opus 5 resolves through the [1m] accounting suffix", () => {
+  assert.equal(apiCost("claude-opus-5[1m]", { in: M, out: M }), 30);
 });
 
 test("apiCost: Haiku 4.5 + alias form both resolve", () => {

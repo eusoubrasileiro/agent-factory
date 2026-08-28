@@ -109,6 +109,28 @@ export function validateEvent(obj) {
   if (obj.durationMs !== undefined && typeof obj.durationMs !== "number") {
     return { ok: false, reason: "durationMs must be a number when present" };
   }
+  // Run outcome. `null` is a first-class value meaning "unmeasured" (legacy rows,
+  // or a caller that could not determine it) — distinct from a measured failure.
+  if (obj.exitCode !== undefined && obj.exitCode !== null) {
+    if (typeof obj.exitCode !== "number") {
+      return { ok: false, reason: "exitCode must be a number or null when present" };
+    }
+  }
+  if (obj.sawFinish !== undefined && obj.sawFinish !== null) {
+    if (typeof obj.sawFinish !== "boolean") {
+      return { ok: false, reason: "sawFinish must be a boolean or null when present" };
+    }
+  }
+  if (obj.timedOut !== undefined && obj.timedOut !== null) {
+    if (typeof obj.timedOut !== "boolean") {
+      return { ok: false, reason: "timedOut must be a boolean or null when present" };
+    }
+  }
+  if (obj.stalled !== undefined && obj.stalled !== null) {
+    if (typeof obj.stalled !== "boolean") {
+      return { ok: false, reason: "stalled must be a boolean or null when present" };
+    }
+  }
   return { ok: true };
 }
 
