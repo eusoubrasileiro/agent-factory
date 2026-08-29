@@ -408,9 +408,11 @@ Four things to know before you act on a number here:
   next to `NOOP%` or not at all — the report prints that warning under itself.
 - **`GREEN%` only exists for runs dispatched with `--gate`.** Without it every run is
   `unmeasured` and the column is honestly, correctly, `—`.
-- **`SEAT-TOK` has a seam at 2026-08-28.** Before that date the drivers recorded a
-  planning seat *as a worker*, so older rows carry planner spend inside `SEAT-TOK`;
-  newer ones split it into `PLAN-TOK`. Don't compare across the seam.
+- **There is a seam at 2026-08-28.** Before that date the drivers recorded a planning
+  seat *as a worker*. So older rows carry planner spend inside `SEAT-TOK` (newer ones
+  split it into `PLAN-TOK`), and for the same reason `mission-stats`' *building*
+  duration used to include planning time and no longer does. Both series step at that
+  date for the same cause; don't compare across it.
 
 To measure the gate on a run, add `--gate` to the driver (it reports and does not block).
 `--gate-strict` additionally exits `4` when the gate fails — use it in a script that must
