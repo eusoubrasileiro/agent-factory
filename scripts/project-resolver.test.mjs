@@ -55,6 +55,10 @@ function assertDefaultProfile(actual) {
     prepareMarker: null,
     gateExclusive: [],
     gateConfig: [],
+    // A project nobody configured is still MEASURED. An unknown or corrupt
+    // profile falling through to an ungated seat would be the silent
+    // non-measurement this default exists to prevent (D-61).
+    gateDefault: true,
     criticalFiles: [],
     seatEnvPath: null,
     validationPath: null,

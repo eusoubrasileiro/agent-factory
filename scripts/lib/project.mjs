@@ -134,7 +134,7 @@ export function loadProjects(factoryRoot = FACTORY_ROOT) {
  * @param {string} factoryRoot
  * @returns {{gate: string[], trunk: string, branchPrefix: string,
  *            prepare: string[], prepareMarker: string|null,
- *            gateExclusive: string[], gateConfig: string[],
+ *            gateExclusive: string[], gateConfig: string[], gateDefault: boolean,
  *            criticalFiles: string[], seatEnvPath: string|null,
  *            validationPath: string|null,
  *            intake: Array<{file: string, prefix: string, label: string}>,
@@ -189,6 +189,16 @@ function buildProfile(entry, factoryRoot) {
   // Empty ⇒ gateConfigTouched is null (unchecked), never false: reporting clean
   // for a check that cannot fail is the D-25 violation exactly.
   const gateConfig = strings(entry.gateConfig);
+
+  // Does a seat on this project get gated when the operator says nothing? ON,
+  // unless the profile spells out `false`. Gate COST is a project fact — one
+  // 14-second command here, an 8-command suite with an exclusive e2e lock there
+  // — so the knob belongs in the profile, not as a hardcoded default in the
+  // engine (the one architectural rule). Only the literal `false` opts out: a
+  // typo (`"no"`, `0`) degrading to OFF would disable measurement silently, and
+  // silent non-measurement is exactly the defect this default exists to fix
+  // (D-61; the gate shipped opt-in and every run classified `unmeasured`).
+  const gateDefault = entry.gateDefault !== false;
 
   // critical-files.json is a JSON array of globs; missing/corrupt → [].
   let criticalFiles = [];
@@ -251,6 +261,7 @@ function buildProfile(entry, factoryRoot) {
     prepareMarker,
     gateExclusive,
     gateConfig,
+    gateDefault,
     criticalFiles,
     seatEnvPath,
     validationPath,

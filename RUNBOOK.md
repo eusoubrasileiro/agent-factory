@@ -416,7 +416,9 @@ Four things to know before you act on a number here:
 - **`ATTN/FEAT` alone rewards the worst failure there is.** A worker that hangs silently
   generates zero touchpoints and so *beats* a model that asks one good question. Read it
   next to `NOOP%` or not at all — the report prints that warning under itself.
-- **`GREEN%` only exists for runs dispatched with `--gate`.** Without it every run is
+- **`GREEN%` counts only runs that were actually gated.** The gate now runs by default,
+  decided per project by `gateDefault` in `projects/<id>/project.json` (absent ⇒ ON).
+  A run dispatched with `--no-gate`, or one on a project that opted out, is
   `unmeasured` and the column is honestly, correctly, `—`.
 - **There is a seam at 2026-08-28.** Before that date the drivers recorded a planning
   seat *as a worker*. So older rows carry planner spend inside `SEAT-TOK` (newer ones

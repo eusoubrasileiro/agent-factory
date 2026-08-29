@@ -59,6 +59,7 @@ import {
   completeRun,
   DEFAULT_GRACE_MS,
   gateSummaryLabel,
+  resolveGateEnabled,
   isWorktreeDir,
   killGracefully,
   mintRunId,
@@ -149,10 +150,10 @@ export function parseArgs(argv) {
     auto: true,
     allowAnyDir: false,
     continue: false,
-    // Opt-in. The gate runs the project's real commands, which on a cold
-    // worktree means provisioning dependencies — minutes of wall time a caller
-    // that only wanted a seat spawned never asked for.
-    gate: false,
+    // THREE-valued, not boolean: null = "the operator said nothing", which
+    // defers to `profile.gateDefault` (ON unless the project opts out). `false`
+    // only ever comes from an explicit `--no-gate`. See resolveGateEnabled.
+    gate: null,
     gateStrict: false,
   };
   for (let i = 0; i < args.length; i++) {
@@ -200,6 +201,11 @@ export function parseArgs(argv) {
       case "--allow-uncaged":
         opts.allowUncaged = true;
         break;
+      // The escape hatch for a throwaway probe: skip the project's real commands
+      // and accept that the run scores `unmeasured`.
+      case "--no-gate":
+        opts.gate = false;
+        break;
       case "--gate":
         opts.gate = true;
         break;
@@ -223,7 +229,7 @@ function usage() {
       '    (--prompt "<text>" | --prompt-file <path>) [--slug <slug>] \\\n' +
       "    [--metric-seat worker|validator] [--session <id>] [--continue] \\\n" +
       "    [--timeout <ms>] [--json-out <path>] [--no-auto] [--allow-any-dir] \\\n" +
-      "    [--gate] [--gate-strict]\n",
+      "    [--gate | --no-gate] [--gate-strict]\n",
   );
 }
 
@@ -378,7 +384,8 @@ async function main() {
       sawFinish: parsed.sawFinish === true,
       timedOut: timedOut === true,
     },
-    gate: opts.gate === true,
+    // Profile decides unless the operator overrode it (D-61).
+    gate: resolveGateEnabled(opts.gate, resolveProject({ project: opts.project }).profile.gateDefault),
   });
 
   process.stdout.write(

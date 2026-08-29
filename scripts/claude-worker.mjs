@@ -73,6 +73,7 @@ import {
   completeRun,
   DEFAULT_GRACE_MS,
   gateSummaryLabel,
+  resolveGateEnabled,
   isWorktreeDir,
   killGracefully,
   METRICS_SCRIPT,
@@ -624,7 +625,7 @@ function usage() {
       "    (--prompt <text> | --prompt-file <path>) [--slug <slug>]\n" +
       "    [--metric-seat worker|validator] [--with-playwright] [--session <id>] [--continue]\n" +
       "    [--timeout <ms>] [--idle-timeout <ms>] [--json-out <path>] [--allow-any-dir]\n" +
-      "    [--gate] [--gate-strict]\n" +
+      "    [--gate | --no-gate] [--gate-strict]\n" +
       "    [--allow-uncaged]\n" +
       "    [--allow-anthropic] [--creds <path>]\n",
   );
@@ -644,10 +645,10 @@ export function parseArgs(argv) {
     allowAnthropic: false,
     continue: false,
     metricSeat: "worker",
-    // The gate is opt-in. It runs the project's real commands, which on a cold
-    // worktree means provisioning dependencies — minutes of wall time a caller
-    // that only wanted a seat spawned never asked for.
-    gate: false,
+    // THREE-valued, not boolean: null = "the operator said nothing", which
+    // defers to `profile.gateDefault` (ON unless the project opts out). `false`
+    // only ever comes from an explicit `--no-gate`. See resolveGateEnabled.
+    gate: null,
     gateStrict: false,
   };
   for (let i = 0; i < args.length; i++) {
@@ -670,6 +671,9 @@ export function parseArgs(argv) {
       case "--allow-uncaged": opts.allowUncaged = true; break;
       case "--allow-anthropic": opts.allowAnthropic = true; break;
       case "--gate": opts.gate = true; break;
+      // The escape hatch for a throwaway probe: skip the project's real commands
+      // and accept that the run scores `unmeasured`.
+      case "--no-gate": opts.gate = false; break;
       // Strict without the gate would enforce a verdict that was never taken.
       case "--gate-strict": opts.gate = true; opts.gateStrict = true; break;
       default: opts._bad = true;
@@ -783,7 +787,9 @@ async function main() {
       timedOut: res.timedOut === true,
       stalled: res.stalled === true,
     },
-    gate: opts.gate === true && !rl,
+    // Profile decides unless the operator overrode it. A rate-limited run is
+    // never gated: it produced no work, so a gate would measure the 429.
+    gate: resolveGateEnabled(opts.gate, resolveProject({ project: opts.project }).profile.gateDefault) && !rl,
   });
 
   if (opts.jsonOut) writeFileSync(opts.jsonOut, `${res.stdout}\n`);

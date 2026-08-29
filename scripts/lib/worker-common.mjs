@@ -362,6 +362,28 @@ export function gateSummaryLabel(gate) {
   return "unmeasured";
 }
 
+/**
+ * Decide whether the gate runs for one spawn. The CLI flag is THREE-valued:
+ * `true` (`--gate`/`--gate-strict`), `false` (`--no-gate`), or `null` — "the
+ * operator said nothing", which is the common case and defers to the project.
+ *
+ * Collapsing `null` into `false` is how this started: the gate shipped opt-in,
+ * no dispatch path passed the flag, every run classified `unmeasured`, and
+ * `GREEN%` rendered `—` forever (D-61). An unknown or malformed profile default
+ * therefore resolves ON: a gate that runs when it need not costs wall time and
+ * says so on the summary line, while one that silently does not run costs
+ * nothing and reports nothing — the strictly worse failure.
+ *
+ * @param {boolean|null|undefined} cliGate
+ * @param {boolean|undefined} gateDefault  `profile.gateDefault`
+ * @returns {boolean}
+ */
+export function resolveGateEnabled(cliGate, gateDefault) {
+  if (cliGate === true) return true;
+  if (cliGate === false) return false;
+  return gateDefault !== false;
+}
+
 /** The recorder, resolved next to this library's own driver. */
 export const METRICS_SCRIPT = path.resolve(__dirname, "..", "metrics.mjs");
 

@@ -111,6 +111,17 @@ for (const id of PROFILE_IDS) {
     assert.ok(existsSync(criticalFilesPath), `missing required file: ${criticalFilesPath}`);
   });
 
+  // 1b — every profile resolves to a boolean gateDefault, and it is ON unless
+  //      the profile deliberately says otherwise. Measurement that must be
+  //      switched on is measurement that does not happen (D-61).
+  test(`profile ${id}: gateDefault resolves to a boolean, ON unless declared false`, () => {
+    const { profile } = resolveProject({ project: id }, FACTORY_ROOT);
+    assert.equal(typeof profile.gateDefault, "boolean", "gateDefault must never be undefined");
+    if (projectJson?.gateDefault !== false) {
+      assert.equal(profile.gateDefault, true, `${id} did not declare gateDefault:false, so it must be measured`);
+    }
+  });
+
   // 2 — declared id matches directory name
   test(`profile ${id}: project.json declares id matching its directory name`, () => {
     assert.ok(projectJson && typeof projectJson === "object", "project.json missing or unparseable");
@@ -371,6 +382,10 @@ test("buildProfile defaults the four gate-runner keys on a profile that declares
     profile.prepareMarker === null || typeof profile.prepareMarker === "string",
     "prepareMarker is a string or null, never undefined",
   );
+  // The gate runs by default. An undeclared `gateDefault` means "measure me" —
+  // the opposite default is how the instrument shipped and fed nothing (D-61).
+  assert.equal(typeof profile.gateDefault, "boolean", "gateDefault is always a boolean");
+  assert.equal(profile.gateDefault, true, "a profile that declares nothing is measured");
 });
 
 test("buildProfile round-trips the four gate-runner keys when a profile declares them", () => {
@@ -388,6 +403,7 @@ test("buildProfile round-trips the four gate-runner keys when a profile declares
         prepareMarker: "node_modules",
         gateExclusive: ["make test"],
         gateConfig: ["package.json#/scripts", "src/Makefile"],
+        gateDefault: false,
       }),
     );
     writeFileSync(path.join(pdir, "critical-files.json"), "[]");
@@ -396,6 +412,7 @@ test("buildProfile round-trips the four gate-runner keys when a profile declares
     assert.equal(profile.prepareMarker, "node_modules");
     assert.deepEqual(profile.gateExclusive, ["make test"]);
     assert.deepEqual(profile.gateConfig, ["package.json#/scripts", "src/Makefile"]);
+    assert.equal(profile.gateDefault, false, "an expensive project may opt its seats out");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -416,6 +433,7 @@ test("buildProfile drops non-string and empty entries from the gate-runner array
         prepareMarker: "",
         gateExclusive: "not-an-array",
         gateConfig: [{ nope: true }, "src/Makefile"],
+        gateDefault: "yes",
       }),
     );
     writeFileSync(path.join(pdir, "critical-files.json"), "[]");
@@ -427,6 +445,9 @@ test("buildProfile drops non-string and empty entries from the gate-runner array
     assert.equal(profile.prepareMarker, null);
     assert.deepEqual(profile.gateExclusive, [], "a non-array degrades to [], never throws");
     assert.deepEqual(profile.gateConfig, ["src/Makefile"]);
+    // A typo must not silently disable measurement. Only the literal `false`
+    // turns the gate off; anything else degrades to ON.
+    assert.equal(profile.gateDefault, true, "a non-boolean degrades to ON, never OFF");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
