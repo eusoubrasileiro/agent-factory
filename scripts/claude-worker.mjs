@@ -69,15 +69,20 @@ import {
   buildPhaseEndEvent,
   buildPhaseStartEvent,
   buildSpawnEnv,
-  countChangedFiles,
+  applyGateExitCode,
+  completeRun,
   DEFAULT_GRACE_MS,
+  gateSummaryLabel,
   isWorktreeDir,
   killGracefully,
+  METRICS_SCRIPT,
+  mintRunId,
+  recordMetric,
   snapshotWorktree,
 } from "./lib/worker-common.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const METRICS_SCRIPT = path.join(__dirname, "metrics.mjs");
+export { METRICS_SCRIPT };
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 /** No output at all for this long ⇒ wedged, not working. See `resolveIdleTimeout`. */
 const DEFAULT_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
@@ -448,17 +453,6 @@ export function parseClaudeResult(out) {
 
 // ─── IO shell ────────────────────────────────────────────────────────────────
 
-/** Best-effort telemetry. It must never fail a run. */
-function recordMetric(slug, event, project) {
-  const args = [METRICS_SCRIPT, "record", slug];
-  if (project) args.push("--project", project);
-  try {
-    spawnSync(process.execPath, args, { input: JSON.stringify(event), stdio: ["pipe", "ignore", "ignore"] });
-  } catch {
-    /* telemetry must never fail the run */
-  }
-}
-
 /**
  * Playwright-only MCP config for a VISUAL-VALIDATOR seat (F9 cage-vision).
  *
@@ -630,14 +624,32 @@ function usage() {
       "    (--prompt <text> | --prompt-file <path>) [--slug <slug>]\n" +
       "    [--metric-seat worker|validator] [--with-playwright] [--session <id>] [--continue]\n" +
       "    [--timeout <ms>] [--idle-timeout <ms>] [--json-out <path>] [--allow-any-dir]\n" +
+      "    [--gate] [--gate-strict]\n" +
       "    [--allow-uncaged]\n" +
       "    [--allow-anthropic] [--creds <path>]\n",
   );
 }
 
-function parseArgs(argv) {
+/**
+ * Parse the driver's argv. Exported so the flag surface is testable: an
+ * unrecognized flag sets `_bad` and the driver exits 2, so a new flag that was
+ * never added here does not "default off" — it refuses to run at all.
+ * @param {string[]} argv @returns {Record<string, unknown>}
+ */
+export function parseArgs(argv) {
   const args = argv.slice(2);
-  const opts = { allowAnyDir: false, allowUncaged: false, allowAnthropic: false, continue: false, metricSeat: "worker" };
+  const opts = {
+    allowAnyDir: false,
+    allowUncaged: false,
+    allowAnthropic: false,
+    continue: false,
+    metricSeat: "worker",
+    // The gate is opt-in. It runs the project's real commands, which on a cold
+    // worktree means provisioning dependencies — minutes of wall time a caller
+    // that only wanted a seat spawned never asked for.
+    gate: false,
+    gateStrict: false,
+  };
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
       case "--dir": opts.dir = args[++i]; break;
@@ -657,6 +669,9 @@ function parseArgs(argv) {
       case "--allow-any-dir": opts.allowAnyDir = true; break;
       case "--allow-uncaged": opts.allowUncaged = true; break;
       case "--allow-anthropic": opts.allowAnthropic = true; break;
+      case "--gate": opts.gate = true; break;
+      // Strict without the gate would enforce a verdict that was never taken.
+      case "--gate-strict": opts.gate = true; opts.gateStrict = true; break;
       default: opts._bad = true;
     }
   }
@@ -731,34 +746,46 @@ async function main() {
 
   const env = buildClaudeEnv(process.env, creds, dirAbs);
 
-  if (opts.slug) recordMetric(opts.slug, buildPhaseStartEvent(opts.metricSeat, opts.model), opts.project);
+  // One id per spawn, threaded through phase_start, phase_end and gate_result.
+  const runId = mintRunId(opts.slug);
+  if (opts.slug) {
+    recordMetric(opts.slug, buildPhaseStartEvent(opts.metricSeat, opts.model, runId), opts.project);
+  }
   const baseline = snapshotWorktree(dirAbs);
   const started = Date.now();
   const res = await runClaude({ ...opts, dir: dirAbs }, env, settingsPath);
   const wallMs = Date.now() - started;
 
   const parsed = parseClaudeResult(res.stdout);
-  const filesChanged = countChangedFiles(dirAbs, baseline);
-  if (opts.slug) {
-    recordMetric(
-      opts.slug,
-      buildPhaseEndEvent(opts.metricSeat, opts.model, {
-        tokens: parsed.tokens,
-        tokensIn: parsed.tokensIn,
-        tokensOut: parsed.tokensOut,
-        tokensCacheRead: parsed.tokensCacheRead,
-        tokensCacheWrite: parsed.tokensCacheWrite,
-        apiCostUsd: parsed.apiCostUsd,
-        durationMs: wallMs,
-        exitCode: res.exitCode,
-        sawFinish: parsed.sawFinish,
-        timedOut: res.timedOut === true,
-        stalled: res.stalled === true,
-        filesChanged,
-      }),
-      opts.project,
-    );
-  }
+
+  // A rate-limited run produced no work to gate; spending minutes provisioning
+  // and running a gate over it would measure the provider's 429, not the seat.
+  const rl = detectRateLimit(res.stdout, res.stderr);
+
+  const { filesChanged, gate } = completeRun({
+    seat: opts.metricSeat,
+    model: opts.model,
+    project: opts.project,
+    slug: opts.slug ?? null,
+    dirAbs,
+    baseline,
+    runId,
+    metrics: {
+      tokens: parsed.tokens,
+      tokensIn: parsed.tokensIn,
+      tokensOut: parsed.tokensOut,
+      tokensCacheRead: parsed.tokensCacheRead,
+      tokensCacheWrite: parsed.tokensCacheWrite,
+      apiCostUsd: parsed.apiCostUsd,
+      durationMs: wallMs,
+      exitCode: res.exitCode,
+      sawFinish: parsed.sawFinish,
+      timedOut: res.timedOut === true,
+      stalled: res.stalled === true,
+    },
+    gate: opts.gate === true && !rl,
+  });
+
   if (opts.jsonOut) writeFileSync(opts.jsonOut, `${res.stdout}\n`);
 
   // Never print the token. apiCost$ is the public-API-basis cost (D-XX) — real $
@@ -766,12 +793,12 @@ async function main() {
   process.stdout.write(
     `claude-worker: model=${opts.model} session=${parsed.sessionID ?? "-"} ` +
       `tokens=${parsed.tokens} apiCost=$${parsed.apiCostUsd.toFixed(4)} wallMs=${wallMs} ` +
-      `timedOut=${res.timedOut} stalled=${res.stalled} exit=${res.exitCode} files=${filesChanged}\n`,
+      `timedOut=${res.timedOut} stalled=${res.stalled} exit=${res.exitCode} files=${filesChanged} ` +
+      `gate=${gateSummaryLabel(gate)}\n`,
   );
   if (res.stderr.trim()) process.stderr.write(`${res.stderr.trim()}\n`);
 
   // Feature 03: provider rate-limit → exit 3 with an actionable message, no auto-failover (D-20).
-  const rl = detectRateLimit(res.stdout, res.stderr);
   if (rl) {
     process.stderr.write(
       `claude-worker: RATE LIMITED — provider 429${rl.reset ? `, resets ${rl.reset}` : ""}. ` +
@@ -782,8 +809,8 @@ async function main() {
     return 3;
   }
 
-  if (res.exitCode !== 0 || !parsed.sawFinish) return 1;
-  return 0;
+  const baseCode = res.exitCode !== 0 || !parsed.sawFinish ? 1 : 0;
+  return applyGateExitCode(baseCode, gate, opts.gateStrict === true);
 }
 
 if (isMainModule(import.meta.url)) {

@@ -38,6 +38,7 @@ import {
   makeSeatConfigDir,
   parseClaudeResult,
   writePlaywrightMcpConfig,
+  parseArgs,
 } from "./claude-worker.mjs";
 
 // ─── credentials ─────────────────────────────────────────────────────────────
@@ -820,8 +821,36 @@ test("buildClaudeEnv: R3 — named product secrets never reach the visual-valida
 // forwards --project (not --dir), so an end-to-end dispatch would append to the
 // real mission log. This just catches a merge that drops the worktree-delta
 // wiring. Real verification is a dogfood dispatch after GREEN.
+//
+// The delta is now taken inside `completeRun` (worker-common.mjs), which owns
+// the countChangedFiles-before-gate order for every driver — so what the driver
+// must still show is the snapshot at spawn and the call that consumes it.
 test("claude-worker imports the worktree-delta helpers", () => {
   const src = readFileSync(path.join(fileURLToPath(new URL(".", import.meta.url)), "claude-worker.mjs"), "utf8");
   assert.ok(src.includes("snapshotWorktree"), "must import/use snapshotWorktree");
-  assert.ok(src.includes("countChangedFiles"), "must import/use countChangedFiles");
+  assert.ok(src.includes("completeRun"), "must import/use completeRun (which takes the delta)");
+});
+
+// ─── the gate, wired ─────────────────────────────────────────────────────────
+//
+// The measurement sequence itself (filesChanged before the gate) and the
+// exit-code folding live in worker-common.mjs and are pinned there — both
+// drivers share them. What is driver-specific is the flag surface below.
+
+test("parseArgs: --gate and --gate-strict are accepted, not treated as unknown flags", () => {
+  const opts = parseArgs(["node", "s", "--dir", "/w", "--model", "m", "--prompt", "p", "--gate", "--gate-strict"]);
+  assert.ok(!opts._bad);
+  assert.equal(opts.gate, true);
+  assert.equal(opts.gateStrict, true);
+});
+
+test("parseArgs: the gate is OFF unless asked for", () => {
+  const opts = parseArgs(["node", "s", "--dir", "/w", "--model", "m", "--prompt", "p"]);
+  assert.equal(opts.gate, false);
+  assert.equal(opts.gateStrict, false);
+});
+
+test("parseArgs: --gate-strict implies --gate — strict without the gate would silently measure nothing", () => {
+  const opts = parseArgs(["node", "s", "--dir", "/w", "--model", "m", "--prompt", "p", "--gate-strict"]);
+  assert.equal(opts.gate, true);
 });

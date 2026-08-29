@@ -11,9 +11,16 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { FACTORY_ROOT, loadProjects } from "./project.mjs";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/** The deterministic gate runner, resolved next to this library's own driver. */
+export const GATE_SCRIPT = path.resolve(__dirname, "..", "gate.mjs");
 
 /** Default grace period before a stubborn child is killed outright. */
 export const DEFAULT_GRACE_MS = 30_000;
@@ -197,16 +204,38 @@ export function countChangedFiles(dirAbs, baseline) {
  * Build a `phase_start` event. Emitted at spawn so a mission's metrics.jsonl
  * carries a start marker (today only phase_end existed — the 142-byte files
  * prove it), which mission-stats pairs with phase_end to derive wall time.
- * @param {string} seat @param {string} model
- * @returns {{seat: string, type: "phase_start", detail: string, model: string}}
+ *
+ * `runId` is the PAIRING KEY. Without it, a start is matched to an end FIFO by
+ * seat+model, which is a guess: several worktrees running concurrently on one
+ * mission interleave their rows and nothing downstream can untangle them.
+ * Absent → `null`, never generated here — an id minted at the event boundary
+ * would differ between the start and the end and pair with nothing, which is
+ * strictly worse than admitting we cannot pair.
+ * @param {string} seat @param {string} model @param {string|null} [runId]
+ * @returns {{seat: string, type: "phase_start", detail: string, model: string, runId: string|null}}
  */
-export function buildPhaseStartEvent(seat, model) {
+export function buildPhaseStartEvent(seat, model, runId = null) {
   return {
     seat: metricSeat(seat),
     type: "phase_start",
     detail: `external:${model}`,
     model,
+    runId: typeof runId === "string" && runId.length > 0 ? runId : null,
   };
+}
+
+/**
+ * Mint one run id per spawn — the value the driver threads through
+ * `phase_start`, `phase_end` and the gate's own `gate_result`.
+ *
+ * Time component for rough sortability, random component because two seats can
+ * be spawned inside the same millisecond and a collision would silently merge
+ * two runs into one row pair.
+ * @param {string} [slug] @returns {string}
+ */
+export function mintRunId(slug) {
+  const prefix = typeof slug === "string" && slug.length > 0 ? slug : "run";
+  return `${prefix}-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
 }
 
 /**
@@ -255,7 +284,151 @@ export function buildPhaseEndEvent(seat, model, m = {}) {
     // cannot fabricate — the driver computes it from the tree via git, never
     // from the transcript. null = UNMEASURED, never 0 standing in for "unknown".
     filesChanged: m.filesChanged === undefined ? null : m.filesChanged,
+    // Pairing key for this spawn — see buildPhaseStartEvent. null on legacy rows.
+    runId: typeof m.runId === "string" && m.runId.length > 0 ? m.runId : null,
   };
+}
+
+// ─── The deterministic gate, as a subprocess ─────────────────────────────────
+
+/**
+ * Run `gate.mjs` against a finished worktree and return its verdict object.
+ *
+ * The gate records its OWN `gate_result` event, so a driver never parses or
+ * re-emits telemetry from here — it reads the returned object only to print a
+ * summary and (under `--gate-strict`) to pick an exit code.
+ *
+ * Fails SOFT in every direction: a spawn that throws, a non-zero exit with no
+ * JSON, truncated output, or a payload without a `passed` key all degrade to
+ * `null` — "the gate did not report". A measurement instrument that guesses
+ * when it cannot measure is worse than one that admits it.
+ *
+ * @param {{project: string, dirAbs: string, slug?: string|null, runId?: string|null,
+ *          seat?: string, prepare?: boolean, timeoutMs?: number, script?: string}} args
+ * @param {typeof spawnSync} [spawnFn]
+ * @returns {object|null}
+ */
+export function runGateSubprocess(
+  { project, dirAbs, slug = null, runId = null, seat = "worker", prepare = true, timeoutMs, script = GATE_SCRIPT },
+  spawnFn = spawnSync,
+) {
+  const args = [script, "--project", project, "--dir", dirAbs, "--seat", metricSeat(seat), "--json"];
+  if (typeof slug === "string" && slug.length > 0) args.push("--slug", slug);
+  if (typeof runId === "string" && runId.length > 0) args.push("--run-id", runId);
+  if (prepare) args.push("--prepare");
+  if (typeof timeoutMs === "number" && Number.isFinite(timeoutMs)) args.push("--timeout", String(timeoutMs));
+  try {
+    const r = spawnFn(process.execPath, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "inherit"],
+      maxBuffer: 64 << 20,
+    });
+    if (!r || typeof r.stdout !== "string") return null;
+    const parsed = JSON.parse(r.stdout);
+    if (!parsed || typeof parsed !== "object" || !("passed" in parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One-word label for a driver's summary line. `-` means the gate was not asked
+ * for; `unmeasured` means it was asked for and could not report. Collapsing
+ * those two would hide a broken gate behind an operator's choice not to run it.
+ * @param {{passed?: boolean|null}|null|undefined} gate @returns {"pass"|"fail"|"unmeasured"|"-"}
+ */
+export function gateSummaryLabel(gate) {
+  if (gate === null || gate === undefined) return "-";
+  if (gate.passed === true) return "pass";
+  if (gate.passed === false) return "fail";
+  return "unmeasured";
+}
+
+/** The recorder, resolved next to this library's own driver. */
+export const METRICS_SCRIPT = path.resolve(__dirname, "..", "metrics.mjs");
+
+/**
+ * Append one event to a slug's metrics.jsonl via metrics.mjs. Best-effort —
+ * telemetry must never fail the run. `project` (when known) is forwarded so the
+ * recorder targets the right `missions/<project>/` root now that the engine is
+ * extracted from the product repo.
+ * @param {string} slug @param {object} event @param {string} [project]
+ */
+export function recordMetric(slug, event, project) {
+  const args = [METRICS_SCRIPT, "record", slug];
+  if (project) args.push("--project", project);
+  try {
+    spawnSync(process.execPath, args, {
+      input: JSON.stringify(event),
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+  } catch {
+    // best-effort — telemetry must never fail the run
+  }
+}
+
+/**
+ * Everything that happens AFTER a seat process exits: measure the tree, record
+ * `phase_end`, then — only if asked — run the deterministic gate. Shared by
+ * every driver so the sequence below is defined in exactly one place.
+ *
+ * ⚠️ THE ORDER IS LOAD-BEARING, and getting it wrong fails silently.
+ * `filesChanged` MUST be computed before the gate runs. The gate executes the
+ * project's own declared commands; those write coverage output, build
+ * artifacts, and (with `prepare`) an entire dependency tree into the worktree.
+ * Count the delta after that and every gated run reports an inflated
+ * `filesChanged` — a seat that changed nothing would score as having
+ * delivered, which is the exact defect `filesChanged` was built to catch.
+ * `worker-common.test.mjs` pins this order; do not reorder it.
+ *
+ * @param {{seat: string, model: string, project?: string, slug?: string|null,
+ *          dirAbs: string, baseline: any, runId?: string|null,
+ *          metrics?: object, gate?: boolean}} ctx
+ * @param {{countChangedFilesFn?: Function, recordMetricFn?: Function, runGateFn?: Function}} [deps]
+ * @returns {{filesChanged: number|null, gate: object|null}}
+ */
+export function completeRun(
+  { seat, model, project, slug = null, dirAbs, baseline, runId = null, metrics = {}, gate = false },
+  deps = {},
+) {
+  const {
+    countChangedFilesFn = countChangedFiles,
+    recordMetricFn = recordMetric,
+    runGateFn = runGateSubprocess,
+  } = deps;
+
+  const filesChanged = countChangedFilesFn(dirAbs, baseline);
+
+  if (slug) {
+    recordMetricFn(slug, buildPhaseEndEvent(seat, model, { ...metrics, filesChanged, runId }), project);
+  }
+
+  const gateResult = gate
+    ? runGateFn({ project, dirAbs, slug, runId, seat, prepare: true })
+    : null;
+
+  return { filesChanged, gate: gateResult ?? null };
+}
+
+/**
+ * Fold the gate verdict into a driver's exit code.
+ *
+ * By default the gate REPORTS and nothing more: measuring and enforcing are
+ * different jobs, and a metric that blocks is a metric operators switch off.
+ * Under `--gate-strict` a FAILED gate becomes exit 4 — "the seat finished, but
+ * its work does not pass this project's gate" — which is distinct from 1 ("the
+ * seat itself failed"). An UNMEASURED gate never changes the code: an
+ * environment fault is not the seat's failure (decisions.md D-25). A run that
+ * already has a non-zero code keeps it; the seat's own failure is the more
+ * informative one and the gate cannot overwrite it.
+ *
+ * @param {number} baseCode @param {{passed?: boolean|null}|null} gate @param {boolean} strict
+ * @returns {number}
+ */
+export function applyGateExitCode(baseCode, gate, strict) {
+  if (!strict || baseCode !== 0) return baseCode;
+  return gate && gate.passed === false ? 4 : baseCode;
 }
 
 /**
