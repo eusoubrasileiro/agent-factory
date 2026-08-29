@@ -652,7 +652,7 @@ test("CLI: a broken cage refuses to spawn uncaged (exit 2), unless --allow-uncag
 test("assertNoAliasTrap: an Anthropic alias on a z.ai base URL is refused (F02)", () => {
   assert.throws(
     () => assertNoAliasTrap("sonnet", { ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic" }),
-    /alias.*z\.ai maps to glm-5\.2|would run GLM/,
+    /alias.*z\.ai maps to glm-5\.3|would run GLM/,
   );
   assert.throws(() => assertNoAliasTrap("opus", { ANTHROPIC_BASE_URL: "https://api.z.ai/x" }), /alias/);
 });
@@ -664,7 +664,7 @@ test("assertNoAliasTrap: an alias on a real Anthropic endpoint (or no base URL) 
 
 test("assertNoAliasTrap: a full model id is unambiguous and always allowed (F02)", () => {
   assert.doesNotThrow(() => assertNoAliasTrap("claude-sonnet-5", { ANTHROPIC_BASE_URL: "https://api.z.ai/x" }));
-  assert.doesNotThrow(() => assertNoAliasTrap("glm-5.2", { ANTHROPIC_BASE_URL: "https://api.z.ai/x" }));
+  assert.doesNotThrow(() => assertNoAliasTrap("glm-5.3", { ANTHROPIC_BASE_URL: "https://api.z.ai/x" }));
 });
 
 // ─── E6-F03: z.ai rate-limit detection (429 / code 1308) ──────────────────────

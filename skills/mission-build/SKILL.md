@@ -23,7 +23,7 @@ means the plan was drafted but the owner never cleared it — stop and route to
   other MAY run in parallel; anything with a real dependency runs **serial** so
   each worker inherits a green tree.
 - **External-seat concurrency cap: 10.** The z.ai coding plan allows at most ten
-  concurrent `glm-5.2` sessions. Beyond that the provider rejects the extras — it
+  concurrent `glm-5.3` sessions. Beyond that the provider rejects the extras — it
   does not queue them for you. Its usage limit is also a **5-hour rolling window**,
   not a credit balance, so ten parallel seats drain it five times faster than two.
   Sizing a fan-out is a spend decision, not a throughput one.
@@ -60,7 +60,7 @@ tokens on mechanical work, a worker MAY instead run on the **external seat**: Cl
 Code pointed at a third-party Anthropic-compatible endpoint (z.ai → GLM, on a flat
 subscription). Same spec, same clean-context rules; only the executor changes:
 ```bash
-node scripts/claude-worker.mjs --dir <worktree> --model glm-5.2 \
+node scripts/claude-worker.mjs --dir <worktree> --model glm-5.3 \
   --slug <slug> --project <project> --metric-seat worker --timeout 2700000 --gate \
   --prompt "Read missions/<project>/<slug>/features/NN.md and execute it exactly, TDD, then run the pre-commit gate and commit."
 ```
@@ -107,7 +107,7 @@ session, which is usually what you want.
 **The trap, if you ever A/B Sonnet against GLM.** Do NOT pass `--model sonnet` while
 `ANTHROPIC_BASE_URL` points at z.ai. Claude Code resolves the `sonnet` alias through
 `ANTHROPIC_DEFAULT_SONNET_MODEL`, which z.ai's own setup guide tells you to set to
-`glm-5.2`. You would run GLM twice, see two nearly identical scorecards, and conclude
+`glm-5.3`. You would run GLM twice, see two nearly identical scorecards, and conclude
 the models are equivalent. Compare seats by pointing each at its own endpoint, and
 read `metrics.jsonl` for tokens/feature — never `total_cost_usd`, which is fiction on
 a flat plan (D-13).

@@ -29,7 +29,7 @@ claimed in a commit but never rendered). **Any mission that changes `board-repor
 Adversarial, from the validator seat. Drives the ACTUAL served page, asserts what a human
 sees — never that an attribute string exists.
 
-**The seat's eyes are wired (F9 cage-vision).** A caged GLM-5.2 seat reaches Playwright ONLY
+**The seat's eyes are wired (F9 cage-vision).** A caged GLM-5.3 seat reaches Playwright ONLY
 when spawned `--with-playwright`: `claude-worker.mjs` writes a Playwright-only
 `<worktree>/.claude/mcp-playwright.json` and passes `--mcp-config … --strict-mcp-config`, so the
 seat's *entire* MCP surface is the one browser server — the operator's other MCP servers
@@ -48,8 +48,8 @@ done
 #    NOT self-serve — the cage denies curl/python-serve; the coordinator holds the server.
 setsid nohup python3 -m http.server 8799 --bind 127.0.0.1 --directory "$OUT" \
   >/tmp/board8799.log 2>&1 </dev/null &
-# 3. Spawn the GLM-5.2 visual-validator seat WITH its eyes (the F9 flag):
-node scripts/claude-worker.mjs --dir <worktree> --model glm-5.2 --project factory \
+# 3. Spawn the GLM-5.3 visual-validator seat WITH its eyes (the F9 flag):
+node scripts/claude-worker.mjs --dir <worktree> --model glm-5.3 --project factory \
   --metric-seat validator --with-playwright --prompt-file <probe-prompt> --json-out <log>
 ```
 
@@ -69,11 +69,11 @@ hidden:
   ai-jail), deferred unless the threat model shifts to *malicious*. Do not pretend the deny rules
   are a boundary for secrets; they are defense-in-depth.
 
-**If GLM-5.2 proves unreliable at driving Playwright**, that is a finding to surface to André —
+**If GLM-5.3 proves unreliable at driving Playwright**, that is a finding to surface to André —
 NOT a silent PASS. Fallback: the coordinator drives the probe (a few Anthropic tool-calls) until
 GLM reliability is established.
 
-Then, via the `playwright` MCP (GLM-5.2 validator seat, spawned `--with-playwright`), for
+Then, via the `playwright` MCP (GLM-5.3 validator seat, spawned `--with-playwright`), for
 **each** touched surface at **both** `browser_resize` 390×844 (mobile) and 1440×900 (desktop):
 
 - Navigate `http://127.0.0.1:8799/factory/` and `/wahub/`; open the relevant tab.

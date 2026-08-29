@@ -58,7 +58,7 @@ worktree layout isn't the default.)
 
 **Fallback — opencode/z.ai (only while a flat-rate plan is live):**
 ```bash
-pnpm factory:opencode --dir <worktree> --model zai-coding-plan/glm-5.2 \
+pnpm factory:opencode --dir <worktree> --model zai-coding-plan/glm-5.3 \
   --slug <slug> --metric-seat validator \
   --prompt "<same held-out validator prompt as above>"
 ```

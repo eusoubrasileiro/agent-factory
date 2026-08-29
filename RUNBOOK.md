@@ -86,7 +86,7 @@ actually proven (cage-research M1). `opencode-worker.mjs` is the fallback for pr
 with no Anthropic-compatible endpoint.
 
 ```bash
-node scripts/claude-worker.mjs --dir <worktree> --model glm-5.2 \
+node scripts/claude-worker.mjs --dir <worktree> --model glm-5.3 \
   --slug <slug> --project <id> --metric-seat worker --timeout 2700000 \
   --prompt "..."
 ```
@@ -98,7 +98,7 @@ node scripts/claude-worker.mjs --dir <worktree> --model sonnet --project <id> --
 It spends Anthropic tokens (or your plan quota) rather than the flat z.ai plan, which
 is why the flag is mandatory rather than a default. Never combine `--model sonnet` with
 a z.ai base URL: the alias resolves through `ANTHROPIC_DEFAULT_SONNET_MODEL`, which z.ai
-tells you to point at `glm-5.2` — you would run GLM while believing you ran Sonnet.
+tells you to point at `glm-5.3` — you would run GLM while believing you ran Sonnet.
 
 It **refuses to spawn** in three cases, all silent and expensive if allowed:
 - no `--project`, or one that names no known profile → the cage's Critical-File rules and the
@@ -111,7 +111,7 @@ It **refuses to spawn** in three cases, all silent and expensive if allowed:
 Probe the cage:
 ```bash
 node scripts/probe-cage.mjs <worktree> --project <id>                      # static, free
-node scripts/probe-cage.mjs <worktree> --project <id> --live -m glm-5.2    # live, costs quota
+node scripts/probe-cage.mjs <worktree> --project <id> --live -m glm-5.3    # live, costs quota
 ```
 
 **Read this before trusting it.** The static probe proves our renderer. Only `--live` proves
@@ -309,17 +309,19 @@ pnpm intake           # local intake editor (loopback, writes the .md + .bak)
 - Queue several intents: plan them all, approve the ones you like, let build +
   validate run, then ratify the green ones in a batch.
 
-### Vendor limits on the external seat (z.ai coding plan, glm-5.2)
+### Vendor limits on the external seat (z.ai coding plan, glm-5.3)
 
-- **The plan covers three models, and GLM-5.3 is not one of them.** z.ai's own docs
-  (`docs.z.ai/devpack/faq`, checked 2026-08-28) state the GLM Coding Plan supports
-  **GLM-5.2, GLM-5-Turbo and GLM-4.7** only. GLM-5.3 shipped 2026-08-18 and is real, but
-  it is **pay-as-you-go**: pointing a seat at it does not fail loudly — it deducts
-  balance and shows up as *"Insufficient Balance"* later. The `glm-5.2` pin in every
-  command here is therefore deliberate, not stale. Re-check the FAQ before changing it;
-  a newer model on the catalogue is not the same fact as a newer model on the plan.
-  (GLM-4.7 is the cheap tier — z.ai recommends it for routine work to conserve quota.)
-- **Max concurrency: 10.** Do not run more than ten `glm-5.2` builder seats at once.
+- **The plan covers `glm-5.3` and `glm-5.3-flash`.** z.ai's own docs
+  (`docs.z.ai/devpack/faq` + `/devpack/tool/claude`, fetched live 2026-08-29) state
+  *"All plans support GLM-5.3, GLM-5.3-Flash"*, and the Claude-Code setup maps
+  `ANTHROPIC_DEFAULT_SONNET_MODEL` → `glm-5.3`, `ANTHROPIC_DEFAULT_HAIKU_MODEL` →
+  `glm-5.3-flash`. Every command here pins the full id `glm-5.3` deliberately — never an
+  alias (see the trap above). `glm-5.3-flash` is the cheap tier for routine work.
+  **Verify against the live FAQ before repinning**, not against a cached docs snapshot:
+  an earlier version of this bullet asserted the plan excluded GLM-5.3, which was read
+  from a stale mirror and was false (D-60 corrects D-59). A model being on the
+  catalogue is still not the same fact as it being on the plan — check the FAQ itself.
+- **Max concurrency: 10.** Do not run more than ten `glm-5.3` builder seats at once.
   Past that the provider rejects the extra sessions; the fan-out does not queue for you.
 - **Usage is a 5-hour rolling window, not a credit balance.** When it is exhausted the
   API answers `429 rate_limit_error` (z.ai `code 1308`) with the exact reset timestamp —
@@ -336,7 +338,7 @@ set -a; . ~/.config/amiticia/zai.env; set +a
 curl -s -o /dev/null -w '%{http_code}\n' -X POST "$ANTHROPIC_BASE_URL/v1/messages" \
   -H 'content-type: application/json' -H 'anthropic-version: 2023-06-01' \
   -H "Authorization: Bearer $ANTHROPIC_AUTH_TOKEN" \
-  -d '{"model":"glm-5.2","max_tokens":4,"messages":[{"role":"user","content":"hi"}]}'
+  -d '{"model":"glm-5.3","max_tokens":4,"messages":[{"role":"user","content":"hi"}]}'
 ```
 
 Concurrency and the rolling window interact: ten seats burn the window five times faster
@@ -362,10 +364,10 @@ than two. Sizing a fan-out is a spend decision, not a throughput one.
 - **Validator** = fresh `claude -p`. Never saw the code.
 
 ### External agent seat (optional — save Anthropic tokens)
-A worker or validator MAY run on an **external agent** via opencode (e.g. GLM 5.2
+A worker or validator MAY run on an **external agent** via opencode (e.g. GLM 5.3
 on a z.ai subscription plan) instead of a Claude seat:
 ```bash
-pnpm factory:opencode --dir .claude/worktrees/<slug> --model zai-coding-plan/glm-5.2 \
+pnpm factory:opencode --dir .claude/worktrees/<slug> --model zai-coding-plan/glm-5.3 \
   --slug <slug> --metric-seat worker|validator --prompt "<the seat's instruction>"
 ```
 It is **still governed by the harness**: `opencode-worker.mjs` confines the agent
