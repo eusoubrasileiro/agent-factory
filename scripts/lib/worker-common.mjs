@@ -543,6 +543,12 @@ export function killGracefully(child, opts = {}) {
 
     if (graceMs <= 0) {
       send("SIGKILL");
+      // No grace window was offered, so this kill IS an escalation regardless of
+      // how fast the child dies. Detach the exit listener before yielding: left
+      // attached it races the timer below, and under CPU contention it wins —
+      // the call then reports escalated:false for a run that went straight to
+      // SIGKILL. `escalated` describes what we did, not the child's reflexes.
+      child.removeListener("exit", onExit);
       // Give the exit event a tick to land, but do not depend on it: a child that
       // is already unreapable must not hang the caller.
       timer = setTimeout(() => finish(true), 0);
