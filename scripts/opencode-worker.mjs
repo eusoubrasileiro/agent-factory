@@ -44,10 +44,9 @@
  *   2 usage error, absent/unknown --project, or worktree-confinement violation
  */
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { isMainModule } from "./lib/is-main.mjs";
 import { resolveProject } from "./lib/project.mjs";
@@ -56,15 +55,18 @@ import {
   buildPhaseEndEvent,
   buildPhaseStartEvent,
   buildSpawnEnv,
-  countChangedFiles,
+  applyGateExitCode,
+  completeRun,
   DEFAULT_GRACE_MS,
+  gateSummaryLabel,
   isWorktreeDir,
   killGracefully,
+  mintRunId,
+  recordMetric,
   snapshotWorktree,
 } from "./lib/worker-common.mjs";
 import { opencodeCagePath, writeOpencodeCage } from "./cage-opencode.mjs";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 min — a full TDD feature can take a while
 
 // ─── Pure core (unit-tested) ─────────────────────────────────────────────────
@@ -135,9 +137,24 @@ export function parseOpencodeStream(streamText) {
 
 // ─── CLI parsing ─────────────────────────────────────────────────────────────
 
-function parseArgs(argv) {
+/**
+ * Parse the driver's argv. Exported so the flag surface is testable: an
+ * unrecognized flag sets `_bad` and the driver exits 2, so a new flag that was
+ * never added here does not "default off" — it refuses to run at all.
+ * @param {string[]} argv @returns {Record<string, unknown>}
+ */
+export function parseArgs(argv) {
   const args = argv.slice(2);
-  const opts = { auto: true, allowAnyDir: false, continue: false };
+  const opts = {
+    auto: true,
+    allowAnyDir: false,
+    continue: false,
+    // Opt-in. The gate runs the project's real commands, which on a cold
+    // worktree means provisioning dependencies — minutes of wall time a caller
+    // that only wanted a seat spawned never asked for.
+    gate: false,
+    gateStrict: false,
+  };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     switch (a) {
@@ -183,6 +200,14 @@ function parseArgs(argv) {
       case "--allow-uncaged":
         opts.allowUncaged = true;
         break;
+      case "--gate":
+        opts.gate = true;
+        break;
+      // Strict without the gate would enforce a verdict that was never taken.
+      case "--gate-strict":
+        opts.gate = true;
+        opts.gateStrict = true;
+        break;
       default:
         process.stderr.write(`unknown flag: ${a}\n`);
         opts._bad = true;
@@ -197,29 +222,9 @@ function usage() {
       "  node scripts/factory/opencode-worker.mjs --dir <worktree> --model <provider/model> --project <id> \\\n" +
       '    (--prompt "<text>" | --prompt-file <path>) [--slug <slug>] \\\n' +
       "    [--metric-seat worker|validator] [--session <id>] [--continue] \\\n" +
-      "    [--timeout <ms>] [--json-out <path>] [--no-auto] [--allow-any-dir]\n",
+      "    [--timeout <ms>] [--json-out <path>] [--no-auto] [--allow-any-dir] \\\n" +
+      "    [--gate] [--gate-strict]\n",
   );
-}
-
-// ─── Metrics (metrics.mjs schema, W3 full-pipeline observability) ─────────────
-
-/**
- * Append one event to a slug's metrics.jsonl via metrics.mjs. Best-effort —
- * telemetry must never fail the run. `project` (when known) is forwarded so the
- * recorder targets the right `missions/<project>/` root now that the engine is
- * extracted from the product repo.
- */
-function recordMetric(slug, event, project) {
-  const args = [path.join(__dirname, "metrics.mjs"), "record", slug];
-  if (project) args.push("--project", project);
-  try {
-    spawnSync(process.execPath, args, {
-      input: JSON.stringify(event),
-      stdio: ["pipe", "ignore", "ignore"],
-    });
-  } catch {
-    // best-effort — telemetry must never fail the run
-  }
 }
 
 // ─── IO shell ────────────────────────────────────────────────────────────────
@@ -337,8 +342,10 @@ async function main() {
 
   // Emit phase_start at spawn so metrics.jsonl carries a start marker that
   // mission-stats can pair with phase_end for wall-clock duration.
+  // One id per spawn, threaded through phase_start, phase_end and gate_result.
+  const runId = mintRunId(opts.slug);
   if (opts.slug) {
-    recordMetric(opts.slug, buildPhaseStartEvent(opts.metricSeat, opts.model), opts.project);
+    recordMetric(opts.slug, buildPhaseStartEvent(opts.metricSeat, opts.model, runId), opts.project);
   }
 
   const baseline = snapshotWorktree(path.resolve(opts.dir));
@@ -347,36 +354,42 @@ async function main() {
   const { exitCode, stdout, stderr, timedOut } = await runOpencode(opts);
   const wallMs = Date.now() - t0;
   const parsed = parseOpencodeStream(stdout);
-  const filesChanged = countChangedFiles(path.resolve(opts.dir), baseline);
 
   const ok = exitCode === 0 && parsed.sawFinish;
+
+  // Shared sequence: take the tree delta, record phase_end, THEN gate. The
+  // order is pinned in worker-common.test.mjs — see completeRun.
+  const { filesChanged, gate } = completeRun({
+    seat: opts.metricSeat,
+    model: opts.model,
+    project: opts.project,
+    slug: opts.slug ?? null,
+    dirAbs: path.resolve(opts.dir),
+    baseline,
+    runId,
+    metrics: {
+      tokens: parsed.tokens,
+      tokensIn: parsed.tokensIn,
+      tokensOut: parsed.tokensOut,
+      tokensReasoning: parsed.tokensReasoning,
+      cost: parsed.cost,
+      durationMs: wallMs,
+      exitCode,
+      sawFinish: parsed.sawFinish === true,
+      timedOut: timedOut === true,
+    },
+    gate: opts.gate === true,
+  });
+
   process.stdout.write(
     `opencode-worker: model=${opts.model} session=${parsed.sessionID ?? "?"} ` +
       `tokens=${parsed.tokens} cost=$${parsed.cost.toFixed(4)} wallMs=${wallMs} ` +
-      `exit=${exitCode}${timedOut ? " (TIMEOUT)" : ""}\n`,
+      `exit=${exitCode}${timedOut ? " (TIMEOUT)" : ""} files=${filesChanged} ` +
+      `gate=${gateSummaryLabel(gate)}\n`,
   );
   if (!ok && stderr.trim()) {
     process.stderr.write(
       `opencode stderr tail:\n${stderr.trim().split("\n").slice(-8).join("\n")}\n`,
-    );
-  }
-
-  if (opts.slug) {
-    recordMetric(
-      opts.slug,
-      buildPhaseEndEvent(opts.metricSeat, opts.model, {
-        tokens: parsed.tokens,
-        tokensIn: parsed.tokensIn,
-        tokensOut: parsed.tokensOut,
-        tokensReasoning: parsed.tokensReasoning,
-        cost: parsed.cost,
-        durationMs: wallMs,
-        exitCode,
-        sawFinish: parsed.sawFinish === true,
-        timedOut: timedOut === true,
-        filesChanged,
-      }),
-      opts.project,
     );
   }
 
@@ -395,7 +408,7 @@ async function main() {
     writeFileSync(path.resolve(opts.jsonOut), `${JSON.stringify(out, null, 2)}\n`);
   }
 
-  return ok ? 0 : 1;
+  return applyGateExitCode(ok ? 0 : 1, gate, opts.gateStrict === true);
 }
 
 const isMain = isMainModule(import.meta.url);

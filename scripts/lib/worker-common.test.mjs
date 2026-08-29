@@ -28,6 +28,11 @@ import {
   isWorktreeDir,
   killGracefully,
   snapshotWorktree,
+  applyGateExitCode,
+  completeRun,
+  gateSummaryLabel,
+  mintRunId,
+  runGateSubprocess,
   SPAWN_ENV_ALLOWLIST,
 } from "./worker-common.mjs";
 
@@ -566,5 +571,237 @@ test("countChangedFiles ignores .claude/, so the driver cannot fabricate its own
     assert.equal(countChangedFiles(repo, baseline), 0);
   } finally {
     rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// ─── runId — the pairing key ─────────────────────────────────────────────────
+//
+// phase_start and phase_end were paired FIFO by seat+model, which is a guess:
+// three concurrent worktrees on one mission interleave their rows and nothing
+// downstream can untangle them. One id minted per spawn makes the pair a fact.
+
+test("mintRunId: shape is <slug>-<base36 time>-<6 hex>", () => {
+  const id = mintRunId("gate-wire");
+  assert.match(id, /^gate-wire-[0-9a-z]+-[0-9a-f]{6}$/);
+});
+
+test("mintRunId: no slug degrades to the 'run' prefix, never to empty", () => {
+  for (const arg of [undefined, null, "", 7]) {
+    assert.match(mintRunId(arg), /^run-[0-9a-z]+-[0-9a-f]{6}$/);
+  }
+});
+
+test("mintRunId: two ids minted in the same millisecond still differ", () => {
+  const ids = new Set();
+  for (let i = 0; i < 200; i++) ids.add(mintRunId("m"));
+  assert.equal(ids.size, 200);
+});
+
+test("buildPhaseStartEvent: carries the runId it is given", () => {
+  const e = buildPhaseStartEvent("worker", "some-model", "m-abc-123456");
+  assert.equal(e.runId, "m-abc-123456");
+});
+
+test("buildPhaseStartEvent: runId is null when none is supplied — never invented", () => {
+  const e = buildPhaseStartEvent("worker", "some-model");
+  assert.equal(e.runId, null);
+  // An id that pairs with nothing is strictly worse than admitting we cannot pair.
+  assert.ok(!("runId" in e) === false);
+});
+
+test("buildPhaseEndEvent: runId round-trips, and is null when absent", () => {
+  assert.equal(buildPhaseEndEvent("worker", "m", { runId: "m-abc-123456" }).runId, "m-abc-123456");
+  assert.equal(buildPhaseEndEvent("worker", "m", {}).runId, null);
+});
+
+test("phase_start and phase_end built from one minted id carry the SAME value", () => {
+  const runId = mintRunId("pairing");
+  const start = buildPhaseStartEvent("worker", "m", runId);
+  const end = buildPhaseEndEvent("worker", "m", { runId });
+  assert.equal(start.runId, end.runId);
+  assert.equal(start.runId, runId);
+});
+
+// ─── the gate subprocess ─────────────────────────────────────────────────────
+
+function fakeSpawn(result) {
+  const calls = [];
+  const fn = (cmd, args, opts) => {
+    calls.push({ cmd, args, opts });
+    return typeof result === "function" ? result() : result;
+  };
+  return { fn, calls };
+}
+
+const OK_GATE = { status: 0, stdout: JSON.stringify({ passed: true, gateRan: 3, gateTotal: 3 }) };
+
+test("runGateSubprocess: passes project, dir, slug, run-id, seat, prepare and --json", () => {
+  const { fn, calls } = fakeSpawn(OK_GATE);
+  runGateSubprocess(
+    { project: "factory", dirAbs: "/w/t", slug: "mission", runId: "r-1", seat: "validator", prepare: true },
+    fn,
+  );
+  assert.equal(calls.length, 1);
+  const args = calls[0].args;
+  assert.ok(args[0].endsWith("gate.mjs"));
+  for (const pair of [["--project", "factory"], ["--dir", "/w/t"], ["--slug", "mission"], ["--run-id", "r-1"], ["--seat", "validator"]]) {
+    const i = args.indexOf(pair[0]);
+    assert.ok(i !== -1, `missing ${pair[0]}`);
+    assert.equal(args[i + 1], pair[1]);
+  }
+  assert.ok(args.includes("--prepare"));
+  assert.ok(args.includes("--json"));
+});
+
+test("runGateSubprocess: omits --slug and --run-id rather than passing empty ones", () => {
+  const { fn, calls } = fakeSpawn(OK_GATE);
+  runGateSubprocess({ project: "factory", dirAbs: "/w/t" }, fn);
+  assert.ok(!calls[0].args.includes("--slug"));
+  assert.ok(!calls[0].args.includes("--run-id"));
+});
+
+test("runGateSubprocess: returns the parsed verdict object", () => {
+  const { fn } = fakeSpawn(OK_GATE);
+  const r = runGateSubprocess({ project: "factory", dirAbs: "/w/t" }, fn);
+  assert.equal(r.passed, true);
+  assert.equal(r.gateRan, 3);
+});
+
+test("runGateSubprocess: unparseable stdout degrades to null, never to a verdict", () => {
+  const { fn } = fakeSpawn({ status: 1, stdout: "gate: something went sideways\n" });
+  assert.equal(runGateSubprocess({ project: "factory", dirAbs: "/w/t" }, fn), null);
+});
+
+test("runGateSubprocess: a throwing spawn degrades to null and does not propagate", () => {
+  const fn = () => {
+    throw new Error("EACCES");
+  };
+  assert.equal(runGateSubprocess({ project: "factory", dirAbs: "/w/t" }, fn), null);
+});
+
+test("runGateSubprocess: a verdict without a `passed` key is not a verdict", () => {
+  const { fn } = fakeSpawn({ status: 0, stdout: JSON.stringify({ hello: "world" }) });
+  assert.equal(runGateSubprocess({ project: "factory", dirAbs: "/w/t" }, fn), null);
+});
+
+test("gateSummaryLabel: the three verdicts and 'not run' are all distinguishable", () => {
+  assert.equal(gateSummaryLabel({ passed: true }), "pass");
+  assert.equal(gateSummaryLabel({ passed: false }), "fail");
+  assert.equal(gateSummaryLabel({ passed: null }), "unmeasured");
+  assert.equal(gateSummaryLabel(null), "-");
+  assert.equal(gateSummaryLabel(undefined), "-");
+});
+
+// ─── completeRun — the post-spawn measurement sequence ───────────────────────
+
+function completeRunHarness({ slug = null, gate = false, gateResult = null, filesChanged = 2 } = {}) {
+  const order = [];
+  const metrics = [];
+  const gateCalls = [];
+  const deps = {
+    countChangedFilesFn: () => {
+      order.push("files");
+      return filesChanged;
+    },
+    recordMetricFn: (s, event) => {
+      order.push(`metric:${event.type}`);
+      metrics.push(event);
+    },
+    runGateFn: (args) => {
+      order.push("gate");
+      gateCalls.push(args);
+      return gateResult;
+    },
+  };
+  const out = completeRun(
+    {
+      seat: "worker",
+      model: "some-model",
+      project: "factory",
+      slug,
+      dirAbs: "/w/t",
+      baseline: { head: "abc", files: new Map() },
+      runId: "r-1",
+      metrics: { tokens: 5, durationMs: 10, exitCode: 0, sawFinish: true },
+      gate,
+    },
+    deps,
+  );
+  return { out, order, metrics, gateCalls };
+}
+
+test("completeRun: filesChanged is computed BEFORE the gate runs (ordering pin)", () => {
+  // LOAD-BEARING. The gate executes the project's real commands: coverage
+  // output, build artifacts, and with prepare a whole dependency tree. Count
+  // the delta after that and every gated run reports an inflated filesChanged —
+  // a seat that changed nothing would score as having delivered, which is the
+  // exact defect filesChanged exists to catch.
+  const { order } = completeRunHarness({ slug: "m", gate: true, gateResult: { passed: true } });
+  assert.deepEqual(order, ["files", "metric:phase_end", "gate"]);
+  assert.ok(order.indexOf("files") < order.indexOf("gate"));
+});
+
+test("completeRun: phase_end is recorded before the gate, so a hung gate cannot swallow the run's cost", () => {
+  const { order } = completeRunHarness({ slug: "m", gate: true, gateResult: { passed: false } });
+  assert.ok(order.indexOf("metric:phase_end") < order.indexOf("gate"));
+});
+
+test("completeRun: without the gate flag the gate subprocess is never spawned", () => {
+  const { order, out } = completeRunHarness({ slug: "m", gate: false });
+  assert.ok(!order.includes("gate"));
+  assert.equal(out.gate, null);
+});
+
+test("completeRun: the recorded phase_end carries filesChanged and the runId", () => {
+  const { metrics } = completeRunHarness({ slug: "m", filesChanged: 7 });
+  assert.equal(metrics.length, 1);
+  assert.equal(metrics[0].filesChanged, 7);
+  assert.equal(metrics[0].runId, "r-1");
+  assert.equal(metrics[0].tokens, 5);
+});
+
+test("completeRun: no slug means no telemetry, but filesChanged is still measured", () => {
+  const { metrics, out } = completeRunHarness({ slug: null, filesChanged: 3 });
+  assert.equal(metrics.length, 0);
+  assert.equal(out.filesChanged, 3);
+});
+
+test("completeRun: the gate is handed the same runId as the phase_end it follows", () => {
+  const { gateCalls, metrics } = completeRunHarness({ slug: "m", gate: true, gateResult: { passed: true } });
+  assert.equal(gateCalls[0].runId, "r-1");
+  assert.equal(gateCalls[0].runId, metrics[0].runId);
+  assert.equal(gateCalls[0].project, "factory");
+  assert.equal(gateCalls[0].dirAbs, "/w/t");
+});
+
+test("completeRun: a gate that could not report degrades to null, not to a verdict", () => {
+  const { out } = completeRunHarness({ slug: "m", gate: true, gateResult: null });
+  assert.equal(out.gate, null);
+});
+
+// ─── applyGateExitCode ───────────────────────────────────────────────────────
+
+test("applyGateExitCode: a failing gate does NOT change the exit code by default", () => {
+  assert.equal(applyGateExitCode(0, { passed: false }, false), 0);
+});
+
+test("applyGateExitCode: a failing gate exits 4 under strict", () => {
+  assert.equal(applyGateExitCode(0, { passed: false }, true), 4);
+});
+
+test("applyGateExitCode: an UNMEASURED gate never exits 4, even under strict", () => {
+  // An environment fault is not the seat's failure (D-25). Coercing null to a
+  // failure is how a broken instrument starts manufacturing verdicts.
+  assert.equal(applyGateExitCode(0, { passed: null }, true), 0);
+  assert.equal(applyGateExitCode(0, null, true), 0);
+});
+
+test("applyGateExitCode: a passing gate leaves the exit code alone", () => {
+  assert.equal(applyGateExitCode(0, { passed: true }, true), 0);
+});
+
+test("applyGateExitCode: an already-failing run keeps its own code — the seat's failure outranks the gate's", () => {
+  for (const base of [1, 2, 3]) {
+    assert.equal(applyGateExitCode(base, { passed: false }, true), base);
   }
 });

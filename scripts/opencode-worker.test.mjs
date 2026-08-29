@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { parseOpencodeStream } from "./opencode-worker.mjs";
+import { parseArgs, parseOpencodeStream } from "./opencode-worker.mjs";
 
 // A real `opencode run ... --format json` stream captured 2026-07-07 from
 // `zai-coding-plan/glm-5.2`, with a stray non-JSON watcher warning prepended
@@ -148,4 +148,30 @@ test("CLI: an unknown --project is refused (exit 2)", () => {
   } finally {
     rmSync(wt, { recursive: true, force: true });
   }
+});
+
+// ─── the gate, wired ─────────────────────────────────────────────────────────
+//
+// The measurement sequence (filesChanged before the gate) and the exit-code
+// folding are shared with the default driver and pinned in
+// worker-common.test.mjs. Driver-specific here is only the flag surface — and
+// this driver REFUSES on an unknown flag, so a missing case is a hard failure,
+// not a silent default-off.
+
+test("parseArgs: --gate and --gate-strict are accepted, not treated as unknown flags", () => {
+  const opts = parseArgs(["node", "s", "--dir", "/w", "--model", "p/m", "--prompt", "p", "--gate", "--gate-strict"]);
+  assert.ok(!opts._bad);
+  assert.equal(opts.gate, true);
+  assert.equal(opts.gateStrict, true);
+});
+
+test("parseArgs: the gate is OFF unless asked for", () => {
+  const opts = parseArgs(["node", "s", "--dir", "/w", "--model", "p/m", "--prompt", "p"]);
+  assert.equal(opts.gate, false);
+  assert.equal(opts.gateStrict, false);
+});
+
+test("parseArgs: --gate-strict implies --gate — strict without the gate would enforce an unmeasured verdict", () => {
+  const opts = parseArgs(["node", "s", "--dir", "/w", "--model", "p/m", "--prompt", "p", "--gate-strict"]);
+  assert.equal(opts.gate, true);
 });
