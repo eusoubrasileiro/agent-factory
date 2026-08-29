@@ -383,3 +383,35 @@ This prints event counts by type and the **attention-per-feature** figure
 (touchpoints + interventions + escalations) — the KPI the whole factory optimizes
 for (v2 §3.4). The §6 graduation rule ("kill the factory if attention-per-feature
 doesn't fall") consumes this number; without it the rule is unmeasurable.
+
+## Read the outcome table
+
+```bash
+node scripts/kpi.mjs --window 30      # or --window 0 for all time
+```
+
+Attention and spend say what a run *cost*. These columns say whether it *worked*:
+
+| Column | Read it as |
+|---|---|
+| `GREEN%` | green-first-try — of the runs we could score, the share that touched files and passed the project's own gate |
+| `NOOP%` | the share that touched **nothing**. A seat that asked a question, gave up, or wedged |
+| `ORPH` | runs killed before they could write `phase_end`. Not in any rate — they are the optimistic bias in everything else |
+| `PLAN-TOK` | planner (orchestrator) tokens, deliberately kept out of `SEAT-TOK` |
+
+Four things to know before you act on a number here:
+
+- **`—` is not zero.** An em-dash means unmeasured; `0%` means measured and zero. The
+  table never zero-fills absence, and neither should you when reading it.
+- **`ATTN/FEAT` alone rewards the worst failure there is.** A worker that hangs silently
+  generates zero touchpoints and so *beats* a model that asks one good question. Read it
+  next to `NOOP%` or not at all — the report prints that warning under itself.
+- **`GREEN%` only exists for runs dispatched with `--gate`.** Without it every run is
+  `unmeasured` and the column is honestly, correctly, `—`.
+- **`SEAT-TOK` has a seam at 2026-08-28.** Before that date the drivers recorded a
+  planning seat *as a worker*, so older rows carry planner spend inside `SEAT-TOK`;
+  newer ones split it into `PLAN-TOK`. Don't compare across the seam.
+
+To measure the gate on a run, add `--gate` to the driver (it reports and does not block).
+`--gate-strict` additionally exits `4` when the gate fails — use it in a script that must
+stop, not in a run you only want to measure.
