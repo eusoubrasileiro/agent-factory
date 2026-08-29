@@ -379,14 +379,27 @@ export function outcomesForProject({ missionsRoot, slugs, sinceMs = null }) {
   let orphaned = 0;
   let hasRecords = false;
   for (const slug of list) {
-    const wr = windowedRecords(readMetricsRecords(missionsRoot, slug), sinceMs);
-    if (wr.length > 0) hasRecords = true;
-    const rec = reconcileRuns(wr);
-    runs.push(...rec.completed);
-    orphaned += rec.orphaned.length;
+    const all = readMetricsRecords(missionsRoot, slug);
+    if (windowedRecords(all, sinceMs).length > 0) hasRecords = true;
+    // Reconcile the WHOLE file, then window the RUNS — not the other way round.
+    // Windowing the events first filters the phase_start out from under any run
+    // that began before the boundary and finished inside it: the end is left
+    // parentless, the run vanishes from every count, and the runs most likely to
+    // straddle a boundary are the LONGEST ones. A run belongs to the window it
+    // finished in; an orphan has no end, so it belongs to the one it started in.
+    const rec = reconcileRuns(all);
+    for (const r of rec.completed) if (inWindow(r.endTs, sinceMs)) runs.push(r);
+    for (const o of rec.orphaned) if (inWindow(o.startTs, sinceMs)) orphaned++;
   }
   if (!hasRecords) return null;
   return { ...summarizeOutcomes(runs), orphaned };
+}
+
+/** Is an ISO timestamp inside the window? No window → everything is. */
+function inWindow(ts, sinceMs) {
+  if (sinceMs == null) return true;
+  const t = Date.parse(ts);
+  return !Number.isNaN(t) && t >= sinceMs;
 }
 
 // ─── render ──────────────────────────────────────────────────────────────────

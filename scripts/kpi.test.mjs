@@ -672,3 +672,61 @@ test("renderTable: ORPH is a column, so runs that died before phase_end are on t
   assert.match(out, /ORPH/);
   assert.match(out.split("\n").find((l) => l.startsWith("alpha")), /3/);
 });
+
+test("outcomesForProject: a run that STRADDLES the window boundary is not silently dropped", () => {
+  // Reconciling windowed records filters the phase_start out from under a run
+  // that began before the boundary and finished inside it. The end then has no
+  // start, the run vanishes from every count, and the longest runs — the ones
+  // most likely to straddle — are the ones that disappear. Reconcile the whole
+  // file, THEN window the runs: a run belongs to the window it finished in.
+  const root = tmpMissionsRoot();
+  writeMetrics(root, "m1", [
+    startEv("a", "2026-08-27T23:00:00.000Z"),
+    endEv("a", "2026-08-28T01:00:00.000Z", 3),
+    gateEv("a", true, "2026-08-28T01:05:00.000Z"),
+  ]);
+  try {
+    const o = outcomesForProject({ missionsRoot: root, sinceMs: Date.parse("2026-08-28T00:00:00.000Z") });
+    assert.equal(o.scored, 1);
+    assert.equal(o.counts.delivered, 1);
+    assert.equal(o.greenFirstTry, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("outcomesForProject: a run that finished BEFORE the window is still excluded from it", () => {
+  const root = tmpMissionsRoot();
+  writeMetrics(root, "m1", [
+    startEv("old", "2026-08-01T10:00:00.000Z"),
+    endEv("old", "2026-08-01T10:00:10.000Z", 3),
+    gateEv("old", true, "2026-08-01T10:00:20.000Z"),
+    startEv("new", "2026-08-28T10:00:00.000Z"),
+    endEv("new", "2026-08-28T10:00:10.000Z", 1),
+    gateEv("new", false, "2026-08-28T10:00:20.000Z"),
+  ]);
+  try {
+    const o = outcomesForProject({ missionsRoot: root, sinceMs: Date.parse("2026-08-28T00:00:00.000Z") });
+    assert.equal(o.scored, 1);
+    assert.equal(o.counts.broken, 1);
+    assert.equal(o.counts.delivered, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("outcomesForProject: an orphan is placed in the window it STARTED in — it has no other timestamp", () => {
+  const root = tmpMissionsRoot();
+  writeMetrics(root, "m1", [
+    startEv("dead", "2026-08-01T10:00:00.000Z"),
+    startEv("live", "2026-08-28T10:00:00.000Z"),
+    endEv("live", "2026-08-28T10:00:10.000Z", 1),
+  ]);
+  try {
+    const win = outcomesForProject({ missionsRoot: root, sinceMs: Date.parse("2026-08-28T00:00:00.000Z") });
+    assert.equal(win.orphaned, 0);
+    assert.equal(outcomesForProject({ missionsRoot: root }).orphaned, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
