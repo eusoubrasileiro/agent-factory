@@ -166,10 +166,31 @@ To verify the viability of the software factory, telemetry is collected througho
 * **`touchpoint`**: Recorded every time a human operator is engaged (intake grill, plan approval, ratification).
 * **`intervention`**: Recorded when the human operator has to intervene and debug a seat.
 * **`escalation`**: Recorded when a worker fails or runs out of retries, escalating to the human.
-* **`phase_start` / `phase_end`**: Wall-clock boundaries for planning, building, and validation.
+* **`phase_start` / `phase_end`**: Wall-clock boundaries for planning, building, and validation. Paired by `runId` (minted once per spawn); FIFO by seat+model is the legacy fallback only, and it is a guess once two worktrees run concurrently on one mission.
+* **`gate_result`**: The deterministic gate's verdict on the tree a run left behind — emitted by the gate runner *after* `phase_end`, as its own event so gate wall-time never contaminates the seat's `durationMs`.
 * **`false_idle`**: Recorded when an idle alarm turns out to be a false positive.
 * **`worker_death`**: Recorded if an agent process terminates unexpectedly.
 * Logged entries include **tokens consumed** and **USD cost** (integrated with `opencode-worker.mjs` for external seats like GLM-5.2).
+
+### Cost is not outcome
+
+For most of the factory's life this telemetry answered *what did a run cost* and could not
+answer *did it work*. `phase_end` now also carries `exitCode`, `sawFinish`, `timedOut`,
+`stalled` and `filesChanged`; `gate_result` carries a three-valued `passed`. Together they
+give one verdict per run — `delivered` / `broken` / `noop` / `quarantined` / `unmeasured` /
+`not-applicable` — and make **green-first-try** computable at all.
+
+Three properties this section exists to keep honest:
+
+* **Absence is `null`, never `false` or `0`.** A gate that could not run is not a failing
+  gate; scoring it as one charges every environment fault to the seat.
+* **`filesChanged` is taken from git by the driver, never from the transcript.** It is the
+  one outcome field a seat cannot fabricate — and it must be measured *before* the gate
+  runs, or the gate's own build artifacts inflate it.
+* **Runs that die before `phase_end` are counted, not dropped.** Every aggregate that reads
+  `phase_end` alone is optimistically biased by construction, because the runs that vanish
+  are exactly the ones that crashed. `reconcileRuns` reports them as `orphaned`; over the
+  factory's lifetime log there are seven.
 
 ### The Curation Loop
 Whenever a worker runs into missing information, it records it in `unmet_knowledge[]` inside its feature handoff file. These lines are mined by the orchestrator during planning phases and curated back into [AGENTS.md](file:///home/andre/Projects/amiticia/repositories/products/wahub/AGENTS.md) or standard documentation files, creating a demand-driven learning loop.
