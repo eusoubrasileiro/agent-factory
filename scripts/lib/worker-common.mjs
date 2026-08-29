@@ -74,9 +74,26 @@ export function buildSpawnEnv(sourceEnv) {
 
 // ─── Metrics event builders (metrics.mjs schema, W3 full-pipeline observability) ─
 
-/** Map any seat label to the two metrics seats the schema accepts. */
+/**
+ * Seats a driver can legitimately occupy. `human` is a metrics.mjs seat too,
+ * but no driver ever runs as one, so it is not accepted here.
+ */
+const DRIVER_SEATS = new Set(["worker", "validator", "orchestrator"]);
+
+/**
+ * Map a seat label to the metrics seat the event is recorded under.
+ *
+ * This used to collapse everything except `validator` to `worker`, which
+ * recorded a planning seat's tokens as builder spend — inflating builder cost
+ * and hiding planner cost in the one comparison these numbers exist to make.
+ *
+ * An UNKNOWN label still degrades to `worker` rather than passing through:
+ * metrics.mjs rejects any seat outside its own set, and a rejected event is a
+ * run that vanishes from the ledger entirely. Mis-attributed but visible beats
+ * correct but absent.
+ */
 function metricSeat(seat) {
-  return seat === "validator" ? "validator" : "worker";
+  return DRIVER_SEATS.has(seat) ? seat : "worker";
 }
 
 // ─── Worktree delta (filesChanged) ──────────────────────────────────────────

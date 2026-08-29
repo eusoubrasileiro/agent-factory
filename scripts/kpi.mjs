@@ -49,6 +49,8 @@ import path from "node:path";
 import { isMainModule } from "./lib/is-main.mjs";
 import { FACTORY_ROOT, loadProjects, resolveProject } from "./lib/project.mjs";
 import { seatTokens } from "./mission-stats.mjs";
+import { summarizeOutcomes } from "./lib/outcome.mjs";
+import { reconcileRuns } from "./lib/run-log.mjs";
 import { readTranscriptDir, summarizeUsage, defaultTranscriptDir } from "./session-cost.mjs";
 
 /** Event types that count toward the attention-per-feature KPI (metrics.mjs). */
@@ -165,12 +167,30 @@ export function buildKpi(inputs) {
   const num = (v) => (typeof v === "number" ? v : null);
   const merged = num(inputs.merged);
   const seatTokens = num(inputs.seatTokens);
+  const planTokens = num(inputs.planTokens);
   const coordinatorTokens = num(inputs.coordinatorTokens);
   const attention = num(inputs.attention);
   const features = num(inputs.features);
   const attentionPerFeature =
     attention !== null && features !== null && features > 0 ? attention / features : null;
-  return { project: inputs.project, merged, seatTokens, coordinatorTokens, attention, features, attentionPerFeature };
+  const outcomes = inputs.outcomes ?? null;
+  return {
+    project: inputs.project,
+    merged,
+    seatTokens,
+    planTokens,
+    coordinatorTokens,
+    attention,
+    features,
+    attentionPerFeature,
+    // Did the runs WORK. ATTN/FEAT must never be read without NOOP% beside it:
+    // a silently hung worker generates zero touchpoints and so SCORES BETTER on
+    // attention-per-feature than a model that asks one good question.
+    greenFirstTry: outcomes ? num(outcomes.greenFirstTry) : null,
+    noopRate: outcomes ? num(outcomes.noopRate) : null,
+    orphaned: num(inputs.orphaned),
+    outcomes,
+  };
 }
 
 // ─── sourcing (B1-B4) ────────────────────────────────────────────────────────
@@ -273,6 +293,27 @@ export function seatTokensForProject({ missionsRoot, slugs, sinceMs = null }) {
 }
 
 /**
+ * Orchestrator (planning seat) token total across a project's missions.
+ *
+ * Kept OUT of `seatTokensForProject` deliberately. Until 2026-08-28 the drivers
+ * collapsed an `orchestrator` seat to `worker`, so planner spend was recorded as
+ * builder spend — inflating builder cost and hiding planner cost in the one
+ * comparison these numbers exist to make. Folding it back into SEAT-TOK now
+ * would re-create that blindness with extra steps.
+ * @param {{missionsRoot: string, slugs?: string[], sinceMs?: number|null}} args
+ * @returns {number|null}
+ */
+export function planTokensForProject({ missionsRoot, slugs, sinceMs = null }) {
+  const list = slugs ?? listDossierSlugs(missionsRoot);
+  const contribs = [];
+  for (const slug of list) {
+    const wr = windowedRecords(readMetricsRecords(missionsRoot, slug), sinceMs);
+    contribs.push(measuredSeatTotal(wr, "orchestrator"));
+  }
+  return sumNonNull(contribs);
+}
+
+/**
  * Coordinator (Opus interactive session) token total over the window (B3). Read
  * from the factory's session transcript via `session-cost`'s pure core — no
  * shell-out. Null when no transcript is retained (absence → `—`).
@@ -315,6 +356,39 @@ export function attentionForProject({ missionsRoot, slugs, sinceMs = null }) {
   return hasRecords ? total : null;
 }
 
+/**
+ * Roll a project's missions up into the outcome taxonomy (§3): how many runs
+ * DELIVERED, how many were BROKEN, how many were noops, and how many died
+ * before writing `phase_end` at all.
+ *
+ * That last count is why `reconcileRuns` is here rather than a plain filter on
+ * `phase_end`: a worker that is SIGKILLed, OOMs, or whose parent dies never
+ * writes its end, so it silently vanishes from every aggregate — and the runs
+ * that vanish are exactly the ones that crashed. Every factory metric predating
+ * this is optimistically biased for that reason.
+ *
+ * Returns null when the project has no metrics at all (absence → `—`), never a
+ * 100%-green report over zero runs.
+ * @param {{missionsRoot: string, slugs?: string[], sinceMs?: number|null}} args
+ * @returns {{counts: Record<string, number>, total: number, scored: number,
+ *            greenFirstTry: number|null, noopRate: number|null, orphaned: number}|null}
+ */
+export function outcomesForProject({ missionsRoot, slugs, sinceMs = null }) {
+  const list = slugs ?? listDossierSlugs(missionsRoot);
+  const runs = [];
+  let orphaned = 0;
+  let hasRecords = false;
+  for (const slug of list) {
+    const wr = windowedRecords(readMetricsRecords(missionsRoot, slug), sinceMs);
+    if (wr.length > 0) hasRecords = true;
+    const rec = reconcileRuns(wr);
+    runs.push(...rec.completed);
+    orphaned += rec.orphaned.length;
+  }
+  if (!hasRecords) return null;
+  return { ...summarizeOutcomes(runs), orphaned };
+}
+
 // ─── render ──────────────────────────────────────────────────────────────────
 
 /** Format a cell: null/NaN → em-dash; integers as-is; floats rounded to 2dp. */
@@ -322,6 +396,12 @@ function fmtCell(n) {
   if (n === null || n === undefined) return "—";
   if (typeof n !== "number" || Number.isNaN(n)) return "—";
   return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
+}
+
+/** Format a 0..1 rate as a percent. Absence → em-dash; a real 0 → `0%`. */
+function fmtPct(n) {
+  if (typeof n !== "number" || Number.isNaN(n)) return "—";
+  return `${Math.round(n * 100)}%`;
 }
 
 function pad(s, w, right) {
@@ -332,11 +412,20 @@ function pad(s, w, right) {
 // Per-project columns only. The coordinator total is factory-global (F4) — it
 // cannot be attributed to a single project, so it is NOT a per-project column;
 // renderTable prints it once as a labeled global line instead.
+// PLAN-TOK is separate from SEAT-TOK on purpose: the comparison these numbers
+// exist to make is strong-planner + cheap-builder vs cheap-alone, and summing
+// them into one cell erases exactly that. NOTE a discontinuity in the series —
+// before 2026-08-28 the drivers recorded an orchestrator seat AS a worker, so
+// older rows carry planner spend inside SEAT-TOK.
 const NUM_COLS = [
   ["MERGED", "merged", 8],
   ["SEAT-TOK", "seatTokens", 12],
+  ["PLAN-TOK", "planTokens", 12],
   ["ATTN", "attention", 8],
   ["ATTN/FEAT", "attentionPerFeature", 10],
+  ["GREEN%", "greenFirstTry", 7, fmtPct],
+  ["NOOP%", "noopRate", 7, fmtPct],
+  ["ORPH", "orphaned", 6],
 ];
 const PROJECT_W = 16;
 
@@ -363,8 +452,19 @@ export function renderTable(report) {
     [pad("PROJECT", PROJECT_W), ...NUM_COLS.map(([h, , w]) => pad(h, w, true))].join(" "),
   );
   for (const row of report.rows) {
-    lines.push([pad(row.project, PROJECT_W), ...NUM_COLS.map(([, k, w]) => pad(fmtCell(row[k]), w, true))].join(" "));
+    lines.push(
+      [
+        pad(row.project, PROJECT_W),
+        ...NUM_COLS.map(([, k, w, fmt]) => pad((fmt ?? fmtCell)(row[k]), w, true)),
+      ].join(" "),
+    );
   }
+  // Printed with the table, not buried in a doc: read alone, ATTN/FEAT rewards
+  // the worst failure mode there is.
+  lines.push(
+    "◆ ATTN/FEAT só é legível ao lado de NOOP% — um worker que trava em silêncio gera zero touchpoints e \"ganha\" a métrica.",
+  );
+  lines.push("◆ ORPH = runs mortos antes do phase_end. Não entram em nenhuma taxa; são o viés otimista de todo o resto.");
   return lines.join("\n");
 }
 
@@ -406,12 +506,16 @@ function parseArgs(argv) {
  */
 function rowForProject({ id, missionsRoot, repoRoot, trunk, sinceMs }) {
   const merged = countMergedMissions({ repoRoot, missionsRoot, trunk, sinceMs });
+  const outcomes = outcomesForProject({ missionsRoot, sinceMs });
   const built = buildKpi({
     project: id,
     merged,
     seatTokens: seatTokensForProject({ missionsRoot, sinceMs }),
+    planTokens: planTokensForProject({ missionsRoot, sinceMs }),
     attention: attentionForProject({ missionsRoot, sinceMs }),
     features: merged, // a merged mission is a delivered feature (B4 denominator)
+    outcomes,
+    orphaned: outcomes ? outcomes.orphaned : null,
   });
   const { coordinatorTokens: _factoryGlobal, ...row } = built;
   return row;
