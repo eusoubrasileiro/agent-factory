@@ -311,6 +311,14 @@ pnpm intake           # local intake editor (loopback, writes the .md + .bak)
 
 ### Vendor limits on the external seat (z.ai coding plan, glm-5.2)
 
+- **The plan covers three models, and GLM-5.3 is not one of them.** z.ai's own docs
+  (`docs.z.ai/devpack/faq`, checked 2026-08-28) state the GLM Coding Plan supports
+  **GLM-5.2, GLM-5-Turbo and GLM-4.7** only. GLM-5.3 shipped 2026-08-18 and is real, but
+  it is **pay-as-you-go**: pointing a seat at it does not fail loudly — it deducts
+  balance and shows up as *"Insufficient Balance"* later. The `glm-5.2` pin in every
+  command here is therefore deliberate, not stale. Re-check the FAQ before changing it;
+  a newer model on the catalogue is not the same fact as a newer model on the plan.
+  (GLM-4.7 is the cheap tier — z.ai recommends it for routine work to conserve quota.)
 - **Max concurrency: 10.** Do not run more than ten `glm-5.2` builder seats at once.
   Past that the provider rejects the extra sessions; the fan-out does not queue for you.
 - **Usage is a 5-hour rolling window, not a credit balance.** When it is exhausted the

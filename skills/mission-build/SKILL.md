@@ -61,9 +61,15 @@ Code pointed at a third-party Anthropic-compatible endpoint (z.ai → GLM, on a 
 subscription). Same spec, same clean-context rules; only the executor changes:
 ```bash
 node scripts/claude-worker.mjs --dir <worktree> --model glm-5.2 \
-  --slug <slug> --project <project> --metric-seat worker --timeout 2700000 \
+  --slug <slug> --project <project> --metric-seat worker --timeout 2700000 --gate \
   --prompt "Read missions/<project>/<slug>/features/NN.md and execute it exactly, TDD, then run the pre-commit gate and commit."
 ```
+**Keep `--gate`.** It runs the project's deterministic gate after the seat finishes and
+records the verdict against this run's id. It **reports, it does not block** — the seat's
+exit code is unchanged (use `--gate-strict` only in a script that must stop, exit `4`).
+Drop the flag and the run is classified `unmeasured`: it still costs tokens, but it
+cannot tell you whether it *worked*, and `GREEN%` in `pnpm kpi` stays `—` forever. A run
+dispatched without it is spend without evidence.
 The seat is **caged**: a fresh `settings.external.json` is rendered from the project
 profile at every spawn, and the driver refuses to run without it. It also refuses to
 run against `anthropic.com` — that would silently bill real money for a seat that
@@ -87,8 +93,11 @@ instead of the flat z.ai plan, so you must say so out loud:
 
 ```bash
 node scripts/claude-worker.mjs --dir <worktree> --model sonnet \
-  --slug <slug> --project <project> --allow-anthropic --timeout 2700000 --prompt "..."
+  --slug <slug> --project <project> --allow-anthropic --timeout 2700000 --gate --prompt "..."
 ```
+`--gate` for the same reason as above — and it matters *more* here, because comparing a
+Sonnet seat against a GLM seat on tokens alone compares what they spent, not what they
+delivered.
 
 Without `--allow-anthropic` the driver refuses, because a missing `ANTHROPIC_BASE_URL`
 silently falls back to Anthropic — and a seat that was supposed to be flat-rate would
