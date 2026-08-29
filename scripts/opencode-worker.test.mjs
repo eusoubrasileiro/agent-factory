@@ -165,10 +165,16 @@ test("parseArgs: --gate and --gate-strict are accepted, not treated as unknown f
   assert.equal(opts.gateStrict, true);
 });
 
-test("parseArgs: the gate is OFF unless asked for", () => {
+test("parseArgs: no gate flag leaves the decision to the profile (null, not false)", () => {
   const opts = parseArgs(["node", "s", "--dir", "/w", "--model", "p/m", "--prompt", "p"]);
-  assert.equal(opts.gate, false);
+  assert.equal(opts.gate, null, "absent flag must be null — false would mean 'the operator said off'");
   assert.equal(opts.gateStrict, false);
+});
+
+test("parseArgs: --no-gate is the explicit opt-out, distinct from an absent flag", () => {
+  const opts = parseArgs(["node", "s", "--dir", "/w", "--model", "p/m", "--prompt", "p", "--no-gate"]);
+  assert.ok(!opts._bad, "--no-gate must be a known flag");
+  assert.equal(opts.gate, false);
 });
 
 test("parseArgs: --gate-strict implies --gate — strict without the gate would enforce an unmeasured verdict", () => {

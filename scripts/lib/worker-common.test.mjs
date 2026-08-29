@@ -31,6 +31,7 @@ import {
   applyGateExitCode,
   completeRun,
   gateSummaryLabel,
+  resolveGateEnabled,
   mintRunId,
   runGateSubprocess,
   SPAWN_ENV_ALLOWLIST,
@@ -854,4 +855,32 @@ test("killGracefully: graceMs<=0 reports escalated even when the child dies inst
   } finally {
     hardKill(child);
   }
+});
+
+// ─── resolveGateEnabled: who decides whether the gate runs ───────────────────
+// Three-valued on purpose. `false` and "the operator said nothing" are different
+// facts: collapsing them is what made the gate opt-in, which made every run
+// `unmeasured` and GREEN% a permanent `—` (D-61).
+
+test("resolveGateEnabled: an explicit --gate wins over any profile default", () => {
+  assert.equal(resolveGateEnabled(true, false), true);
+  assert.equal(resolveGateEnabled(true, true), true);
+});
+
+test("resolveGateEnabled: an explicit --no-gate wins over any profile default", () => {
+  assert.equal(resolveGateEnabled(false, true), false);
+  assert.equal(resolveGateEnabled(false, false), false);
+});
+
+test("resolveGateEnabled: no flag defers to the profile", () => {
+  assert.equal(resolveGateEnabled(null, true), true);
+  assert.equal(resolveGateEnabled(null, false), false);
+});
+
+test("resolveGateEnabled: an unknown profile default is ON, never OFF", () => {
+  // A profile that failed to load must not silently disable measurement — that
+  // failure mode is invisible, and it is the one this whole change removes.
+  assert.equal(resolveGateEnabled(null, undefined), true);
+  assert.equal(resolveGateEnabled(undefined, undefined), true);
+  assert.equal(resolveGateEnabled(null, "yes"), true);
 });
