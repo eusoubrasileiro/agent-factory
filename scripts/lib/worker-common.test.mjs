@@ -805,3 +805,32 @@ test("applyGateExitCode: an already-failing run keeps its own code — the seat'
     assert.equal(applyGateExitCode(base, { passed: false }, true), base);
   }
 });
+
+// ─── the seat a run is recorded under ────────────────────────────────────────
+//
+// `metricSeat` used to be `seat === "validator" ? "validator" : "worker"`, so a
+// planning seat dispatched with --metric-seat orchestrator was recorded as a
+// WORKER. That is not cosmetic: the whole point of this instrument is
+// cost-per-delivered-feature, and the planner is the expensive half of every
+// mission. Attributing its tokens to the builder inflates builder cost and
+// hides planner cost in exactly the comparison (strong-plan + cheap-build vs
+// cheap-alone) the numbers exist to make.
+
+test("buildPhaseStartEvent: an orchestrator seat is recorded as orchestrator, not collapsed to worker", () => {
+  assert.equal(buildPhaseStartEvent("orchestrator", "m").seat, "orchestrator");
+  assert.equal(buildPhaseEndEvent("orchestrator", "m", {}).seat, "orchestrator");
+});
+
+test("buildPhaseStartEvent: worker and validator are unchanged", () => {
+  assert.equal(buildPhaseStartEvent("worker", "m").seat, "worker");
+  assert.equal(buildPhaseStartEvent("validator", "m").seat, "validator");
+});
+
+test("buildPhaseStartEvent: an unknown seat still degrades to worker, never to an invalid one", () => {
+  // metrics.mjs rejects any seat outside its own set, and a rejected event is a
+  // run that vanishes entirely. Degrading to `worker` keeps it in the ledger,
+  // mis-attributed but visible — the lesser of the two failures.
+  for (const seat of ["reviewer", "", undefined, null, 7]) {
+    assert.equal(buildPhaseStartEvent(seat, "m").seat, "worker");
+  }
+});

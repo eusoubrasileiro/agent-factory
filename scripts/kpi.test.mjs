@@ -27,6 +27,7 @@ import {
   coordinatorTokensForFactory,
   attentionForProject,
   listDossierSlugs,
+  outcomesForProject,
   renderTable,
 } from "./kpi.mjs";
 
@@ -343,7 +344,12 @@ test("renderTable: null cells render —, numbers render plainly", () => {
   const report = {
     windowDays: 30,
     rows: [
-      buildKpi({ project: "alpha", merged: 2, seatTokens: 1000, coordinatorTokens: 500, attention: 6, features: 2 }),
+      buildKpi({
+        project: "alpha", merged: 2, seatTokens: 1000, planTokens: 400,
+        coordinatorTokens: 500, attention: 6, features: 2,
+        outcomes: { counts: { delivered: 3, broken: 1, noop: 0, quarantined: 0, unmeasured: 0, "not-applicable": 0 }, scored: 4, greenFirstTry: 0.75, noopRate: 0 },
+        orphaned: 0,
+      }),
       buildKpi({ project: "beta", merged: null, seatTokens: null, coordinatorTokens: null, attention: null, features: null }),
     ],
   };
@@ -497,7 +503,172 @@ test("CLI --json wires git + metrics + transcript into one honest row (B1-B6)", 
 });
 
 test("module exports the expected surface", () => {
-  for (const fn of [buildKpi, countMergedMissions, seatTokensForProject, coordinatorTokensForFactory, attentionForProject, listDossierSlugs, renderTable]) {
+  for (const fn of [buildKpi, countMergedMissions, seatTokensForProject, coordinatorTokensForFactory, attentionForProject, listDossierSlugs, outcomesForProject, renderTable]) {
     assert.equal(typeof fn, "function");
   }
+});
+
+// ─── outcomes: did the runs WORK, not just what did they cost ────────────────
+//
+// Until now every KPI here measured spend and attention. A silently hung worker
+// produced zero touchpoints and therefore SCORED BETTER on attention-per-feature
+// than a model that asked one good question. GREEN% and NOOP% are what make that
+// visible; ATTN/FEAT must never be read without them.
+
+const startEv = (runId, ts, seat = "worker") => ({ type: "phase_start", seat, model: "m", runId, ts });
+const endEv = (runId, ts, filesChanged, seat = "worker") => ({
+  type: "phase_end", seat, model: "m", runId, ts, filesChanged, tokens: 10,
+});
+const gateEv = (runId, passed, ts, extra = {}) => ({
+  type: "gate_result", seat: "worker", runId, passed, ts, ...extra,
+});
+
+test("outcomesForProject: green-first-try over a project's missions", () => {
+  const root = tmpMissionsRoot();
+  writeMetrics(root, "m1", [
+    startEv("a", "2026-08-28T10:00:00.000Z"),
+    endEv("a", "2026-08-28T10:00:10.000Z", 3),
+    gateEv("a", true, "2026-08-28T10:00:20.000Z"),
+  ]);
+  writeMetrics(root, "m2", [
+    startEv("b", "2026-08-28T11:00:00.000Z"),
+    endEv("b", "2026-08-28T11:00:10.000Z", 2),
+    gateEv("b", false, "2026-08-28T11:00:20.000Z"),
+  ]);
+  try {
+    const o = outcomesForProject({ missionsRoot: root });
+    assert.equal(o.counts.delivered, 1);
+    assert.equal(o.counts.broken, 1);
+    assert.equal(o.greenFirstTry, 0.5);
+    assert.equal(o.orphaned, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("outcomesForProject: a run killed before phase_end is counted as orphaned, not vanished", () => {
+  // Every existing factory metric is optimistically biased because the runs
+  // that crashed are exactly the ones missing from phase_end aggregates.
+  const root = tmpMissionsRoot();
+  writeMetrics(root, "m1", [startEv("a", "2026-08-28T10:00:00.000Z")]);
+  try {
+    const o = outcomesForProject({ missionsRoot: root });
+    assert.equal(o.orphaned, 1);
+    assert.equal(o.scored, 0);
+    assert.equal(o.greenFirstTry, null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("outcomesForProject: an orchestrator run never lands in the green-first-try denominator", () => {
+  // Measured live: a planning seat emits its plan as a final message and touches
+  // zero files. Correct behaviour — but scored as a noop it would drag the
+  // builder's number down with a run that was never meant to write code.
+  const root = tmpMissionsRoot();
+  writeMetrics(root, "m1", [
+    startEv("p", "2026-08-28T10:00:00.000Z", "orchestrator"),
+    endEv("p", "2026-08-28T10:05:00.000Z", 0, "orchestrator"),
+    startEv("b", "2026-08-28T11:00:00.000Z"),
+    endEv("b", "2026-08-28T11:00:10.000Z", 2),
+    gateEv("b", true, "2026-08-28T11:00:20.000Z"),
+  ]);
+  try {
+    const o = outcomesForProject({ missionsRoot: root });
+    assert.equal(o.counts["not-applicable"], 1);
+    assert.equal(o.counts.noop, 0);
+    assert.equal(o.scored, 1);
+    assert.equal(o.greenFirstTry, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("outcomesForProject: no metrics at all → null, not a 100% green report", () => {
+  const root = tmpMissionsRoot(["empty"]);
+  try {
+    assert.equal(outcomesForProject({ missionsRoot: root }), null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("outcomesForProject: windowed by event ts like every other KPI here", () => {
+  const root = tmpMissionsRoot();
+  writeMetrics(root, "m1", [
+    startEv("old", "2020-01-01T00:00:00.000Z"),
+    endEv("old", "2020-01-01T00:00:10.000Z", 5),
+    gateEv("old", true, "2020-01-01T00:00:20.000Z"),
+  ]);
+  try {
+    // Everything falls outside the window, so the project has no records IN it
+    // — absence, the same answer attentionForProject gives. Not a 0% green rate.
+    assert.equal(outcomesForProject({ missionsRoot: root, sinceMs: Date.parse("2026-01-01T00:00:00.000Z") }), null);
+    assert.equal(outcomesForProject({ missionsRoot: root }).scored, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ─── buildKpi carries the outcome numbers ────────────────────────────────────
+
+test("buildKpi: green-first-try and noop-rate come straight from the outcome summary", () => {
+  const row = buildKpi({
+    project: "alpha",
+    outcomes: { counts: { delivered: 3, broken: 1, noop: 0, quarantined: 0, unmeasured: 2, "not-applicable": 1 }, scored: 4, greenFirstTry: 0.75, noopRate: 0 },
+    orphaned: 2,
+  });
+  assert.equal(row.greenFirstTry, 0.75);
+  assert.equal(row.noopRate, 0);
+  assert.equal(row.orphaned, 2);
+  assert.equal(row.outcomes.counts.unmeasured, 2);
+});
+
+test("buildKpi: absent outcomes leave every derived cell null — never a 0% green rate", () => {
+  const row = buildKpi({ project: "alpha" });
+  assert.equal(row.greenFirstTry, null);
+  assert.equal(row.noopRate, null);
+  assert.equal(row.orphaned, null);
+  assert.equal(row.outcomes, null);
+});
+
+test("buildKpi: planner tokens are a separate cell, not folded into seat tokens", () => {
+  // The comparison these numbers exist to make is strong-planner + cheap-builder
+  // vs cheap-alone. Summing them into one cell erases it.
+  const row = buildKpi({ project: "alpha", seatTokens: 1000, planTokens: 900 });
+  assert.equal(row.seatTokens, 1000);
+  assert.equal(row.planTokens, 900);
+});
+
+// ─── render ──────────────────────────────────────────────────────────────────
+
+test("renderTable: rates render as percents, and an unmeasured rate renders — not 0%", () => {
+  const out = renderTable({
+    rows: [
+      buildKpi({ project: "alpha", outcomes: { counts: {}, scored: 4, greenFirstTry: 0.75, noopRate: 0.25 }, orphaned: 1 }),
+      buildKpi({ project: "beta" }),
+    ],
+  });
+  assert.match(out, /GREEN%/);
+  assert.match(out, /NOOP%/);
+  assert.match(out, /75%/);
+  assert.match(out, /25%/);
+  const betaLine = out.split("\n").find((l) => l.startsWith("beta"));
+  assert.ok(!betaLine.includes("0%"), "an unmeasured rate must not render as 0%");
+});
+
+test("renderTable: a real 0% green rate renders as 0%, not —", () => {
+  // Absence and total failure are different facts and the table must say which.
+  const out = renderTable({
+    rows: [buildKpi({ project: "alpha", outcomes: { counts: {}, scored: 3, greenFirstTry: 0, noopRate: 1 }, orphaned: 0 })],
+  });
+  const line = out.split("\n").find((l) => l.startsWith("alpha"));
+  assert.match(line, /0%/);
+  assert.match(line, /100%/);
+});
+
+test("renderTable: ORPH is a column, so runs that died before phase_end are on the report", () => {
+  const out = renderTable({ rows: [buildKpi({ project: "alpha", orphaned: 3 })] });
+  assert.match(out, /ORPH/);
+  assert.match(out.split("\n").find((l) => l.startsWith("alpha")), /3/);
 });
