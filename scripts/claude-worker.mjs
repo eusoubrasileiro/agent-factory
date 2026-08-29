@@ -2,7 +2,7 @@
 /**
  * claude-worker.mjs — the CAGED external builder seat (Claude Code → z.ai/GLM).
  *
- * This is the seat the plan always called for (`docs/glm-cage-briefing.md` §3,
+ * This is the seat the plan always called for (`docs/_archive/glm-cage-briefing.md` §3,
  * "Claude Code as the caged seat"), and the reason is empirical, not aesthetic:
  *
  *   - Claude Code's `permissions.deny` on a Critical File is a **proven** boundary

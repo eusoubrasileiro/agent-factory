@@ -1,6 +1,6 @@
 /**
  * Meta-test: every mission skill COMMANDS its telemetry emitter at its gate
- * moment (Plan A F4 — docs/plan-A-ship-truth-2026-07-11.md:120).
+ * moment (Plan A F4 — docs/_archive/plan-A-ship-truth-2026-07-11.md:120).
  *
  * History: the skills used to narrate telemetry in an advisory "Rules" bullet
  * and never command the call at the step where the gate happens; measured

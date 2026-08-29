@@ -3,9 +3,9 @@
 AmiticIA's software factory — the AI-agent mission engine (plan → build →
 validate → ratify) plus the live board that publishes to `factory.example.com`.
 
-> **▶ Next up:** [`RESUME-MORNING.md`](RESUME-MORNING.md) — three ratified,
-> execution-ready plans for Opus coordinators (ship-truth, board-legibility,
-> validation-bundle). Morning priority.
+> **▶ Start here:** [`RUNBOOK.md`](RUNBOOK.md) to operate it,
+> [`constitution.md`](constitution.md) for the rules every seat obeys,
+> [`decisions.md`](decisions.md) for why anything is the way it is.
 
 > **Provenance.** Extracted from `AmiticIA-AutoSys/wahub` @ `97eaa40` on
 > 2026-07-08 (plan: *Factory v2.1 — Factory Extraction*, Workstream 0/2). Fresh
