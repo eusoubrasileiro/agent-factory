@@ -834,3 +834,24 @@ test("buildPhaseStartEvent: an unknown seat still degrades to worker, never to a
     assert.equal(buildPhaseStartEvent(seat, "m").seat, "worker");
   }
 });
+
+test("killGracefully: graceMs<=0 reports escalated even when the child dies instantly", async () => {
+  // The graceMs<=0 path sends SIGKILL UNCONDITIONALLY — there is no grace window
+  // for the child to exit politely inside. So `escalated` is a statement about
+  // what we did, not about how fast the child happened to die, and the child's
+  // exit event must not be able to race in and report otherwise.
+  //
+  // Before the fix this was a live race: under CPU contention the exit event
+  // landed before the 0ms escalation timer and the call returned
+  // escalated:false. It surfaced as a ~1-in-6 flake in the whole-suite run.
+  const child = spawnPolite();
+  try {
+    await whenReady(child);
+    const { escalated } = await killGracefully(child, { graceMs: 0 });
+    assert.equal(escalated, true, "SIGKILL was sent, so the kill was an escalation");
+    await whenExited(child);
+    assert.equal(isAlive(child.pid), false);
+  } finally {
+    hardKill(child);
+  }
+});
