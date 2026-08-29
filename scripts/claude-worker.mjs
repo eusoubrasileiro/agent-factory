@@ -274,9 +274,9 @@ const ANTHROPIC_ALIASES = new Set(["sonnet", "opus", "haiku"]);
 /**
  * Feature 02 — the alias trap. `--model sonnet|opus|haiku` is an ALIAS the CLI
  * resolves through `ANTHROPIC_DEFAULT_<TIER>_MODEL`. On a z.ai base URL that env
- * points the alias at `glm-5.2`, so the seat runs GLM while the operator believes
+ * points the alias at `glm-5.3`, so the seat runs GLM while the operator believes
  * they ran Sonnet. Refuse before spawn when an alias meets a non-Anthropic endpoint;
- * a full model id (`claude-sonnet-5`, `glm-5.2`) is unambiguous and always allowed.
+ * a full model id (`claude-sonnet-5`, `glm-5.3`) is unambiguous and always allowed.
  * @param {string} model @param {Record<string,string>} creds
  */
 export function assertNoAliasTrap(model, creds) {
@@ -293,7 +293,7 @@ export function assertNoAliasTrap(model, creds) {
   throw new Error(
     `refusing to spawn: --model "${model}" is an Anthropic alias but ANTHROPIC_BASE_URL is ${host} ` +
       `(non-Anthropic). The alias resolves through ANTHROPIC_DEFAULT_${model.toUpperCase()}_MODEL, which ` +
-      `z.ai maps to glm-5.2 — you would run GLM believing you ran ${model}. Pass a full model id ` +
+      `z.ai maps to glm-5.3 — you would run GLM believing you ran ${model}. Pass a full model id ` +
       `(e.g. claude-sonnet-5) instead.`,
   );
 }
