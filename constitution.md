@@ -56,6 +56,28 @@ first-try-perfect 28%→89%; an added testing tool cost +42-68% for zero gain).
 > live product). It is **not ground truth**; do not read it. Restore from git if a
 > specific rationale is ever needed.
 
+## Doc law (what may exist)
+
+Doc sprawl is a **correctness** problem, not tidiness: a stale spec reads as
+authoritative to the next agent and corrupts the code it drives. Four rules, and
+`scripts/docs-law.test.mjs` enforces them so they cannot rot back.
+
+1. **Four authorities about the engine, named.** [`RUNBOOK.md`](./RUNBOOK.md) — how to
+   operate it. This file — the law every seat obeys. [`decisions.md`](./decisions.md) —
+   why anything is the way it is. `docs/harness-review.md` — the architecture. Nothing
+   else in this repo is authoritative about the engine. A `docs/` file that is neither
+   an authority nor a live citation does not belong in `docs/`.
+2. **Before proposing a new `.md`, the answer is almost always a `decisions.md` line or
+   a mission dossier.** New root-level docs are the sprawl; a decision is one appended
+   line, and per-mission truth already has a home under `missions/<project>/<slug>/`.
+3. **A plan dies when it ships.** On execution it moves to `docs/_archive/` and its
+   durable outcome becomes a `decisions.md` line. Live surfaces (RUNBOOK, README, this
+   file, `skills/**`, `templates/**`, `projects/**`) never cite `_archive/`; a
+   provenance comment in code or a test may, because it records history rather than
+   instructing a seat.
+4. **`missions/**` is not creep.** Those dossiers are the per-mission record, scoped by
+   design and read only by the seat they belong to. This law does not touch them.
+
 ## Provider-agnostic invariant
 
 Every artifact here is a plain file or markdown skill (the `mission-*` skills,
