@@ -1,24 +1,33 @@
 # Factory Scrumban Board — static-site container
 #
-# Serves the rendered HTML from deploy/factory-board/public/ over nginx:alpine,
-# fronted by the shared Traefik proxy with HTTPS (ACME via Cloudflare DNS-only)
-# and HTTP Basic Auth (three users: andre, tenant-a, operator).
+# Deploys from /opt/app/factory/deploy/, which is a checkout of this repo.
+# Serves the rendered board over nginx:alpine, fronted by the shared Traefik
+# proxy with HTTPS (ACME via Cloudflare DNS-only) and HTTP Basic Auth.
 #
-# Recurring publish does NOT restart this container: the bind mount at
-# /usr/share/nginx/html picks up new files written by `pnpm board:publish`
-# (rsync over ssh to /opt/app/factory/public/scrumban/, which is symlinked
-# or bind-mounted to ./public on the VPS — see DEPLOY-VPS.md).
-#
-# NEVER commit a real htpasswd hash. FACTORY_BASICAUTH is interpolated from
-# /opt/app/factory/.env (gitignored). Traefik requires each `$` in the
-# htpasswd output to be doubled (`$$`) because Compose performs its own
-# variable interpolation first.
+# `name:` is load-bearing. Compose derives the project name from the directory
+# holding this file, so without the pin the project would be called `deploy`.
+# It must keep matching the name the running container already carries.
+name: factory
+
 services:
   factory-board:
     image: nginx:alpine
     restart: unless-stopped
     volumes:
-      - ./public:/usr/share/nginx/html:ro
+      # `../public`, NOT `./public`. This file lives in deploy/, so a bare
+      # `./public` resolves to deploy/public — a directory nothing writes. nginx
+      # would start perfectly healthy and serve 404s at every path.
+      #
+      # The publish funnel (scripts/board-autopublish.mjs) rsyncs to
+      # deploy-host:/opt/app/factory/public/ — that path is its hardcoded
+      # DEFAULT_REMOTE_DIR and its tests assert it. Since the checkout root IS
+      # /opt/app/factory, `../public` resolves to exactly that target, and
+      # the publisher needs no change.
+      #
+      # Recurring publish does NOT restart this container: the bind mount picks
+      # up whatever rsync writes. public/ is gitignored — it is published output,
+      # not source, and a `git clean -fd` here would erase the live board.
+      - ../public:/usr/share/nginx/html:ro
     networks:
       - network_public
     labels:
