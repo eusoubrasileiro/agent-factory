@@ -40,3 +40,8 @@ missions/**/screenshots/
 **/screenshots/
 **/.playwright-mcp/
 test-results/
+
+# Published board output — rsynced here by board-autopublish.mjs on the VPS
+# (/opt/app/factory/public/). Live data, not source: a `git clean -fd` in
+# the deploy checkout would erase the running board.
+/public/
