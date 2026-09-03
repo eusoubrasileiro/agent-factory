@@ -1,0 +1,36 @@
+{
+  "_comment": "Restriction policy for Claude Code agents. 'ask' = human approval required. There is deliberately NO 'allow' list: tool grants live once in standards/claude-config/settings.json as bare tool names, rules from all scopes merge and evaluate deny -> ask -> allow, so a project 'allow' can never widen anything and only rots. See standards.md#permissions.",
+  "_comment_factory": "The ask tier mirrors projects/factory/critical-files.json, which is also what the cage renders into Edit/Write deny rules for an external seat. Keep the two in step: a path that is critical enough to deny a caged worker is critical enough to ask a local one.",
+  "permissions": {
+    "ask": [
+      "Edit(.husky/**)",
+      "Write(.husky/**)",
+      "Edit(.claude/settings.json)",
+      "Write(.claude/settings.json)",
+      "Edit(commitlint.config.cjs)",
+      "Write(commitlint.config.cjs)",
+      "Edit(scripts/security-review.mjs)",
+      "Write(scripts/security-review.mjs)",
+      "Edit(scripts/verdict.mjs)",
+      "Write(scripts/verdict.mjs)",
+      "Edit(scripts/ratify.mjs)",
+      "Write(scripts/ratify.mjs)",
+      "Edit(scripts/metrics.mjs)",
+      "Write(scripts/metrics.mjs)",
+      "Edit(scripts/cage-settings.mjs)",
+      "Write(scripts/cage-settings.mjs)",
+      "Edit(scripts/gate.mjs)",
+      "Write(scripts/gate.mjs)",
+      "Edit(scripts/lib/project.mjs)",
+      "Write(scripts/lib/project.mjs)",
+      "Edit(templates/**)",
+      "Write(templates/**)",
+      "Edit(projects/**)",
+      "Write(projects/**)",
+      "Edit(constitution.md)",
+      "Write(constitution.md)",
+      "Edit(decisions.md)",
+      "Write(decisions.md)"
+    ]
+  }
+}

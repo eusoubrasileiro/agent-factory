@@ -1,0 +1,49 @@
+#!/usr/bin/env sh
+# Heavy gate. Runs once before `git push` -- the full safety net before the
+# branch leaves the machine. Four stages: the deterministic suite, the reviewer
+# log for the pushed range, and the LLM reviewer itself.
+set -e
+
+# Read all pushed refs from stdin (can only be read once).
+# Each line: <local_ref> <local_sha> <remote_ref> <remote_sha>
+# A deletion is signaled by local_sha == 0000000000000000000000000000000000000000.
+stdin_data="$(cat)"
+
+zero_sha="0000000000000000000000000000000000000000"
+has_real_push=0
+PUSH_LOCAL_SHA=""
+PUSH_REMOTE_SHA=""
+PUSH_REMOTE_REF=""
+
+if [ -n "$stdin_data" ]; then
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    local_sha="$(printf '%s' "$line" | awk '{print $2}')"
+    if [ "$local_sha" != "$zero_sha" ]; then
+      has_real_push=1
+      PUSH_LOCAL_SHA="$local_sha"
+      PUSH_REMOTE_REF="$(printf '%s' "$line" | awk '{print $3}')"
+      PUSH_REMOTE_SHA="$(printf '%s' "$line" | awk '{print $4}')"
+      break
+    fi
+  done <<INNER
+$stdin_data
+INNER
+fi
+
+if [ "$has_real_push" -eq 0 ]; then
+  echo "[pre-push] delete-only push, skipping heavy gate"
+  exit 0
+fi
+
+export PUSH_LOCAL_SHA PUSH_REMOTE_SHA PUSH_REMOTE_REF
+
+pnpm test
+
+echo ""
+echo "=== Security review log (commits being pushed) ==="
+node scripts/show-review-log.mjs
+echo "==================================================="
+echo "Inspect above. Ctrl+C to abort if anything looks wrong."
+
+node scripts/security-review.mjs

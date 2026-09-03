@@ -8,7 +8,7 @@
  *      Provably no network: we never invoke ssh/rsync, only echo.
  *   2. `board-publish.sh` preflight — `dist/factory-board/index.html` missing →
  *      exit 1 with a hint, before any rsync is constructed.
- *   3. `deploy/factory-board/docker-compose.yml` — `docker compose config`
+ *   3. `deploy/docker-compose.yaml` — `docker compose config`
  *      validates the file parses with `FACTORY_BASICAUTH=dummy`. Skipped with a
  *      note when docker is unavailable (the validator machine has it).
  *
@@ -28,7 +28,7 @@ import { fileURLToPath } from "node:url";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, "..");
 const BOARD_PUBLISH_SH = path.join(HERE, "board-publish.sh");
-const COMPOSE_FILE = path.join(REPO_ROOT, "deploy", "docker-compose.yml");
+const COMPOSE_FILE = path.join(REPO_ROOT, "deploy", "docker-compose.yaml");
 
 function makeTmpRoot(prefix) {
   return mkdtempSync(path.join(tmpdir(), prefix));
@@ -138,7 +138,7 @@ test("preflight: a directory in place of index.html is not a false positive", ()
   }
 });
 
-// ─── 3. docker-compose.yml parses with a dummy FACTORY_BASICAUTH ────────────
+// ─── 3. docker-compose.yaml parses with a dummy FACTORY_BASICAUTH ────────────
 
 /**
  * Detect whether the `docker` CLI is available AND the compose plugin works.
@@ -156,7 +156,7 @@ function dockerComposeAvailable() {
   return probe2.status === 0 ? "docker-compose" : null;
 }
 
-test("compose file: exists at deploy/docker-compose.yml", () => {
+test("compose file: exists at deploy/docker-compose.yaml", () => {
   assert.ok(existsSync(COMPOSE_FILE), `compose file present at ${COMPOSE_FILE}`);
 });
 
