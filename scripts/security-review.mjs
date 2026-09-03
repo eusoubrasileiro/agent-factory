@@ -134,8 +134,9 @@ function loadLinkedIssueBodies(prBody) {
   const re = /\b(fixes|closes|resolves)\s+#(\d+)/gi;
   const seen = new Set();
   const sections = [];
-  let m;
-  while ((m = re.exec(prBody)) !== null) {
+  // matchAll rather than a while-loop assignment: an assignment inside a loop
+  // condition reads as a typo and biome rejects it (noAssignInExpressions).
+  for (const m of prBody.matchAll(re)) {
     const n = m[2];
     if (seen.has(n)) continue;
     seen.add(n);
@@ -504,7 +505,11 @@ function main() {
     process.exit(1);
   }
 
-  const entry = {
+  // `let`, not `const`: applyFixRoundBound below REASSIGNS this. The template
+  // carried `const` while the live copy it was mirrored from used `let`, so the
+  // escalation path threw TypeError the moment a third consecutive reject
+  // reached it -- a rare path, which is why it went unnoticed.
+  let entry = {
     ts: new Date().toISOString(),
     branch,
     commit: "(staged)",
