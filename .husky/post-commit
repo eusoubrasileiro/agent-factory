@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+# Backfills the most recent "(staged)" review-log entry with the actual
+# commit hash so show-review-log.mjs can correlate by hash on push.
+node scripts/backfill-review-log-commit.mjs 2>/dev/null || true
+node scripts/print-quality-delta.mjs 2>/dev/null || true

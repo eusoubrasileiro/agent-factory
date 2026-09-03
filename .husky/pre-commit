@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+# Fast gate (~15s). The engine has no TypeScript and no linter: its entire
+# deterministic gate is `node --test` over scripts/, scripts/lib/ and
+# projects/ -- 1088 tests, including the profile conformance suite that fails
+# the build if a product literal ever reaches engine code (D-15).
+#
+# The LLM reviewer runs on pre-push only, not here. standards.md#dev-model
+# allows "at minimum pre-push", and a model call would push this gate past the
+# ~30s ceiling that keeps the inner loop interactive (#dual-gate).
+pnpm test

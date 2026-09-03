@@ -15,12 +15,16 @@
     "mission:ratify": "node scripts/ratify.mjs",
     "factory:opencode": "node scripts/opencode-worker.mjs",
     "spend": "node scripts/spend.mjs",
-    "kpi": "node scripts/kpi.mjs"
+    "kpi": "node scripts/kpi.mjs",
+    "prepare": "husky"
   },
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
-    "backlog.md": "^1.47.1"
+    "@commitlint/cli": "^21.2.2",
+    "@commitlint/config-conventional": "^21.2.2",
+    "backlog.md": "^1.47.1",
+    "husky": "^9.1.7"
   }
 }
