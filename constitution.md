@@ -46,7 +46,7 @@ first-try-perfect 28%→89%; an added testing tool cost +42-68% for zero gain).
 | Altitude | Question | File | Precision |
 |---|---|---|---|
 | **Product** | how the product works / what it does | the profile's `prd` (`projects/<project>/project.json → prd`) | loose, careful — behavior not implementation |
-| **Glossary** | what our words mean | per-project `CONTEXT.md` (optional; absent for the engine) | precise terms only |
+| **Glossary** | what our words mean | a vocabulary section inside the profile's `prd` — never its own file | precise terms only |
 | **Decisions** | why we picked X over Y | [`decisions.md`](./decisions.md) | one append-only line each |
 | **Contract** | how we prove a feature is done | `missions/<project>/<slug>/contract.md` | maximally precise — testable assertions |
 | **Worker knowledge** | how we build here | the `mission-*` skills + this constitution | imperative playbooks |
