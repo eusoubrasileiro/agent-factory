@@ -56,14 +56,7 @@ node scripts/claude-worker.mjs --dir <worktree> --model claude-sonnet-5 \
 that fallback rather than a stale z.ai base URL. Set `FACTORY_WORKTREE_MARKER` if the
 worktree layout isn't the default.)
 
-**Fallback — opencode/z.ai (only while a flat-rate plan is live):**
-```bash
-pnpm factory:opencode --dir <worktree> --model zai-coding-plan/glm-5.3 \
-  --slug <slug> --metric-seat validator \
-  --prompt "<same held-out validator prompt as above>"
-```
-opencode's containment is unproven (D-17), so prefer the caged `claude-worker` seat;
-reach for opencode only to save tokens against a live z.ai plan.
+There is no other external driver: the opencode fallback was retired (D-63).
 **A weaker validator model must not be trusted blind:** the orchestrator
 independently re-runs the deterministic gate and confirms the one non-negotiable
 invariant of the mission itself before accepting the verdict. The `verdict.mjs`

@@ -170,7 +170,7 @@ To verify the viability of the software factory, telemetry is collected througho
 * **`gate_result`**: The deterministic gate's verdict on the tree a run left behind — emitted by the gate runner *after* `phase_end`, as its own event so gate wall-time never contaminates the seat's `durationMs`.
 * **`false_idle`**: Recorded when an idle alarm turns out to be a false positive.
 * **`worker_death`**: Recorded if an agent process terminates unexpectedly.
-* Logged entries include **tokens consumed** and **USD cost** (integrated with `opencode-worker.mjs` for external seats like GLM-5.2).
+* Logged entries include **tokens consumed** and **USD cost** (integrated with `claude-worker.mjs` for external seats like GLM).
 
 ### Cost is not outcome
 
