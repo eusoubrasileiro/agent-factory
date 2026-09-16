@@ -82,8 +82,8 @@ the validated diff. The machine owns the middle.
 
 The default external seat is **Claude Code pointed at z.ai** (`claude-worker.mjs`). Same
 flat z.ai plan, zero Anthropic tokens, and its Critical-File deny is the one we have
-actually proven (cage-research M1). `opencode-worker.mjs` is the fallback for providers
-with no Anthropic-compatible endpoint.
+actually proven (cage-research M1). It is the only external seat: the opencode
+fallback was retired 2026-09-15 (D-63).
 
 ```bash
 node scripts/claude-worker.mjs --dir <worktree> --model glm-5.3 \
@@ -327,10 +327,9 @@ pnpm intake           # local intake editor (loopback, writes the .md + .bak)
   API answers `429 rate_limit_error` (z.ai `code 1308`) with the exact reset timestamp —
   e.g. *"Usage limit reached for 5 hour. Your limit will reset at 2026-07-10 03:55:20"*.
   Your credit is fine; you are early.
-- **The failure is silent in `opencode`.** It hangs with zero bytes on stdout AND stderr
-  until the timeout kills it — a 30-minute no-op that looks like a slow build. `claude -p`
-  only reveals it with `--print-logs`. If a builder produces nothing, check the limit
-  before you debug anything else:
+- **The failure is quiet.** `claude -p` only reveals it with `--print-logs`; without
+  them a spent window looks like a slow build. If a builder produces nothing, check the
+  limit before you debug anything else:
 
 ```bash
 # Is z.ai answering? 200 = fine. 429 = rate-limited, and the body names the reset time.
@@ -364,18 +363,14 @@ than two. Sizing a fan-out is a spend decision, not a throughput one.
 - **Validator** = fresh `claude -p`. Never saw the code.
 
 ### External agent seat (optional — save Anthropic tokens)
-A worker or validator MAY run on an **external agent** via opencode (e.g. GLM 5.3
-on a z.ai subscription plan) instead of a Claude seat:
-```bash
-pnpm factory:opencode --dir .claude/worktrees/<slug> --model zai-coding-plan/glm-5.3 \
-  --slug <slug> --metric-seat worker|validator --prompt "<the seat's instruction>"
-```
-It is **still governed by the harness**: `opencode-worker.mjs` confines the agent
-to a dispatched worktree (refuses any other `--dir` without `--allow-any-dir`),
-logs its tokens/cost to `metrics.jsonl`, and — crucially — its output only counts
-once the same deterministic gate + `verdict.mjs` schema pass, which the
-orchestrator re-runs itself. Opt-in; the default Claude seats are unchanged. Full
-recipes in the `mission-build` / `mission-validate` skills.
+A worker or validator MAY run on **Claude Code pointed at z.ai** (GLM 5.3 on the flat
+plan) instead of an Anthropic seat — `claude-worker.mjs`, recipe under "The external
+seat and its cage" above. It is **still governed by the harness**: confined to a
+dispatched worktree, caged, its tokens/cost logged to `metrics.jsonl`, and its output
+only counts once the same deterministic gate + `verdict.mjs` schema pass, which the
+orchestrator re-runs itself. Opt-in; the default Claude seats are unchanged. There is
+no other external driver (opencode retired, D-63). Full recipes in the
+`mission-build` / `mission-validate` skills.
 
 ## Measure it
 After a few missions, compare your **attention-minutes** (intent + approve +

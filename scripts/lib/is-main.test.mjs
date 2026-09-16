@@ -61,7 +61,6 @@ test("every engine script imports cleanly from a `node -e` context (no argv[1])"
     "pr-record.mjs",
     "probe-secrets.mjs",
     "cage-settings.mjs",
-    "opencode-worker.mjs",
   ];
   for (const s of scripts) {
     const abs = path.join(SCRIPTS_DIR, s);

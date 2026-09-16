@@ -77,16 +77,12 @@ profile at every spawn, and the driver refuses to run without it. It also refuse
 run against `anthropic.com` — that would silently bill real money for a seat that
 must be flat-rate.
 
-`opencode-worker.mjs` is the **fallback**, for providers with no Anthropic-compatible
-endpoint. Its cage (`cage-opencode.mjs`) is real but its containment is not yet
-proven (D-17); prefer the Claude seat.
+It is the only external seat: the opencode fallback was retired (D-63).
 
 **If a builder returns nothing, check the rate limit before anything else.** z.ai
 answers a spent 5-hour window with `429 rate_limit_error` (code 1308) naming the exact
-reset time. `opencode` swallows it — zero bytes on stdout AND stderr, a silent
-30-minute hang that looks like a slow build. `claude -p` reveals it only under
-`--print-logs`. Do not debug the spec, the worktree, or the model until the provider
-answers `200`.
+reset time. `claude -p` reveals it only under `--print-logs`. Do not debug the spec,
+the worktree, or the model until the provider answers `200`.
 
 #### Want a Sonnet worker instead of GLM?
 
