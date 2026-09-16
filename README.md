@@ -1,7 +1,8 @@
 # @amiticia/factory
 
 AmiticIA's software factory — the AI-agent mission engine (plan → build →
-validate → ratify) plus the live board that publishes to `factory.example.com`.
+validate → ratify) plus the board renderers. The published board at
+`factory.example.com` was retired on 2026-09-16 (D-64); the renderers still run offline.
 
 > **▶ Start here:** [`RUNBOOK.md`](RUNBOOK.md) to operate it,
 > [`constitution.md`](constitution.md) for the rules every seat obeys,
@@ -74,7 +75,7 @@ worktree's `.agent-env`) or this repo's own location.
 ```bash
 pnpm test              # engine unit tests (node --test), autopublish/PR guarded off
 pnpm board:report      # render one project's dashboard HTML
-pnpm board:autopublish # idempotent publish funnel (hash-gated) → factory.example.com
+pnpm board:autopublish # render funnel; use --dry-run — the VPS target is gone (D-64)
 pnpm board:publish     # rsync dist/factory-board/ to the VPS
 pnpm mission:ratify    # ratify a validated mission
 ```

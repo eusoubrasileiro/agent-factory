@@ -214,7 +214,13 @@ Removing `backlog/` leaves the factory intact; the Intake column is canonical
 for what-to-build-next.
 
 ### The dashboard
-The published board at `https://factory.example.com/` is a **read-only
+> **Retired 2026-09-16 (D-64).** `factory.example.com` no longer exists: the nginx
+> container, its basic-auth `.env`, the VPS checkout and the DNS record are gone. The
+> renderers and `board-autopublish.mjs` remain as offline code (`--dry-run`); a real
+> publish has no target. Rebuild recipe, should the board ever be wanted again:
+> `deploy/DEPLOY-VPS.md` plus `git show e44f57b:deploy/docker-compose.yaml`.
+
+The published board at `https://factory.example.com/` was a **read-only
 projection** of `missions/wahub/*` + the PRD — if it's wrong, fix the disk
 (the brief, the PRD row, the verdict log), not the page. The
 requirement↔mission join comes from each brief's `**Requirements:**` line.
@@ -296,7 +302,7 @@ a `.bak` copy. Writes stay local-first; the VPS never gets write access.
 **Manual fallback** (the bindings make this rare):
 ```bash
 node scripts/board-autopublish.mjs --dry-run   # offline: render + print rsync target
-node scripts/board-autopublish.mjs             # real publish (render + hash-guard + rsync)
+node scripts/board-autopublish.mjs             # real publish — NO TARGET since D-64, fails at rsync
 pnpm board:report     # low-level: render only the wahub dashboard HTML
 pnpm board:publish    # low-level: rsync only (bypasses the hash guard)
 pnpm intake           # local intake editor (loopback, writes the .md + .bak)
