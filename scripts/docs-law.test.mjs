@@ -23,14 +23,18 @@ import { fileURLToPath } from "node:url";
 
 const FACTORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-// Rule 1/2 — the only root-level docs. RUNBOOK/constitution/decisions are three of
-// the four named authorities; README is the front door; decisions.inbox is the
-// second coordinator's staging area that merges INTO decisions.md.
+// Rule 1/2 — the only root-level docs. RUNBOOK/constitution/decisions are three
+// of the four named authorities; README is the front door.
+//
+// `decisions.inbox.md` — the second coordinator's staging area for proposals not
+// yet ratified — is NOT part of this public export: unratified drafts are not a
+// published authority. It is absent here and therefore absent from this list,
+// which is exact-match by design (a new root doc must be argued for, not
+// tolerated). In the private repo it sits between README.md and decisions.md.
 const ROOT_DOCS = [
   "README.md",
   "RUNBOOK.md",
   "constitution.md",
-  "decisions.inbox.md",
   "decisions.md",
 ];
 
