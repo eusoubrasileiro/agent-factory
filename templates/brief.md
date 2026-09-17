@@ -12,8 +12,8 @@
 <What hurts today, in one or two sentences.>
 
 ## Who it serves
-<Which user — a vendedor in the inbox? Tenant A/Tenant A? the SDR flow? — and what they
-get out of it.>
+<Which user — an operator in the inbox? the tenant's own staff? an automated flow?
+— and what they get out of it.>
 
 ## Outcome — what "good" looks like
 <The observable change. Describe behavior, not implementation. "When X happens,

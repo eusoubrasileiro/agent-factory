@@ -78,31 +78,24 @@ function writeProject(root, id, projectJson, siblings = {}) {
   return dir;
 }
 
-// ─── 1. Real factory root: wahub exposes its checked-in profile ────────────────
+// ─── 1. Real factory root: the dogfood profile exposes its checked-in fields ──
 
-test("resolveProject: wahub profile exposes gate, criticalFiles, seat.env, validation.md", () => {
-  const r = resolveProject({ project: "wahub" }, REAL_FACTORY_ROOT);
+test("resolveProject: factory profile exposes gate, criticalFiles, validation.md", () => {
+  const r = resolveProject({ project: "factory" }, REAL_FACTORY_ROOT);
 
   // Identity & shape sanity.
-  assert.equal(r.id, "wahub");
+  assert.equal(r.id, "factory");
   assert.ok(r.profile, "profile key must exist");
 
-  // gate from projects/wahub/project.json, exposed verbatim and in order.
+  // gate from projects/factory/project.json, exposed verbatim and in order.
   assert.ok(Array.isArray(r.profile.gate));
-  assert.equal(r.profile.gate.length, 8);
+  assert.equal(r.profile.gate.length, 1);
   assert.equal(r.profile.gate[0], "pnpm test");
-  // The canonical e2e umbrella (house standard, templates/validation.md): its
-  // presence is what the conformance suite's e2e-XOR-exemption test keys on.
-  assert.ok(r.profile.gate.includes("pnpm test:e2e"), "gate must carry the canonical pnpm test:e2e");
-  // quality-gate READS the coverage reports the test:coverage commands write, so it
-  // must run LAST. Asserted because the ordering is load-bearing: with quality-gate
-  // first (the pre-2026-07-16 order) every coverage metric read 0 in a fresh worktree
-  // and the gate was unpassable from a caged seat. See project.json `_gate_note`.
-  assert.equal(r.profile.gate.at(-1), "pnpm quality-gate");
-  assert.ok(
-    r.profile.gate.indexOf("pnpm test:coverage") < r.profile.gate.indexOf("pnpm quality-gate"),
-    "test:coverage must precede quality-gate — it writes the report quality-gate reads",
-  );
+
+  // prepare runs before the gate and is pinned by its marker, so a caged seat
+  // installs deps once instead of re-running a cold gate it cannot pass.
+  assert.deepEqual(r.profile.prepare, ["pnpm install --frozen-lockfile"]);
+  assert.equal(r.profile.prepareMarker, "node_modules");
 
   // trunk / branchPrefix from project.json.
   assert.equal(r.profile.trunk, "main");
@@ -110,20 +103,21 @@ test("resolveProject: wahub profile exposes gate, criticalFiles, seat.env, valid
 
   // critical-files.json is a JSON array of glob strings. Pin by IDENTITY, not
   // count (E3-a): a count assertion greenlights a silent swap/removal — the exact
-  // failure mode of D-37, where the dead path `prisma/schema.prisma` sat unnoticed
-  // until it was corrected to `backend/prisma/schema.prisma` (+ migrations/**),
-  // which is what took this list 12 -> 13 and broke the old `length === 12` pin.
+  // failure mode of D-37, where a dead path sat unnoticed until it was corrected,
+  // which is what changed the list length and broke the old `length === N` pin.
   assert.ok(Array.isArray(r.profile.criticalFiles));
   assert.ok(
     r.profile.criticalFiles.every((g) => typeof g === "string"),
     "every critical file is a glob string",
   );
-  // The security-consequential globs whose silent absence would open a hole.
+  // The consequential globs whose silent absence would open a hole: the files
+  // that decide a verdict, the seat's own settings, and the standing law.
   for (const glob of [
-    "backend/src/bot/**",
-    "backend/src/lib/waba.ts",
-    "backend/prisma/schema.prisma",
-    "backend/prisma/migrations/**",
+    "scripts/verdict.mjs",
+    "scripts/ratify.mjs",
+    "templates/**",
+    "projects/**",
+    "constitution.md",
   ]) {
     assert.ok(
       r.profile.criticalFiles.includes(glob),
@@ -131,14 +125,10 @@ test("resolveProject: wahub profile exposes gate, criticalFiles, seat.env, valid
     );
   }
 
-  // seat.env + validation.md resolved to ABS paths under projects/wahub/.
-  assert.equal(
-    r.profile.seatEnvPath,
-    path.join(REAL_FACTORY_ROOT, "projects", "wahub", "seat.env"),
-  );
+  // validation.md resolved to an ABS path under projects/factory/.
   assert.equal(
     r.profile.validationPath,
-    path.join(REAL_FACTORY_ROOT, "projects", "wahub", "validation.md"),
+    path.join(REAL_FACTORY_ROOT, "projects", "factory", "validation.md"),
   );
 });
 
