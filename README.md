@@ -15,7 +15,8 @@ validate → ratify) plus the board renderers. The published board at
 > deliberately absent: the client mission dossiers and their project profiles,
 > the real `history.jsonl` run telemetry (a 20-row synthetic
 > `history.sample.jsonl` with the identical schema ships in its place), and the
-> host-specific VPS deploy runbook. Mission dossiers under `missions/` still
+> host-specific VPS deploy runbook, and `decisions.inbox.md` (unratified
+> proposals are not a published authority). Mission dossiers under `missions/` still
 > reference those files where the work happened; the references are historical
 > record, not broken links to fix. Tenant names appear as `tenant-a`, `tenant-b`,
 > `tenant-c`.

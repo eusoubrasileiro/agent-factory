@@ -70,7 +70,10 @@ function firstForbidden(text) {
   return null;
 }
 
-/** Read the real intake + labels, or null when either is absent/unreadable. */
+/**
+ * Read the real intake + labels, or null when either is absent/unreadable.
+ * `loadData()` below falls back to the synthetic fixture so C1 still executes.
+ */
 function loadRealData() {
   if (!existsSync(REAL_INTAKE) || !existsSync(REAL_LABELS)) return null;
   let intakeText;
@@ -91,16 +94,30 @@ function loadRealData() {
   return { rows, labels };
 }
 
+/**
+ * The data C1 runs against: the REAL client intake when this checkout has it,
+ * otherwise the synthetic fixture below.
+ *
+ * The public export carries no `clients/` directory, so the real-data branch is
+ * never taken there. A leak assertion that only ever skips is gate theater — it
+ * reports green while proving nothing — so the fixture keeps the assertion
+ * executing everywhere. The fixture is a genuine hazard, not a straw man: its
+ * summaries carry the same classes as the real intake (`webhook.ts:12`, a model
+ * name, `R$ 900`, a commit sha, `agent/abc`), and the teeth test below asserts
+ * that the scanner actually trips on them. Real data, when present, still wins.
+ *
+ * @returns {{rows: object[], labels: object, source: "real"|"fixture"}}
+ */
+function loadData() {
+  const real = loadRealData();
+  if (real) return { ...real, source: "real" };
+  return { rows: parseIntake(FIXTURE_INTAKE).rows, labels: FIXTURE_LABELS, source: "fixture" };
+}
+
 // ─── C1 — the leak test: the real tenant-a intake never reaches the client HTML ──
 
-test("leak: real tenant-a intake never reaches client HTML", (t) => {
-  const data = loadRealData();
-  if (!data) {
-    // Fail-closed by contract: a missing labels file must never fake-pass. The
-    // genuine leak assertion only runs where the real data is checked out.
-    t.skip(`real client data not present (${REAL_LABELS}); run from the factory checkout that has clients/tenant-a/`);
-    return;
-  }
+test("leak: the intake never reaches client HTML", () => {
+  const data = loadData();
 
   const html = renderClientPage({
     intake: data.rows,
@@ -117,25 +134,23 @@ test("leak: real tenant-a intake never reaches client HTML", (t) => {
   assert.equal(
     hit,
     null,
-    `forbidden class ${hit} reached the client HTML:\n${body.slice(0, 500)}`,
+    `forbidden class ${hit} reached the client HTML (source=${data.source}):\n${body.slice(0, 500)}`,
   );
 });
 
-test("leak: the raw intake summary itself IS forbidden (proves the test has teeth)", (t) => {
-  // Belt-and-suspenders: if the real intake is present, its own prose must trip
-  // the forbidden scanner — otherwise the leak test above could pass vacuously
-  // (a scanner that flags nothing proves nothing). Skips when data is absent.
-  const data = loadRealData();
-  if (!data) {
-    t.skip("real client data not present; cannot prove the scanner has teeth");
-    return;
-  }
+test("leak: the raw intake summary itself IS forbidden (proves the test has teeth)", () => {
+  // A scanner that flags nothing would let C1 pass vacuously. So assert the
+  // positive: the unredacted summaries MUST trip a forbidden class. This runs
+  // against whichever source C1 used, so the teeth are proven in the same
+  // conditions the leak assertion was made.
+  const data = loadData();
   const summaries = data.rows.map((r) => r.summary).join(" ");
-  // Either the summary trips a forbidden class (the normal case — engineering
-  // prose), or every single row is already plain PT (then there is nothing to
-  // leak and the page is safe by construction). We only assert the negative:
-  // the summary is never rendered, which C1 above already pins.
-  assert.ok(summaries.length >= 0);
+  assert.notEqual(
+    firstForbidden(summaries),
+    null,
+    `the scanner found nothing forbidden in the raw summaries (source=${data.source}), ` +
+      "so the leak test above proves nothing — fix the fixture or the FORBIDDEN list",
+  );
 });
 
 // ─── C2 — positive + negative against the real data ───────────────────────────
