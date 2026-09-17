@@ -8,6 +8,18 @@ validate → ratify) plus the board renderers. The published board at
 > [`constitution.md`](constitution.md) for the rules every seat obeys,
 > [`decisions.md`](decisions.md) for why anything is the way it is.
 
+> **About this public export.** This is the real repository with its full commit
+> history — 184 commits, agent-authored, `Co-Authored-By` trailers intact. That
+> history is the point: it is the audit trail of a fleet of agents doing the work.
+> Client-facing material was removed rather than redacted, so a few things are
+> deliberately absent: the client mission dossiers and their project profiles,
+> the real `history.jsonl` run telemetry (a 20-row synthetic
+> `history.sample.jsonl` with the identical schema ships in its place), and the
+> host-specific VPS deploy runbook. Mission dossiers under `missions/` still
+> reference those files where the work happened; the references are historical
+> record, not broken links to fix. Tenant names appear as `tenant-a`, `tenant-b`,
+> `tenant-c`.
+
 > **Provenance.** Extracted from `AmiticIA-AutoSys/wahub` @ `97eaa40` on
 > 2026-07-08 (plan: *Factory v2.1 — Factory Extraction*, Workstream 0/2). Fresh
 > repo, no history surgery. wahub keeps its product-owned quality contract
@@ -42,11 +54,11 @@ projects/<id>/      # THE PROJECT PROFILE — project.json, critical-files.json,
 skills/             # mission-plan | mission-build | mission-validate (Claude skills) — generic
 templates/          # dossier templates + settings-external.json (the GENERIC cage base)
 missions/<project>/ # per-project mission dossiers (spec of record, committed)
-history.jsonl       # board history snapshots
+history.sample.jsonl # board history snapshots — SYNTHETIC sample (see note below)
 decisions.md        # ratified factory decisions
 constitution.md     # factory constitution
 RUNBOOK.md          # operator runbook
-deploy/             # projects.json (legacy manifest, back-compat) + DEPLOY-VPS.md + docker-compose
+deploy/             # projects.json (legacy manifest, back-compat)
 docs/               # harness research, cage research, plans
 ```
 
@@ -59,9 +71,13 @@ Path resolution goes through `scripts/lib/project.mjs` → `resolveProject()`:
 
 - **factoryRoot** — this repo. Holds `missions/<project>/<slug>/`,
   `history.jsonl`, `.publish.log`, `deploy/projects.json`, `dist/factory-board/`.
+  In this public export `history.jsonl` is absent: it held real run telemetry. A
+  20-row synthetic `history.sample.jsonl` with the identical schema ships instead,
+  so every consumer (`scripts/history.mjs`, `board-report.mjs --history`) still runs.
+  Point them at it with `--history history.sample.jsonl`.
   Dossier auto-commits land here.
 - **repoRoot** — the product repo (`deploy/projects.json` `path`, e.g.
-  `../../products/wahub`). Holds the code workers edit, the `agent/*` branches
+  `../../products/<id>`). Holds the code workers edit, the `agent/*` branches
   board-report scans, the `backlog/` kanban, and the PRD. Product git commands
   run with `cwd = repoRoot`.
 

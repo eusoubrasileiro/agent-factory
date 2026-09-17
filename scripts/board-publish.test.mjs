@@ -64,8 +64,8 @@ test("dry-run: exit 0, prints 'rsync -az --delete' and the overridden host, no n
     assert.match(r.stdout, /testhost:/);
     // The remote dir default must appear in the printed command (feature 03
     // repointed the publish target from /scrumban/ to the public/ root).
-    assert.match(r.stdout, /\/opt\/amiticia\/factory\/public\//);
-    assert.doesNotMatch(r.stdout, /\/opt\/amiticia\/factory\/public\/scrumban\//);
+    assert.match(r.stdout, /\/opt\/app\/factory\/public\//);
+    assert.doesNotMatch(r.stdout, /\/opt\/app\/factory\/public\/scrumban\//);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -82,7 +82,7 @@ test("dry-run: PUBLISH_DIR override is reflected in the printed command", () => 
     assert.equal(r.status, 0, `exit 0; stdout=${r.stdout} stderr=${r.stderr}`);
     assert.match(r.stdout, /testhost:\/tmp\/alt-dest\//);
     // Default dir must NOT appear when overridden.
-    assert.doesNotMatch(r.stdout, /\/opt\/amiticia\/factory\/public\/scrumban\//);
+    assert.doesNotMatch(r.stdout, /\/opt\/app\/factory\/public\/scrumban\//);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

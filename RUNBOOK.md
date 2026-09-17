@@ -61,7 +61,7 @@ orchestrator spawns a fix worker scoped to *only* the failing assertions, re-run
 stops and escalates the persistent red to you (a gap surviving three scoped fixes is a
 spec problem, not a coding miss). The validator stays held-out: it never patches what
 it judges. Rounds are recorded and bounded by `scripts/verdict.mjs` — each
-verdict is schema-validated and appended to `missions/wahub/<slug>/validate.log`, and
+verdict is schema-validated and appended to `missions/<project>/<slug>/validate.log`, and
 the 3-round bound is enforced in code (round 4+ refuses and escalates), so the loop is
 resumable and machine-checkable rather than trusting an agent to count. Full recipe in
 `skills/mission-validate/SKILL.md`.
@@ -205,7 +205,7 @@ optional.
 
 ## The board
 `pnpm board` (terminal: `backlog board`) is a ONE-WAY projection of
-`missions/wahub/*` — a read-model, never a source of truth. Columns: Intake ·
+`missions/<project>/*` — a read-model, never a source of truth. Columns: Intake ·
 Planning · Building · Validating · Needs Human · Done · Blocked. The three human
 pulls (`gate:approve-plan` / `gate:ratify` / `gate:escalated`) surface as
 `Needs Human` cards. `pnpm board:sync` repairs any drift. A PASS verdict never
@@ -217,11 +217,11 @@ for what-to-build-next.
 > **Retired 2026-09-16 (D-64).** `factory.example.com` no longer exists: the nginx
 > container, its basic-auth `.env`, the VPS checkout and the DNS record are gone. The
 > renderers and `board-autopublish.mjs` remain as offline code (`--dry-run`); a real
-> publish has no target. Rebuild recipe, should the board ever be wanted again:
-> `deploy/DEPLOY-VPS.md` plus `git show e44f57b:deploy/docker-compose.yaml`.
+> publish has no target. The VPS rebuild recipe (nginx, Traefik, ACME, basic-auth,
+> rsync target) was host-specific and is withheld from this public export.
 
 The published board at `https://factory.example.com/` was a **read-only
-projection** of `missions/wahub/*` + the PRD — if it's wrong, fix the disk
+projection** of `missions/<project>/*` + the PRD — if it's wrong, fix the disk
 (the brief, the PRD row, the verdict log), not the page. The
 requirement↔mission join comes from each brief's `**Requirements:**` line.
 
@@ -271,11 +271,13 @@ Each entry renders to `dist/factory-board/<id>/index.html`; the root
 `/wahub/` dashboard · `/scrumban/` meta-refresh redirect to `/wahub/` (legacy).
 To add a project: append an entry (`repo` is relative to the repo root) and
 commit — the funnel renders it next run. VPS-side details (nginx, Traefik,
-basic-auth users, rsync target) live in `deploy/DEPLOY-VPS.md`.
+basic-auth users, rsync target) are host-specific and are withheld from this
+public export.
 
 **Histórico tab.** The dashboard's third tab shows lagging indicators — missões
 concluídas/semana, lead time mediano, rondas média, tokens, atenção-por-feature
-— aggregated from `history.jsonl`. One snapshot row per mission is
+— aggregated from `history.jsonl` (in this public export, the synthetic
+`history.sample.jsonl`). One snapshot row per mission is
 appended on each publish that changed the hash
 (`{ts, project, slug, state, features, rounds, verdict, reqIds}`). Missing data
 renders "sem dados", never crashes. History content is stripped from the hash so
@@ -385,7 +387,7 @@ machine — or fall back to plain dispatch. The factory exists to buy back your 
 
 ## Read the meter
 Every seat emits structured events (touchpoint, intervention, escalation,
-false_idle, worker_death, phase_start/end) to `missions/wahub/<slug>/metrics.jsonl`
+false_idle, worker_death, phase_start/end) to `missions/<project>/<slug>/metrics.jsonl`
 via `scripts/metrics.mjs`. After each mission:
 ```bash
 node scripts/metrics.mjs summary <slug>

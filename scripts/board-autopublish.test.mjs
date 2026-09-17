@@ -170,7 +170,7 @@ test("buildRsyncCommand prints the canonical public/ target with --delete", () =
     distDir: "dist/factory-board/",
   });
   assert.match(cmd, /rsync -az --delete/);
-  assert.match(cmd, /deploy-host:\/opt\/amiticia\/factory\/public\//);
+  assert.match(cmd, /deploy-host:\/opt\/app\/factory\/public\//);
 });
 
 test("buildRsyncCommand respects host + remoteDir overrides", () => {
@@ -289,7 +289,7 @@ test("dry-run: exit 0 offline, prints rsync target deploy-host:/opt/app/factory/
   try {
     const r = runCli(root, ["--dry-run"]);
     assert.equal(r.status, 0, `exit 0; stdout=${r.stdout} stderr=${r.stderr}`);
-    assert.match(r.stdout, /deploy-host:\/opt\/amiticia\/factory\/public\//);
+    assert.match(r.stdout, /deploy-host:\/opt\/app\/factory\/public\//);
     // Dry-run must NOT execute rsync — only echo.
     assert.match(r.stdout, /rsync -az --delete/);
   } finally {
