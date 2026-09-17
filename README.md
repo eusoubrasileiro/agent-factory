@@ -1,16 +1,47 @@
 # @amiticia/factory
 
 AmiticIA's software factory — the AI-agent mission engine (plan → build →
-validate → ratify) plus the board renderers. The published board at
-`factory.example.com` was retired on 2026-09-16 (D-64); the renderers still run offline.
+validate → ratify) plus the board renderers. It is the machinery that lets a
+fleet of coding agents take a written mission brief, build it in isolated
+worktrees, run a deterministic gate over the result, and hand a human one
+decision: ratify or not. The published board at `factory.example.com` was retired
+on 2026-09-16 (D-64); the renderers still run offline.
 
-> **▶ Start here:** [`RUNBOOK.md`](RUNBOOK.md) to operate it,
-> [`constitution.md`](constitution.md) for the rules every seat obeys,
-> [`decisions.md`](decisions.md) for why anything is the way it is.
+> **▶ Start here:** [`constitution.md`](constitution.md) — the standing rules
+> every seat obeys, in about four minutes.
 
-> **About this public export.** This is the real repository with its full commit
-> history — 184 commits, agent-authored, `Co-Authored-By` trailers intact. That
-> history is the point: it is the audit trail of a fleet of agents doing the work.
+## Look at first
+
+1. **[`constitution.md`](constitution.md)** — the whole contract in one short
+   file: what an orchestrator, a worker and a validator may each do, and what
+   none of them may do. It is broadcast to every seat and it almost never
+   changes.
+2. **[`decisions.md`](decisions.md)** — the ratified decision log, one appended
+   line per decision, oldest first. Read **D-16**. It records the discovery that
+   the permission cage — `cage-settings.mjs`, which renders a correct, audited
+   Claude Code sandbox and had been reviewed as such — had **zero callers**. The
+   dispatch script never installed it, its own header cited a driver that did not
+   exist, and the driver that *did* run reads a different config schema
+   entirely. So the file-protection, `git push` and SSH-key denials were never
+   enforced, and the incident the cage was built to prevent was still possible
+   the whole time. *A cage that is not installed costs zero productivity and buys
+   zero security — it buys only the belief in security, which is worse than
+   knowing you have no cage.* Nothing was broken; it had simply never worked.
+3. **[`scripts/gate.mjs`](scripts/gate.mjs)** — the deterministic gate runner,
+   and the reason D-16 is not the last word. It reports a **three-valued**
+   verdict: `true`, `false`, or `null` for "the gate could not be run at all" —
+   no commands declared, an unprovisioned worktree, a timeout, a signal kill,
+   lock contention. `null` is deliberately never coerced to `false`, because a
+   gate that cannot distinguish "failed" from "did not run" will eventually
+   score an empty environment as a pass.
+
+> **About this public export.** This is the real repository with its history
+> kept, not squashed. Almost all of it was written by agents, and the commits say
+> which one: **157 of the 186 commits at the point of export carried a
+> `Co-Authored-By` trailer** naming the agent that made the change. That history
+> is the point — it is the audit trail of a fleet of agents doing the work. (The
+> count moves with every commit, including this note's own; re-derive it with
+> `git rev-list --count HEAD` rather than trusting this line.)
 > Client-facing material was removed rather than redacted, so a few things are
 > deliberately absent: the client mission dossiers and their project profiles,
 > the real `history.jsonl` run telemetry (a 20-row synthetic
@@ -21,11 +52,12 @@ validate → ratify) plus the board renderers. The published board at
 > record, not broken links to fix. Tenant names appear as `tenant-a`, `tenant-b`,
 > `tenant-c`.
 
-> **Provenance.** Extracted from `AmiticIA-AutoSys/wahub` @ `97eaa40` on
-> 2026-07-08 (plan: *Factory v2.1 — Factory Extraction*, Workstream 0/2). Fresh
-> repo, no history surgery. wahub keeps its product-owned quality contract
-> (`quality-gate.mjs`, `quality-baseline.json`, `.husky` hooks, the PRD); the
-> engine + all mission data live here.
+> **Provenance.** The engine was extracted from a private product repository
+> (internally `wahub`) at commit `97eaa40` on 2026-07-08, under the plan
+> *Factory v2.1 — Factory Extraction*, Workstream 0/2. That product keeps its own
+> quality contract (`quality-gate.mjs`, `quality-baseline.json`, `.husky` hooks,
+> the PRD); the engine and all mission data live here. Mission dossiers still
+> name `wahub` as the project they ran against — that is the historical record.
 
 ## The one architectural rule
 
@@ -38,9 +70,10 @@ profile on disk, and a meta test greps the engine sources for any product id and
 with `file:line` on a hit. Onboarding a project is therefore adding a directory, not
 editing the engine.
 
-Canonical statement + onboarding runbook:
-[`standards/agent-patterns/software-factory-v2.md` §8](../../standards/agent-patterns/software-factory-v2.md)
-(§9 covers the cage posture). Read §8 before adding a project or touching `scripts/`.
+The canonical statement and the onboarding runbook live in the companion
+`harness-standards` repository, at `agent-patterns/software-factory-v2.md` §8
+(§9 covers the cage posture). Read §8 before adding a project or touching
+`scripts/`.
 
 ## Layout
 
@@ -90,9 +123,19 @@ worktree's `.agent-env`) or this repo's own location.
 ## Commands
 
 ```bash
-pnpm test              # engine unit tests (node --test), autopublish/PR guarded off
+pnpm install
+pnpm test              # engine unit tests (node --test) — 1053 pass, 7 skipped, no network
 pnpm board:report      # render one project's dashboard HTML
 pnpm board:autopublish # render funnel; use --dry-run — the VPS target is gone (D-64)
 pnpm board:publish     # rsync dist/factory-board/ to the VPS
 pnpm mission:ratify    # ratify a validated mission
 ```
+
+`pnpm test` is the one command that matters for a reader: it runs the whole
+engine suite offline, with autopublish and PR creation guarded off, against the
+synthetic `history.sample.jsonl`. Nothing in this repo needs a network, a VPS or
+an API key to exercise.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).
