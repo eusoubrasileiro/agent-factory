@@ -45,3 +45,6 @@ test-results/
 # (/opt/app/factory/public/). Live data, not source: a `git clean -fd` in
 # the deploy checkout would erase the running board.
 /public/
+
+# local gate artifacts (review log) — never published
+.quality-gate/
