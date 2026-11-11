@@ -48,3 +48,6 @@ test-results/
 
 # local gate artifacts (review log) — never published
 .quality-gate/
+
+# Claude Code per-machine settings (permission grants, local paths, tokens): never commit.
+**/.claude/settings.local.json
